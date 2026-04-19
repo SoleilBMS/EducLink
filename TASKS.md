@@ -1,5 +1,13 @@
 # TASKS — EducLink
 
+## Suivi d'avancement (2026-04-19)
+
+- ✅ P0-001 Initialiser le monorepo (structure + config de base)
+- ✅ P0-003 Définir les conventions de code (doc conventions + API)
+- 🟡 P0-103 Multi-tenant (helpers de scoping tenant côté package core)
+
+---
+
 ## Objectif
 
 Découper le projet EducLink en lots clairs, priorisés et directement exploitables par une équipe produit / tech / IA ou par Codex.
