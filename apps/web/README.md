@@ -1,6 +1,7 @@
 # apps/web
 
 Prototype web minimal pour valider le socle auth + RBAC/tenant (issues #2 et #3).
+Prototype web minimal pour valider le socle d'authentification (issue #2).
 
 ## Fonctionnalités disponibles
 
@@ -39,3 +40,7 @@ Puis ouvrir `http://localhost:3000/login`.
 - teacher: `teacher@school-a.test`
 - parent: `parent@school-a.test`
 - mot de passe (tous): `password123`
+## Compte de démonstration
+
+- email: `admin@school-a.test`
+- mot de passe: `password123`

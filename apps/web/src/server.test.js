@@ -61,10 +61,31 @@ test('POST /login puis GET /dashboard autorise et expose role/tenant dans la ses
 
     const dashboardResponse = await fetch(`${baseUrl}/dashboard`, {
       headers: { cookie }
+    const loginResponse = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        email: 'admin@school-a.test',
+        password: 'password123'
+      }).toString(),
+      redirect: 'manual'
+    });
+
+    assert.equal(loginResponse.status, 302);
+    assert.equal(loginResponse.headers.get('location'), '/dashboard');
+
+    const setCookie = loginResponse.headers.get('set-cookie');
+    assert.ok(setCookie);
+
+    const dashboardResponse = await fetch(`${baseUrl}/dashboard`, {
+      headers: {
+        cookie: setCookie.split(';')[0]
+      }
     });
 
     assert.equal(dashboardResponse.status, 200);
     const html = await dashboardResponse.text();
+    assert.match(html, /userId: u-admin-a/);
     assert.match(html, /role: school_admin/);
     assert.match(html, /tenantId: school-a/);
   });
@@ -77,6 +98,23 @@ test('POST /logout invalide la session et reprotège /dashboard', async () => {
     const logoutResponse = await fetch(`${baseUrl}/logout`, {
       method: 'POST',
       headers: { cookie },
+    const loginResponse = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        email: 'admin@school-a.test',
+        password: 'password123'
+      }).toString(),
+      redirect: 'manual'
+    });
+
+    const sessionCookie = loginResponse.headers.get('set-cookie').split(';')[0];
+
+    const logoutResponse = await fetch(`${baseUrl}/logout`, {
+      method: 'POST',
+      headers: {
+        cookie: sessionCookie
+      },
       redirect: 'manual'
     });
 
@@ -85,6 +123,9 @@ test('POST /logout invalide la session et reprotège /dashboard', async () => {
 
     const protectedResponse = await fetch(`${baseUrl}/dashboard`, {
       headers: { cookie },
+      headers: {
+        cookie: sessionCookie
+      },
       redirect: 'manual'
     });
 

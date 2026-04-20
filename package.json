@@ -11,6 +11,8 @@
     "check": "npm run lint && npm run test",
     "lint": "node --check packages/core/src/tenantScope.js packages/auth/src/roles/roles.js packages/auth/src/permissions/permissions.js packages/auth/src/guards/require-auth.js packages/auth/src/guards/api-guard.js packages/auth/src/session/session-store.js packages/auth/src/session/session-context.js packages/auth/src/password/password-reset.js apps/web/src/server.js",
     "test": "node --test packages/core/src/tenantScope.test.js packages/auth/src/session/session-store.test.js packages/auth/src/guards/require-auth.test.js packages/auth/src/guards/api-guard.test.js packages/auth/src/permissions/permissions.test.js apps/web/src/server.test.js"
+    "lint": "node --check packages/core/src/tenantScope.js packages/auth/src/session/session-store.js packages/auth/src/session/session-context.js packages/auth/src/guards/require-auth.js packages/auth/src/password/password-reset.js apps/web/src/server.js",
+    "test": "node --test packages/core/src/tenantScope.test.js packages/auth/src/session/session-store.test.js packages/auth/src/guards/require-auth.test.js apps/web/src/server.test.js"
   },
   "engines": {
     "node": ">=20.0.0"

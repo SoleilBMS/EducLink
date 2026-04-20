@@ -35,6 +35,17 @@ const users = [
     email: 'parent@school-a.test',
     password: 'password123',
     role: ROLES.PARENT,
+const http = require('node:http');
+
+const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
+const { SessionStore } = require('../../../packages/auth/src/session/session-store');
+
+const users = [
+  {
+    id: 'u-admin-a',
+    email: 'admin@school-a.test',
+    password: 'password123',
+    role: 'school_admin',
     tenantId: 'school-a'
   }
 ];
