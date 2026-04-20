@@ -1,3 +1,40 @@
+const crypto = require('node:crypto');
+const http = require('node:http');
+
+const { authorizeApiRequest } = require('../../../packages/auth/src/guards/api-guard');
+const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
+const { canReadClassRoom, canReadStudent } = require('../../../packages/auth/src/permissions/permissions');
+const { ROLES } = require('../../../packages/auth/src/roles/roles');
+const { SessionStore } = require('../../../packages/auth/src/session/session-store');
+const { filterByTenant } = require('../../../packages/core/src/tenantScope');
+
+const users = [
+  {
+    id: 'super-1',
+    email: 'super@platform.test',
+    password: 'password123',
+    role: ROLES.SUPER_ADMIN,
+    tenantId: 'platform'
+  },
+  {
+    id: 'admin-a',
+    email: 'admin@school-a.test',
+    password: 'password123',
+    role: ROLES.SCHOOL_ADMIN,
+    tenantId: 'school-a'
+  },
+  {
+    id: 'teacher-a',
+    email: 'teacher@school-a.test',
+    password: 'password123',
+    role: ROLES.TEACHER,
+    tenantId: 'school-a'
+  },
+  {
+    id: 'parent-a',
+    email: 'parent@school-a.test',
+    password: 'password123',
+    role: ROLES.PARENT,
 const http = require('node:http');
 
 const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
@@ -13,6 +50,20 @@ const users = [
   }
 ];
 
+const classRooms = [
+  { id: 'class-a1', tenant_id: 'school-a', teacher_id: 'teacher-a', name: 'Class A1' },
+  { id: 'class-b1', tenant_id: 'school-b', teacher_id: 'teacher-b', name: 'Class B1' }
+];
+
+const students = [
+  { id: 'student-a1', tenant_id: 'school-a', class_id: 'class-a1', full_name: 'Student A1' },
+  { id: 'student-b1', tenant_id: 'school-b', class_id: 'class-b1', full_name: 'Student B1' }
+];
+
+const parentStudentLinks = [{ parentId: 'parent-a', studentId: 'student-a1' }];
+
+const teacherClassAssignments = [{ teacherId: 'teacher-a', classId: 'class-a1' }];
+
 function parseCookies(cookieHeader) {
   if (!cookieHeader) {
     return {};
@@ -27,6 +78,29 @@ function parseCookies(cookieHeader) {
       cookies[name] = decodeURIComponent(rawValue.join('='));
       return cookies;
     }, {});
+}
+
+function createMeta() {
+  return { request_id: crypto.randomUUID() };
+}
+
+function sendJson(response, statusCode, payload) {
+  response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
+  response.end(JSON.stringify(payload));
+}
+
+function sendApiSuccess(response, data, statusCode = 200) {
+  sendJson(response, statusCode, {
+    data,
+    meta: createMeta()
+  });
+}
+
+function sendApiError(response, apiError) {
+  sendJson(response, apiError.status, {
+    error: apiError.error,
+    meta: createMeta()
+  });
 }
 
 function renderLoginPage(errorMessage = '') {
@@ -89,6 +163,15 @@ function parseForm(formBody) {
     email: searchParams.get('email') ?? '',
     password: searchParams.get('password') ?? ''
   };
+}
+
+function getClassesForSession(session) {
+  if (session.role === ROLES.SUPER_ADMIN) {
+    return classRooms;
+  }
+
+  const scopedByTenant = filterByTenant(classRooms, session.tenantId);
+  return scopedByTenant.filter((classRoom) => canReadClassRoom(classRoom, session));
 }
 
 function createServer({ sessionStore = new SessionStore() } = {}) {
@@ -162,6 +245,55 @@ function createServer({ sessionStore = new SessionStore() } = {}) {
 
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderProtectedPage(decision.context));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/v1/classes') {
+      const decision = authorizeApiRequest(session, null);
+      if (!decision.ok) {
+        sendApiError(response, decision);
+        return;
+      }
+
+      const data = getClassesForSession(session);
+      sendApiSuccess(response, data);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname.startsWith('/api/v1/students/')) {
+      const studentId = url.pathname.split('/').at(-1);
+      const student = students.find((candidate) => candidate.id === studentId);
+
+      if (!student) {
+        sendJson(response, 404, {
+          error: { code: 'NOT_FOUND', message: 'Student not found' },
+          meta: createMeta()
+        });
+        return;
+      }
+
+      const authDecision = authorizeApiRequest(session, student, {
+        allowSuperAdminGlobal: true
+      });
+      if (!authDecision.ok) {
+        sendApiError(response, authDecision);
+        return;
+      }
+
+      const isAllowed = canReadStudent(student, session, {
+        parentStudentLinks,
+        teacherClassAssignments
+      });
+
+      if (!isAllowed) {
+        sendJson(response, 403, {
+          error: { code: 'FORBIDDEN', message: 'You do not have permission for this student' },
+          meta: createMeta()
+        });
+        return;
+      }
+
+      sendApiSuccess(response, student);
       return;
     }
 
