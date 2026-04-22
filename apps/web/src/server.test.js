@@ -581,3 +581,138 @@ test('accès enseignant refusé si rôle non autorisé', async () => {
     assert.equal(payload.error.code, 'FORBIDDEN');
   });
 });
+
+test('teacher peut sélectionner uniquement ses classes sur la page attendance', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/teacher/attendance', { cookie });
+
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /class-a1/);
+    assert.doesNotMatch(html, /class-a2/);
+  });
+});
+
+test('teacher peut enregistrer present absent late pour une date donnée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const date = '2026-04-20';
+
+    const createStudentAbsentResponse = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        firstName: 'Attendance',
+        lastName: 'Absent',
+        admissionNumber: 'A-ATT-1',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2013-01-01'
+      }
+    });
+    const absentStudentPayload = await createStudentAbsentResponse.json();
+    const createStudentLateResponse = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        firstName: 'Attendance',
+        lastName: 'Late',
+        admissionNumber: 'A-ATT-2',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2013-01-02'
+      }
+    });
+    const lateStudentPayload = await createStudentLateResponse.json();
+
+    const saveResponse = await apiFetch(baseUrl, '/api/v1/attendance', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        date,
+        records: [
+          { studentId: 'student-a1', status: 'present' },
+          { studentId: absentStudentPayload.data.id, status: 'absent' },
+          { studentId: lateStudentPayload.data.id, status: 'late' }
+        ]
+      }
+    });
+    assert.equal(saveResponse.status, 201);
+
+    const adminRead = await apiFetch(baseUrl, `/api/v1/attendance?date=${date}&classRoomId=class-a1`, { cookie: adminCookie });
+    assert.equal(adminRead.status, 200);
+    const payload = await adminRead.json();
+    const statuses = payload.data.map((record) => record.status);
+    assert.ok(statuses.includes('present'));
+    assert.ok(statuses.includes('absent'));
+    assert.ok(statuses.includes('late'));
+    assert.ok(payload.data.every((record) => record.date === date));
+  });
+});
+
+test('admin peut consulter les enregistrements attendance de son école', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const date = '2026-04-21';
+
+    await apiFetch(baseUrl, '/api/v1/attendance', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        date,
+        records: [{ studentId: 'student-a1', status: 'present' }]
+      }
+    });
+
+    const response = await apiFetch(baseUrl, `/api/v1/attendance?date=${date}`, { cookie: adminCookie });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.ok(payload.data.length >= 1);
+    assert.ok(payload.data.every((record) => record.tenant_id === 'school-a'));
+  });
+});
+
+test('refus d’accès attendance à une classe non autorisée pour teacher', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/attendance', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a2',
+        date: '2026-04-21',
+        records: [{ studentId: 'student-a2', status: 'present' }]
+      }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});
+
+test('attendance respecte l’isolation tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+    const date = '2026-04-22';
+
+    await apiFetch(baseUrl, '/api/v1/attendance', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        date,
+        records: [{ studentId: 'student-a1', status: 'present' }]
+      }
+    });
+
+    const crossTenantRead = await apiFetch(baseUrl, `/api/v1/attendance?date=${date}`, { cookie: adminBCookie });
+    assert.equal(crossTenantRead.status, 200);
+    const payload = await crossTenantRead.json();
+    assert.equal(payload.data.length, 0);
+  });
+});

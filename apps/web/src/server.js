@@ -8,6 +8,7 @@ const { CoreSchoolStore } = require('./modules/core-school');
 const { StudentStore, buildValidationError } = require('./modules/student');
 const { ParentStore } = require('./modules/parent');
 const { TeacherStore } = require('./modules/teacher');
+const { AttendanceStore, ATTENDANCE_STATUSES, requireDateString } = require('./modules/attendance');
 
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
@@ -121,7 +122,8 @@ function createSeedData() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }
-    ]
+    ],
+    attendanceRecords: []
   };
 }
 
@@ -221,6 +223,18 @@ function canManageTeachers(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
 
+function canTakeAttendance(session) {
+  return session.role === ROLES.TEACHER;
+}
+
+function canViewAttendanceAdmin(session) {
+  return session.role === ROLES.SCHOOL_ADMIN;
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function renderLoginPage(errorMessage = '') {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EducLink - Login</title></head><body>
     <h1>Connexion EducLink</h1>
@@ -270,7 +284,8 @@ function renderAdminDashboard(session, metrics) {
     <h2>Raccourcis</h2>
     <p><a href="/admin/students">Gérer les élèves</a></p>
     <p><a href="/admin/parents">Gérer les responsables</a></p>
-    <p><a href="/admin/teachers">Gérer les enseignants</a></p>`
+    <p><a href="/admin/teachers">Gérer les enseignants</a></p>
+    <p><a href="/admin/attendance">Consulter les présences</a></p>`
   );
 }
 
@@ -301,10 +316,98 @@ function renderTeacherDashboard(session, teacher, classRooms, subjects) {
     <p>Matières assignées: ${subjectNames}</p>
     <h2>Raccourcis métier</h2>
     <p><a href="/admin/students">Mes classes</a></p>
-    <p>Attendance: placeholder MVP</p>
+    <p><a href="/teacher/attendance">Faire l'appel</a></p>
     <p>Grading: placeholder MVP</p>
     <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>`
   );
+}
+
+function renderTeacherAttendancePage(session, { teacher, classRooms, selectedClassRoomId, selectedDate, students, attendanceByStudentId }) {
+  const options = classRooms
+    .map((classRoom) => `<option value="${classRoom.id}" ${classRoom.id === selectedClassRoomId ? 'selected' : ''}>${classRoom.name}</option>`)
+    .join('');
+
+  const rows = students
+    .map((student) => {
+      const selectedStatus = attendanceByStudentId.get(student.id)?.status ?? 'present';
+      const statusOptions = ATTENDANCE_STATUSES
+        .map((status) => `<option value="${status}" ${selectedStatus === status ? 'selected' : ''}>${status}</option>`)
+        .join('');
+      return `<tr>
+        <td>${student.firstName} ${student.lastName}</td>
+        <td>${student.admissionNumber}</td>
+        <td>
+          <input type="hidden" name="studentId" value="${student.id}" />
+          <select name="status">${statusOptions}</select>
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teacher Attendance</title></head><body>
+    <h1>Appel enseignant</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
+    <form method="GET" action="/teacher/attendance">
+      <label>Date <input type="date" name="date" value="${selectedDate}" required /></label>
+      <label>Classe
+        <select name="classRoomId" required>
+          ${options}
+        </select>
+      </label>
+      <button type="submit">Charger</button>
+    </form>
+    ${
+      selectedClassRoomId
+        ? `<h2>Liste des élèves</h2>
+    <form method="POST" action="/teacher/attendance">
+      <input type="hidden" name="date" value="${selectedDate}" />
+      <input type="hidden" name="classRoomId" value="${selectedClassRoomId}" />
+      <table border="1"><thead><tr><th>Nom</th><th>Matricule</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>
+      <button type="submit">Sauvegarder l'appel</button>
+    </form>`
+        : '<p>Sélectionnez une classe autorisée pour commencer.</p>'
+    }
+    <p><a href="/dashboard/teacher">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoomId, records, studentsById, teachersById }) {
+  const options = ['<option value="">Toutes les classes</option>']
+    .concat(
+      classRooms.map(
+        (classRoom) => `<option value="${classRoom.id}" ${classRoom.id === selectedClassRoomId ? 'selected' : ''}>${classRoom.name}</option>`
+      )
+    )
+    .join('');
+
+  const rows = records
+    .map((record) => {
+      const student = studentsById.get(record.studentId);
+      const teacher = teachersById.get(record.teacherId);
+      return `<tr>
+        <td>${record.date}</td>
+        <td>${record.classRoomId}</td>
+        <td>${student ? `${student.firstName} ${student.lastName}` : record.studentId}</td>
+        <td>${record.status}</td>
+        <td>${teacher ? `${teacher.firstName} ${teacher.lastName}` : record.teacherId}</td>
+      </tr>`;
+    })
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Admin Attendance</title></head><body>
+    <h1>Présences du jour</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <form method="GET" action="/admin/attendance">
+      <label>Date <input type="date" name="date" value="${date}" required /></label>
+      <label>Classe
+        <select name="classRoomId">${options}</select>
+      </label>
+      <button type="submit">Filtrer</button>
+    </form>
+    <table border="1"><thead><tr><th>Date</th><th>Classe</th><th>Élève</th><th>Statut</th><th>Saisi par</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard/admin">Retour dashboard</a></p>
+  </body></html>`;
 }
 
 function renderParentDashboard(session, children) {
@@ -544,6 +647,12 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
   const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
   const teacherStore = new TeacherStore({ teachers: seed.teachers, classRoomStore: coreSchoolStore });
+  const attendanceStore = new AttendanceStore({
+    records: seed.attendanceRecords,
+    studentStore,
+    teacherStore,
+    classRoomStore: coreSchoolStore
+  });
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -663,6 +772,114 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       const students = studentStore.list(auth.context.tenantId, { classRoomId: classRoomId || undefined });
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderStudentsPage(auth.context, classRooms, students, classRoomId));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/teacher/attendance') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canTakeAttendance(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      const classRooms = teacher ? teacher.classRoomIds.map((id) => coreSchoolStore.get('classRooms', auth.context.tenantId, id)).filter(Boolean) : [];
+      const selectedDateRaw = url.searchParams.get('date') || todayIsoDate();
+      const selectedDate = requireDateString(selectedDateRaw, 'date');
+      const selectedClassRoomId = url.searchParams.get('classRoomId') || classRooms[0]?.id || '';
+
+      if (selectedClassRoomId && !classRooms.some((classRoom) => classRoom.id === selectedClassRoomId)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const students = selectedClassRoomId ? studentStore.list(auth.context.tenantId, { classRoomId: selectedClassRoomId }) : [];
+      const attendanceByStudentId = new Map(
+        attendanceStore
+          .list(auth.context.tenantId, { date: selectedDate, classRoomId: selectedClassRoomId })
+          .map((record) => [record.studentId, record])
+      );
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(
+        renderTeacherAttendancePage(auth.context, {
+          teacher,
+          classRooms,
+          selectedClassRoomId,
+          selectedDate,
+          students,
+          attendanceByStudentId
+        })
+      );
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/teacher/attendance') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canTakeAttendance(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      let redirectDate = '';
+      let redirectClass = '';
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        redirectDate = form.get('date');
+        redirectClass = form.get('classRoomId');
+        const studentIds = form.getAll('studentId');
+        const statuses = form.getAll('status');
+        const records = studentIds.map((studentId, index) => ({
+          studentId,
+          status: statuses[index] ?? ''
+        }));
+        attendanceStore.upsertForClass(auth.context.tenantId, {
+          teacherId: auth.context.userId,
+          classRoomId: form.get('classRoomId'),
+          date: form.get('date'),
+          records
+        });
+      } catch {
+        // no-op to keep teacher flow fast
+      }
+
+      response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}` });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/attendance') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewAttendanceAdmin(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const selectedDate = requireDateString(url.searchParams.get('date') || todayIsoDate(), 'date');
+      const selectedClassRoomId = url.searchParams.get('classRoomId') || '';
+      const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
+      const records = attendanceStore.list(auth.context.tenantId, {
+        date: selectedDate,
+        classRoomId: selectedClassRoomId || undefined
+      });
+      const studentsById = new Map(studentStore.list(auth.context.tenantId, { includeArchived: true }).map((student) => [student.id, student]));
+      const teachersById = new Map(teacherStore.list(auth.context.tenantId, { includeArchived: true }).map((teacher) => [teacher.id, teacher]));
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(
+        renderAdminAttendancePage(auth.context, {
+          date: selectedDate,
+          classRooms,
+          selectedClassRoomId,
+          records,
+          studentsById,
+          teachersById
+        })
+      );
       return;
     }
 
@@ -889,6 +1106,50 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
 
       response.writeHead(302, { location: `/admin/parents/${parentId}` });
       response.end();
+      return;
+    }
+
+    if (url.pathname === '/api/v1/attendance' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+        const date = url.searchParams.get('date') ? requireDateString(url.searchParams.get('date'), 'date') : undefined;
+        const classRoomId = url.searchParams.get('classRoomId') || undefined;
+        const records = attendanceStore.list(tenantId, { date, classRoomId });
+        sendApiSuccess(response, records);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/attendance' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.TEACHER] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const saved = attendanceStore.upsertForClass(session.tenantId, {
+          teacherId: session.userId,
+          classRoomId: payload.classRoomId,
+          date: payload.date,
+          records: payload.records
+        });
+        sendApiSuccess(response, saved, 201);
+      } catch (error) {
+        const message = error.message === 'Teacher is not authorized for this class room' ? 'FORBIDDEN_CLASSROOM' : error.message;
+        const status = error.message === 'Teacher is not authorized for this class room' ? 403 : error.status ?? 422;
+        const code = error.message === 'Teacher is not authorized for this class room' ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        sendApiError(response, status, code, message);
+      }
       return;
     }
 
