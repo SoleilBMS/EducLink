@@ -145,6 +145,11 @@ class FinanceStore {
       throw buildValidationError('amountPaid must be greater than 0');
     }
 
+    const invoiceSummary = this.summarizeInvoice(invoice);
+    if (payload.amountPaid > invoiceSummary.remainingBalance) {
+      throw buildValidationError('amountPaid cannot exceed the remaining balance');
+    }
+
     const now = new Date().toISOString();
     const created = {
       id: `payment-${crypto.randomUUID()}`,
