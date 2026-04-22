@@ -1065,3 +1065,120 @@ test('isolation tenant stricte sur les notes et évaluations', async () => {
     assert.equal(payload.data.length, 0);
   });
 });
+
+test('school_admin peut publier une annonce', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const response = await apiFetch(baseUrl, '/api/v1/announcements', {
+      cookie,
+      method: 'POST',
+      body: { title: 'Info générale', body: 'Réunion parents vendredi', visibility: 'global' }
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.data.tenant_id, 'school-a');
+    assert.equal(payload.data.authorRole, 'school_admin');
+  });
+});
+
+test('un utilisateur ne voit que les annonces/messages de son tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    await apiFetch(baseUrl, '/api/v1/announcements', {
+      cookie: adminACookie,
+      method: 'POST',
+      body: { title: 'Annonce A', body: 'Tenant A seulement', visibility: 'global' }
+    });
+
+    const responseB = await apiFetch(baseUrl, '/api/v1/inbox', { cookie: adminBCookie });
+    assert.equal(responseB.status, 200);
+    const payloadB = await responseB.json();
+    assert.equal(payloadB.data.announcements.length, 0);
+  });
+});
+
+test('parent ne voit que les messages pertinents', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+
+    const threadResponse = await apiFetch(baseUrl, '/api/v1/message-threads', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        subject: 'Suivi enfant',
+        participantIds: ['parent-a1', 'teacher-a1'],
+        initialMessage: 'Bonjour, point sur la semaine.'
+      }
+    });
+    const threadPayload = await threadResponse.json();
+
+    const inboxResponse = await apiFetch(baseUrl, '/api/v1/inbox', { cookie: parentCookie });
+    assert.equal(inboxResponse.status, 200);
+    const inboxPayload = await inboxResponse.json();
+    assert.equal(inboxPayload.data.threads.length, 1);
+    assert.equal(inboxPayload.data.threads[0].id, threadPayload.data.thread.id);
+  });
+});
+
+test('teacher peut accéder uniquement aux threads autorisés', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+
+    const response = await apiFetch(baseUrl, '/api/v1/message-threads', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        subject: 'Thread parents uniquement',
+        participantIds: ['parent-a1'],
+        initialMessage: 'Message privé parent'
+      }
+    });
+    const payload = await response.json();
+
+    const forbiddenRead = await apiFetch(baseUrl, `/api/v1/message-threads/${payload.data.thread.id}`, { cookie: teacherCookie });
+    assert.equal(forbiddenRead.status, 403);
+  });
+});
+
+test('un utilisateur ne peut pas ouvrir un thread d’un autre tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    const response = await apiFetch(baseUrl, '/api/v1/message-threads', {
+      cookie: adminACookie,
+      method: 'POST',
+      body: {
+        subject: 'Thread A',
+        participantIds: ['teacher-a1'],
+        initialMessage: 'Message du tenant A'
+      }
+    });
+    const payload = await response.json();
+
+    const crossTenantRead = await apiFetch(baseUrl, `/api/v1/message-threads/${payload.data.thread.id}`, { cookie: adminBCookie });
+    assert.equal(crossTenantRead.status, 404);
+  });
+});
+
+test('refus d’accès propre sur écriture non autorisée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+
+    const response = await apiFetch(baseUrl, '/api/v1/announcements', {
+      cookie: parentCookie,
+      method: 'POST',
+      body: { title: 'Interdit', body: 'Un parent ne publie pas', visibility: 'global' }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});

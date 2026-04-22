@@ -11,6 +11,7 @@ const { TeacherStore } = require('./modules/teacher');
 const { AttendanceStore, ATTENDANCE_STATUSES, requireDateString } = require('./modules/attendance');
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
+const { MessagingStore } = require('./modules/messaging');
 
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
@@ -129,7 +130,10 @@ function createSeedData() {
     lessonLogs: [],
     homeworks: [],
     assessments: [],
-    gradeEntries: []
+    gradeEntries: [],
+    announcements: [],
+    messageThreads: [],
+    messages: []
   };
 }
 
@@ -241,6 +245,18 @@ function canManageLessonHomework(session) {
   return session.role === ROLES.TEACHER;
 }
 
+function canAccessInbox(session) {
+  return [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT].includes(session.role);
+}
+
+function canPublishAnnouncements(session) {
+  return session.role === ROLES.SCHOOL_ADMIN;
+}
+
+function canCreateThreads(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.TEACHER;
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -295,7 +311,9 @@ function renderAdminDashboard(session, metrics) {
     <p><a href="/admin/students">Gérer les élèves</a></p>
     <p><a href="/admin/parents">Gérer les responsables</a></p>
     <p><a href="/admin/teachers">Gérer les enseignants</a></p>
-    <p><a href="/admin/attendance">Consulter les présences</a></p>`
+    <p><a href="/admin/attendance">Consulter les présences</a></p>
+    <p><a href="/admin/announcements">Publier une annonce</a></p>
+    <p><a href="/inbox">Ouvrir l'inbox</a></p>`
   );
 }
 
@@ -329,6 +347,7 @@ function renderTeacherDashboard(session, teacher, classRooms, subjects) {
     <p><a href="/teacher/attendance">Faire l'appel</a></p>
     <p><a href="/teacher/lesson-homework">Cahier de texte & devoirs</a></p>
     <p><a href="/teacher/grades">Évaluations & notes</a></p>
+    <p><a href="/inbox">Ouvrir l'inbox</a></p>
     <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>`
   );
 }
@@ -434,7 +453,8 @@ function renderParentDashboard(session, children) {
     <h2>Informations utiles</h2>
     <p><a href="/parent/homeworks">Consulter les devoirs</a></p>
     <p><a href="/parent/grades">Consulter les notes</a></p>
-    <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>`
+    <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>
+    <p><a href="/inbox">Ouvrir l'inbox</a></p>`
   );
 }
 
@@ -447,8 +467,73 @@ function renderStudentDashboard(session, student) {
     <p>Classe: ${student?.classRoomId ?? '-'}</p>
     <p>Matricule: ${student?.admissionNumber ?? '-'}</p>
     <p><a href="/student/homeworks">Mes devoirs</a></p>
-    <p><a href="/student/grades">Mes notes</a></p>`
+    <p><a href="/student/grades">Mes notes</a></p>
+    <p><a href="/inbox">Ouvrir l'inbox</a></p>`
   );
+}
+
+function renderInboxPage(session, inbox) {
+  const announcementRows = inbox.announcements
+    .map((item) => `<li><strong>${item.title}</strong> (${item.visibility})<br/>${item.body}</li>`)
+    .join('');
+
+  const threadRows = inbox.threads
+    .map((thread) => `<li><a href="/inbox/threads/${thread.id}">${thread.subject}</a> — ${thread.messageCount} message(s)</li>`)
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Inbox</title></head><body>
+    <h1>Inbox interne</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <h2>Annonces</h2>
+    <ul>${announcementRows || '<li>Aucune annonce</li>'}</ul>
+    <h2>Threads</h2>
+    <ul>${threadRows || '<li>Aucun thread</li>'}</ul>
+    <p><a href="/dashboard">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderThreadPage(session, thread) {
+  const rows = thread.messages
+    .map((message) => `<li><strong>${message.senderId}</strong> (${message.created_at}): ${message.body}</li>`)
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Thread</title></head><body>
+    <h1>Thread: ${thread.subject}</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <p>Participants: ${thread.participantIds.join(', ')}</p>
+    <ul>${rows || '<li>Aucun message</li>'}</ul>
+    <form method="POST" action="/inbox/threads/${thread.id}/reply">
+      <label>Réponse <textarea name="body" required></textarea></label><br/>
+      <button type="submit">Envoyer</button>
+    </form>
+    <p><a href="/inbox">Retour inbox</a></p>
+  </body></html>`;
+}
+
+function renderAdminAnnouncementsPage(session, announcements) {
+  const rows = announcements
+    .map((item) => `<li><strong>${item.title}</strong> (${item.visibility}) - ${item.created_at}<br/>${item.body}</li>`)
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Announcements</title></head><body>
+    <h1>Publication d'annonces</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <form method="POST" action="/admin/announcements">
+      <label>Titre <input name="title" required /></label><br/>
+      <label>Message <textarea name="body" required></textarea></label><br/>
+      <label>Visibilité
+        <select name="visibility">
+          <option value="global">global</option>
+          <option value="roles">roles</option>
+        </select>
+      </label><br/>
+      <label>Rôles (csv si visibility=roles) <input name="roles" /></label><br/>
+      <button type="submit">Publier</button>
+    </form>
+    <h2>Annonces existantes</h2>
+    <ul>${rows || '<li>Aucune annonce</li>'}</ul>
+    <p><a href="/dashboard/admin">Retour dashboard</a></p>
+  </body></html>`;
 }
 
 function renderTeacherLessonHomeworkPage(session, { teacher, classRooms, subjects, lessonLogs, homeworks }) {
@@ -844,6 +929,11 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     teacherStore,
     studentStore,
     parentStore
+  });
+  const messagingStore = new MessagingStore({
+    announcements: seed.announcements,
+    threads: seed.messageThreads,
+    messages: seed.messages
   });
 
   return http.createServer(async (request, response) => {
@@ -1531,6 +1621,224 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
 
       response.writeHead(302, { location: `/admin/parents/${parentId}` });
       response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/inbox') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canAccessInbox(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const inbox = messagingStore.getInbox(auth.context.tenantId, auth.context);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderInboxPage(auth.context, inbox));
+      return;
+    }
+
+    const inboxThreadMatch = url.pathname.match(/^\/inbox\/threads\/([^/]+)$/);
+    if (request.method === 'GET' && inboxThreadMatch) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canAccessInbox(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const thread = messagingStore.getThreadForUser(auth.context.tenantId, inboxThreadMatch[1], auth.context.userId);
+      if (!thread) {
+        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Not found');
+        return;
+      }
+
+      if (thread === 'forbidden') {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderThreadPage(auth.context, thread));
+      return;
+    }
+
+    const inboxReplyMatch = url.pathname.match(/^\/inbox\/threads\/([^/]+)\/reply$/);
+    if (request.method === 'POST' && inboxReplyMatch) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canAccessInbox(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        messagingStore.addMessage(auth.context.tenantId, inboxReplyMatch[1], auth.context.userId, { body: form.get('body') });
+      } catch {
+        // no-op for MVP
+      }
+
+      response.writeHead(302, { location: `/inbox/threads/${inboxReplyMatch[1]}` });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/announcements') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canPublishAnnouncements(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const announcements = messagingStore.listAnnouncementsForUser(auth.context.tenantId, auth.context);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminAnnouncementsPage(auth.context, announcements));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/announcements') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canPublishAnnouncements(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        const rolesRaw = form.get('roles');
+        const roles = rolesRaw ? rolesRaw.split(',').map((entry) => entry.trim()).filter(Boolean) : [];
+        messagingStore.createAnnouncement(auth.context.tenantId, auth.context, {
+          title: form.get('title'),
+          body: form.get('body'),
+          visibility: form.get('visibility'),
+          roles
+        });
+      } catch {
+        // no-op for MVP
+      }
+
+      response.writeHead(302, { location: '/admin/announcements' });
+      response.end();
+      return;
+    }
+
+    if (url.pathname === '/api/v1/announcements' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const announcement = messagingStore.createAnnouncement(session.tenantId, session, payload);
+        sendApiSuccess(response, announcement, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/announcements' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      sendApiSuccess(response, messagingStore.listAnnouncementsForUser(session.tenantId, session));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/inbox' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      sendApiSuccess(response, messagingStore.getInbox(session.tenantId, session));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/message-threads' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.TEACHER] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const created = messagingStore.createThread(session.tenantId, session, payload);
+        sendApiSuccess(response, created, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    const messageThreadByIdMatch = url.pathname.match(/^\/api\/v1\/message-threads\/([^/]+)$/);
+    if (messageThreadByIdMatch && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      const thread = messagingStore.getThreadForUser(session.tenantId, messageThreadByIdMatch[1], session.userId);
+      if (!thread) {
+        sendApiError(response, 404, 'NOT_FOUND', 'Thread not found');
+        return;
+      }
+
+      if (thread === 'forbidden') {
+        sendApiError(response, 403, 'FORBIDDEN', 'Not allowed to access this thread');
+        return;
+      }
+
+      sendApiSuccess(response, thread);
+      return;
+    }
+
+    const messageThreadReplyMatch = url.pathname.match(/^\/api\/v1\/message-threads\/([^/]+)\/messages$/);
+    if (messageThreadReplyMatch && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const message = messagingStore.addMessage(session.tenantId, messageThreadReplyMatch[1], session.userId, payload);
+        if (!message) {
+          sendApiError(response, 404, 'NOT_FOUND', 'Thread not found');
+          return;
+        }
+
+        if (message === 'forbidden') {
+          sendApiError(response, 403, 'FORBIDDEN', 'Not allowed to reply in this thread');
+          return;
+        }
+
+        sendApiSuccess(response, message, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
       return;
     }
 
