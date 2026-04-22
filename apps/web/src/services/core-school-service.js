@@ -3,19 +3,35 @@ class CoreSchoolService {
     this.coreSchoolStore = coreSchoolStore;
   }
 
-  listClassRooms(tenantId) {
+  async listClassRooms(tenantId) {
+    if (typeof this.coreSchoolStore.listClassRooms === 'function') {
+      return this.coreSchoolStore.listClassRooms(tenantId);
+    }
+
     return this.coreSchoolStore.list('classRooms', tenantId);
   }
 
-  listSubjects(tenantId) {
+  async listSubjects(tenantId) {
+    if (typeof this.coreSchoolStore.listSubjects === 'function') {
+      return this.coreSchoolStore.listSubjects(tenantId);
+    }
+
     return this.coreSchoolStore.list('subjects', tenantId);
   }
 
-  getClassRoom(tenantId, classRoomId) {
+  async getClassRoom(tenantId, classRoomId) {
+    if (typeof this.coreSchoolStore.getClassRoom === 'function') {
+      return this.coreSchoolStore.getClassRoom(tenantId, classRoomId);
+    }
+
     return this.coreSchoolStore.get('classRooms', tenantId, classRoomId);
   }
 
-  getSubject(tenantId, subjectId) {
+  async getSubject(tenantId, subjectId) {
+    if (typeof this.coreSchoolStore.getSubject === 'function') {
+      return this.coreSchoolStore.getSubject(tenantId, subjectId);
+    }
+
     return this.coreSchoolStore.get('subjects', tenantId, subjectId);
   }
 }

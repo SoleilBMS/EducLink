@@ -266,3 +266,16 @@ Différenciation IA :
 Faire d’EducLink la référence du digital scolaire privé en Algérie puis en Afrique francophone.
 
 ---
+
+## Persistance PostgreSQL (phase hardening)
+
+Une couche de persistance durable est maintenant disponible en mode transition.
+
+- Mode défaut: `EDUCLINK_PERSISTENCE=memory` (comportement MVP actuel).
+- Mode DB: `EDUCLINK_PERSISTENCE=postgres` + `DATABASE_URL`.
+- Migrations SQL versionnées: `packages/database/migrations`.
+- Commandes:
+  - `npm run db:migrate`
+  - `npm run db:seed`
+
+Voir `docs/persistence.md` pour le setup local complet, la stratégie tenant, et la coexistence mémoire/DB.

@@ -4,31 +4,31 @@ class StudentService {
     this.coreSchoolService = coreSchoolService;
   }
 
-  listStudents(tenantId, { classRoomId } = {}) {
+  async listStudents(tenantId, { classRoomId } = {}) {
     return this.studentStore.list(tenantId, { classRoomId });
   }
 
-  getStudent(tenantId, studentId, options) {
+  async getStudent(tenantId, studentId, options) {
     return this.studentStore.get(tenantId, studentId, options);
   }
 
-  createStudent(tenantId, payload) {
+  async createStudent(tenantId, payload) {
     return this.studentStore.create(tenantId, payload);
   }
 
-  updateStudent(tenantId, studentId, payload) {
+  async updateStudent(tenantId, studentId, payload) {
     return this.studentStore.update(tenantId, studentId, payload);
   }
 
-  archiveStudent(tenantId, studentId) {
+  async archiveStudent(tenantId, studentId) {
     return this.studentStore.archive(tenantId, studentId);
   }
 
-  listClassRooms(tenantId) {
+  async listClassRooms(tenantId) {
     return this.coreSchoolService.listClassRooms(tenantId);
   }
 
-  listSubjects(tenantId) {
+  async listSubjects(tenantId) {
     return this.coreSchoolService.listSubjects(tenantId);
   }
 }
