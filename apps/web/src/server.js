@@ -9,6 +9,7 @@ const { StudentStore, buildValidationError } = require('./modules/student');
 const { ParentStore } = require('./modules/parent');
 const { TeacherStore } = require('./modules/teacher');
 const { AttendanceStore, ATTENDANCE_STATUSES, requireDateString } = require('./modules/attendance');
+const { LessonHomeworkStore } = require('./modules/lesson-homework');
 
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
@@ -123,7 +124,9 @@ function createSeedData() {
         updated_at: new Date().toISOString()
       }
     ],
-    attendanceRecords: []
+    attendanceRecords: [],
+    lessonLogs: [],
+    homeworks: []
   };
 }
 
@@ -231,6 +234,10 @@ function canViewAttendanceAdmin(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
 
+function canManageLessonHomework(session) {
+  return session.role === ROLES.TEACHER;
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -317,6 +324,7 @@ function renderTeacherDashboard(session, teacher, classRooms, subjects) {
     <h2>Raccourcis métier</h2>
     <p><a href="/admin/students">Mes classes</a></p>
     <p><a href="/teacher/attendance">Faire l'appel</a></p>
+    <p><a href="/teacher/lesson-homework">Cahier de texte & devoirs</a></p>
     <p>Grading: placeholder MVP</p>
     <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>`
   );
@@ -421,8 +429,8 @@ function renderParentDashboard(session, children) {
     `<h2>Mes enfants</h2>
     ${list}
     <h2>Informations utiles</h2>
-    <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>
-    <p>Devoirs/notes: placeholder MVP</p>`
+    <p><a href="/parent/homeworks">Consulter les devoirs</a></p>
+    <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>`
   );
 }
 
@@ -434,8 +442,79 @@ function renderStudentDashboard(session, student) {
     <p>Nom: ${student ? `${student.firstName} ${student.lastName}` : 'Profil étudiant non trouvé'}</p>
     <p>Classe: ${student?.classRoomId ?? '-'}</p>
     <p>Matricule: ${student?.admissionNumber ?? '-'}</p>
-    <p>Emploi du temps/notes: placeholder MVP</p>`
+    <p><a href="/student/homeworks">Mes devoirs</a></p>`
   );
+}
+
+function renderTeacherLessonHomeworkPage(session, { teacher, classRooms, subjects, lessonLogs, homeworks }) {
+  const classOptions = classRooms.map((item) => `<option value="${item.id}">${item.name}</option>`).join('');
+  const subjectOptions = subjects.map((item) => `<option value="${item.id}">${item.name}</option>`).join('');
+  const lessonRows = lessonLogs
+    .map(
+      (log) => `<tr><td>${log.date}</td><td>${log.classRoomId}</td><td>${log.subjectId}</td><td>${log.content}</td></tr>`
+    )
+    .join('');
+  const homeworkRows = homeworks
+    .map(
+      (homework) =>
+        `<tr><td>${homework.assignedDate}</td><td>${homework.dueDate}</td><td>${homework.classRoomId}</td><td>${homework.subjectId}</td><td>${homework.title}</td><td>${homework.description}</td></tr>`
+    )
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teacher Lesson/Homework</title></head><body>
+    <h1>Cahier de texte & devoirs</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
+    <h2>Nouveau contenu de cours</h2>
+    <form method="POST" action="/teacher/lesson-logs">
+      <label>Date <input type="date" name="date" required /></label><br/>
+      <label>Classe <select name="classRoomId" required>${classOptions}</select></label><br/>
+      <label>Matière <select name="subjectId" required>${subjectOptions}</select></label><br/>
+      <label>Contenu <textarea name="content" required></textarea></label><br/>
+      <button type="submit">Publier lesson log</button>
+    </form>
+    <h2>Nouveau devoir</h2>
+    <form method="POST" action="/teacher/homeworks">
+      <label>Échéance <input type="date" name="dueDate" required /></label><br/>
+      <label>Classe <select name="classRoomId" required>${classOptions}</select></label><br/>
+      <label>Matière <select name="subjectId" required>${subjectOptions}</select></label><br/>
+      <label>Titre <input name="title" required /></label><br/>
+      <label>Description <textarea name="description" required></textarea></label><br/>
+      <button type="submit">Publier devoir</button>
+    </form>
+    <h2>Historique lesson logs</h2>
+    <table border="1"><thead><tr><th>Date</th><th>Classe</th><th>Matière</th><th>Contenu</th></tr></thead><tbody>${lessonRows}</tbody></table>
+    <h2>Historique devoirs</h2>
+    <table border="1"><thead><tr><th>Assigné le</th><th>À rendre le</th><th>Classe</th><th>Matière</th><th>Titre</th><th>Description</th></tr></thead><tbody>${homeworkRows}</tbody></table>
+    <p><a href="/dashboard/teacher">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderParentHomeworksPage(session, homeworks) {
+  const rows = homeworks
+    .map((homework) => {
+      const students = homework.students.map((student) => `${student.firstName} ${student.lastName}`).join(', ') || '-';
+      return `<tr><td>${homework.dueDate}</td><td>${homework.title}</td><td>${homework.description}</td><td>${homework.classRoomId}</td><td>${students}</td></tr>`;
+    })
+    .join('');
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parent Homeworks</title></head><body>
+    <h1>Devoirs de mes enfants</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <table border="1"><thead><tr><th>Échéance</th><th>Titre</th><th>Description</th><th>Classe</th><th>Enfant concerné</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard/parent">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderStudentHomeworksPage(session, student, homeworks) {
+  const rows = homeworks
+    .map((homework) => `<tr><td>${homework.dueDate}</td><td>${homework.subjectId}</td><td>${homework.title}</td><td>${homework.description}</td></tr>`)
+    .join('');
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Student Homeworks</title></head><body>
+    <h1>Mes devoirs</h1>
+    <p>Étudiant: ${student ? `${student.firstName} ${student.lastName}` : '-'}</p>
+    <table border="1"><thead><tr><th>Échéance</th><th>Matière</th><th>Titre</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard/student">Retour dashboard</a></p>
+  </body></html>`;
 }
 
 function renderAccountantDashboard(session) {
@@ -653,6 +732,14 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     teacherStore,
     classRoomStore: coreSchoolStore
   });
+  const lessonHomeworkStore = new LessonHomeworkStore({
+    lessonLogs: seed.lessonLogs,
+    homeworks: seed.homeworks,
+    classRoomStore: coreSchoolStore,
+    teacherStore,
+    studentStore,
+    parentStore
+  });
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -848,6 +935,107 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
 
       response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}` });
       response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/teacher/lesson-homework') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageLessonHomework(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      const classRooms = teacher ? teacher.classRoomIds.map((id) => coreSchoolStore.get('classRooms', auth.context.tenantId, id)).filter(Boolean) : [];
+      const subjects = teacher ? teacher.subjectIds.map((id) => coreSchoolStore.get('subjects', auth.context.tenantId, id)).filter(Boolean) : [];
+      const lessonLogs = lessonHomeworkStore.listLessonLogsForTeacher(auth.context.tenantId, auth.context.userId);
+      const homeworks = lessonHomeworkStore.listHomeworksForTeacher(auth.context.tenantId, auth.context.userId);
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderTeacherLessonHomeworkPage(auth.context, { teacher, classRooms, subjects, lessonLogs, homeworks }));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/teacher/lesson-logs') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageLessonHomework(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        lessonHomeworkStore.createLessonLog(auth.context.tenantId, {
+          teacherId: auth.context.userId,
+          classRoomId: form.get('classRoomId'),
+          subjectId: form.get('subjectId'),
+          date: form.get('date'),
+          content: form.get('content')
+        });
+      } catch {
+        // no-op
+      }
+
+      response.writeHead(302, { location: '/teacher/lesson-homework' });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/teacher/homeworks') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageLessonHomework(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        lessonHomeworkStore.createHomework(auth.context.tenantId, {
+          teacherId: auth.context.userId,
+          classRoomId: form.get('classRoomId'),
+          subjectId: form.get('subjectId'),
+          dueDate: form.get('dueDate'),
+          title: form.get('title'),
+          description: form.get('description')
+        });
+      } catch {
+        // no-op
+      }
+
+      response.writeHead(302, { location: '/teacher/lesson-homework' });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/parent/homeworks') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.PARENT) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const homeworks = lessonHomeworkStore.listHomeworksForParent(auth.context.tenantId, auth.context.userId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentHomeworksPage(auth.context, homeworks));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/student/homeworks') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.STUDENT) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const student = studentStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      const homeworks = lessonHomeworkStore.listHomeworksForStudent(auth.context.tenantId, auth.context.userId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderStudentHomeworksPage(auth.context, student, homeworks));
       return;
     }
 
@@ -1150,6 +1338,98 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         const code = error.message === 'Teacher is not authorized for this class room' ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
         sendApiError(response, status, code, message);
       }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/lesson-logs' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.TEACHER] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const saved = lessonHomeworkStore.createLessonLog(session.tenantId, {
+          teacherId: session.userId,
+          classRoomId: payload.classRoomId,
+          subjectId: payload.subjectId,
+          date: payload.date,
+          content: payload.content
+        });
+        sendApiSuccess(response, saved, 201);
+      } catch (error) {
+        const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
+        const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        sendApiError(response, status, code, error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/lesson-logs' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.TEACHER] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      sendApiSuccess(response, lessonHomeworkStore.listLessonLogsForTeacher(session.tenantId, session.userId));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/homeworks' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.TEACHER] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const saved = lessonHomeworkStore.createHomework(session.tenantId, {
+          teacherId: session.userId,
+          classRoomId: payload.classRoomId,
+          subjectId: payload.subjectId,
+          dueDate: payload.dueDate,
+          title: payload.title,
+          description: payload.description
+        });
+        sendApiSuccess(response, saved, 201);
+      } catch (error) {
+        const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
+        const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        sendApiError(response, status, code, error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/homeworks' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      if (session.role === ROLES.TEACHER) {
+        sendApiSuccess(response, lessonHomeworkStore.listHomeworksForTeacher(session.tenantId, session.userId));
+        return;
+      }
+      if (session.role === ROLES.PARENT) {
+        sendApiSuccess(response, lessonHomeworkStore.listHomeworksForParent(session.tenantId, session.userId));
+        return;
+      }
+      if (session.role === ROLES.STUDENT) {
+        sendApiSuccess(response, lessonHomeworkStore.listHomeworksForStudent(session.tenantId, session.userId));
+        return;
+      }
+
+      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+      sendApiSuccess(
+        response,
+        lessonHomeworkStore.homeworks.filter((item) => item.tenant_id === tenantId)
+      );
       return;
     }
 
