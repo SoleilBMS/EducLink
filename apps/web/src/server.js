@@ -18,7 +18,13 @@ const { AiService, PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry,
 const { createStudentRoutes } = require('./routes/student-routes');
 const { createParentRoutes } = require('./routes/parent-routes');
 const { createTeacherRoutes } = require('./routes/teacher-routes');
+const { createAttendanceRoutes } = require('./routes/attendance-routes');
 const { parseCookies, parseExtendedForm, parseForm, parseJsonBody: parseJsonBodyRaw, readBody, sendApiError, sendApiSuccess, sendJson } = require('./routes/shared-http');
+const { CoreSchoolService } = require('./services/core-school-service');
+const { StudentService } = require('./services/student-service');
+const { ParentService } = require('./services/parent-service');
+const { TeacherService } = require('./services/teacher-service');
+const { AttendanceService } = require('./services/attendance-service');
 
 const users = [
   { id: 'super-admin', email: 'superadmin@platform.test', password: 'password123', role: ROLES.SUPER_ADMIN, tenantId: null },
@@ -1032,12 +1038,17 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       providerRegistry: aiProviderRegistry,
       logStore: aiLogStore
     });
+  const coreSchoolService = new CoreSchoolService({ coreSchoolStore });
+  const studentService = new StudentService({ studentStore, coreSchoolService });
+  const parentService = new ParentService({ parentStore, studentStore, buildValidationError });
+  const teacherService = new TeacherService({ teacherStore });
+  const attendanceService = new AttendanceService({ attendanceStore, requireDateString });
+
   const reportComments = [];
 
   const domainRouteHandlers = [
     createStudentRoutes({
-      studentStore,
-      coreSchoolStore,
+      studentService,
       auditWriter,
       sendApiError,
       sendApiSuccess,
@@ -1045,18 +1056,23 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       buildTenantScope
     }),
     createParentRoutes({
-      parentStore,
-      studentStore,
+      parentService,
       auditWriter,
       sendApiError,
       sendApiSuccess,
       parseJsonBody,
-      buildTenantScope,
-      buildValidationError
+      buildTenantScope
     }),
     createTeacherRoutes({
-      teacherStore,
+      teacherService,
       auditWriter,
+      sendApiError,
+      sendApiSuccess,
+      parseJsonBody,
+      buildTenantScope
+    }),
+    createAttendanceRoutes({
+      attendanceService,
       sendApiError,
       sendApiSuccess,
       parseJsonBody,
@@ -2193,50 +2209,6 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         sendApiSuccess(response, message, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-      }
-      return;
-    }
-
-    if (url.pathname === '/api/v1/attendance' && request.method === 'GET') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      try {
-        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const date = url.searchParams.get('date') ? requireDateString(url.searchParams.get('date'), 'date') : undefined;
-        const classRoomId = url.searchParams.get('classRoomId') || undefined;
-        const records = attendanceStore.list(tenantId, { date, classRoomId });
-        sendApiSuccess(response, records);
-      } catch (error) {
-        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-      }
-      return;
-    }
-
-    if (url.pathname === '/api/v1/attendance' && request.method === 'POST') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.TEACHER] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      try {
-        const payload = await parseJsonBody(request);
-        const saved = attendanceStore.upsertForClass(session.tenantId, {
-          teacherId: session.userId,
-          classRoomId: payload.classRoomId,
-          date: payload.date,
-          records: payload.records
-        });
-        sendApiSuccess(response, saved, 201);
-      } catch (error) {
-        const message = error.message === 'Teacher is not authorized for this class room' ? 'FORBIDDEN_CLASSROOM' : error.message;
-        const status = error.message === 'Teacher is not authorized for this class room' ? 403 : error.status ?? 422;
-        const code = error.message === 'Teacher is not authorized for this class room' ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
-        sendApiError(response, status, code, message);
       }
       return;
     }
