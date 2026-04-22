@@ -716,3 +716,179 @@ test('attendance respecte l’isolation tenant', async () => {
     assert.equal(payload.data.length, 0);
   });
 });
+
+test('teacher peut créer un lesson log pour une classe autorisée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/lesson-logs', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        date: '2026-04-22',
+        content: 'Fractions et simplification'
+      }
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.data.classRoomId, 'class-a1');
+    assert.equal(payload.data.subjectId, 'subject-a-math');
+  });
+});
+
+test('teacher peut créer un homework avec due date', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/homeworks', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        dueDate: '2026-04-28',
+        title: 'Exercices fractions',
+        description: 'Faire les exercices 1 à 5 page 43'
+      }
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.data.dueDate, '2026-04-28');
+  });
+});
+
+test('teacher ne peut pas publier sur une classe non autorisée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/homeworks', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a2',
+        subjectId: 'subject-a-math',
+        dueDate: '2026-04-28',
+        title: 'Interdit',
+        description: 'Classe non assignée'
+      }
+    });
+
+    assert.equal(response.status, 403);
+  });
+});
+
+test('teacher ne peut pas publier sur une matière non autorisée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/lesson-logs', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-fr',
+        date: '2026-04-22',
+        content: 'Tentative hors matière assignée'
+      }
+    });
+
+    assert.equal(response.status, 403);
+  });
+});
+
+test('parent voit uniquement les devoirs liés à ses enfants', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+
+    await apiFetch(baseUrl, '/api/v1/homeworks', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        dueDate: '2026-04-27',
+        title: 'HW A1',
+        description: 'Pour classe A1'
+      }
+    });
+
+    const listResponse = await apiFetch(baseUrl, '/api/v1/homeworks', { cookie: parentCookie });
+    assert.equal(listResponse.status, 200);
+    const payload = await listResponse.json();
+    assert.ok(payload.data.length >= 1);
+    assert.ok(payload.data.every((homework) => homework.classRoomId === 'class-a1' || homework.classRoomId === 'class-a2'));
+  });
+});
+
+test('student voit uniquement ses propres devoirs', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: studentCookie } = await login(baseUrl, 'student@school-a.test');
+
+    await apiFetch(baseUrl, '/api/v1/homeworks', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        dueDate: '2026-04-29',
+        title: 'HW Student',
+        description: 'Visible student-a1'
+      }
+    });
+
+    const response = await apiFetch(baseUrl, '/api/v1/homeworks', { cookie: studentCookie });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.ok(payload.data.length >= 1);
+    assert.ok(payload.data.every((homework) => homework.classRoomId === 'class-a1'));
+  });
+});
+
+test('lesson logs et homeworks respectent l’isolation tenant stricte', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    await apiFetch(baseUrl, '/api/v1/homeworks', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        dueDate: '2026-05-01',
+        title: 'Isolation',
+        description: 'Tenant A only'
+      }
+    });
+
+    const crossTenantRead = await apiFetch(baseUrl, '/api/v1/homeworks', { cookie: adminBCookie });
+    assert.equal(crossTenantRead.status, 200);
+    const payload = await crossTenantRead.json();
+    assert.equal(payload.data.length, 0);
+  });
+});
+
+test('listing teacher renvoie uniquement ses données autorisées', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+
+    await apiFetch(baseUrl, '/api/v1/lesson-logs', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        date: '2026-04-22',
+        content: 'Log pour listing'
+      }
+    });
+
+    const response = await apiFetch(baseUrl, '/api/v1/lesson-logs', { cookie });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.ok(payload.data.length >= 1);
+    assert.ok(payload.data.every((entry) => entry.teacherId === 'teacher-a1'));
+  });
+});
