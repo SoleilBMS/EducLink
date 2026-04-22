@@ -1,4 +1,5 @@
 const http = require('node:http');
+const { randomUUID } = require('node:crypto');
 
 const { authorizeApiRequest } = require('../../../packages/auth/src/guards/api-guard');
 const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
@@ -1602,7 +1603,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       }
 
       reportComments.push({
-        id: `report-comment-${crypto.randomUUID()}`,
+        id: `report-comment-${randomUUID()}`,
         tenant_id: auth.context.tenantId,
         teacherId: auth.context.userId,
         studentId,
@@ -2458,7 +2459,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           throw buildValidationError('Teacher is not authorized for this student');
         }
         const saved = {
-          id: `report-comment-${crypto.randomUUID()}`,
+          id: `report-comment-${randomUUID()}`,
           tenant_id: session.tenantId,
           teacherId: session.userId,
           studentId: payload.studentId,
