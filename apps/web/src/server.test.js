@@ -1268,3 +1268,141 @@ test('refus d’accès propre sur écriture non autorisée', async () => {
     assert.equal(payload.error.code, 'FORBIDDEN');
   });
 });
+
+test('parent ne voit pas les notes d’un élève non lié dans le même tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+
+    const createStudentResponse = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        firstName: 'Unlinked',
+        lastName: 'Student',
+        admissionNumber: 'A-UNLINK-1',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2013-09-09'
+      }
+    });
+    assert.equal(createStudentResponse.status, 201);
+    const createdStudent = await createStudentResponse.json();
+
+    const createAssessmentResponse = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Evaluation élève non lié',
+        date: '2026-04-30',
+        coefficient: 1
+      }
+    });
+    assert.equal(createAssessmentResponse.status, 201);
+    const assessment = await createAssessmentResponse.json();
+
+    const saveGradesResponse = await apiFetch(baseUrl, `/api/v1/assessments/${assessment.data.id}/grades`, {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        entries: [{ studentId: createdStudent.data.id, score: 8 }]
+      }
+    });
+    assert.equal(saveGradesResponse.status, 201);
+
+    const parentGradesResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: parentCookie });
+    assert.equal(parentGradesResponse.status, 200);
+    const parentGrades = await parentGradesResponse.json();
+    assert.ok(parentGrades.data.every((entry) => entry.studentId !== createdStudent.data.id));
+  });
+});
+
+test('parent d’un tenant A ne peut pas voir les devoirs du tenant B', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    const tenantBHomeworksResponse = await apiFetch(baseUrl, '/api/v1/homeworks?tenantId=school-b', { cookie: parentCookie });
+    assert.equal(tenantBHomeworksResponse.status, 200);
+    const tenantBHomeworks = await tenantBHomeworksResponse.json();
+    assert.ok(tenantBHomeworks.data.every((homework) => homework.tenant_id === 'school-a'));
+
+    const tenantBStudentsResponse = await apiFetch(baseUrl, '/api/v1/students/student-b1', { cookie: parentCookie });
+    assert.equal(tenantBStudentsResponse.status, 403);
+
+    const adminBGradesResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: adminBCookie });
+    assert.equal(adminBGradesResponse.status, 200);
+    const adminBGrades = await adminBGradesResponse.json();
+    assert.ok(adminBGrades.data.every((entry) => entry.tenant_id === 'school-b'));
+  });
+});
+
+test('teacher ne peut pas lire/écrire des notes hors classe assignée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const createAssessmentResponse = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a2',
+        subjectId: 'subject-a-math',
+        title: 'Classe non assignée',
+        date: '2026-05-01',
+        coefficient: 1
+      }
+    });
+    assert.equal(createAssessmentResponse.status, 403);
+
+    const adminTeacherResponse = await apiFetch(baseUrl, '/api/v1/teachers', { cookie: adminCookie });
+    assert.equal(adminTeacherResponse.status, 200);
+    const teacherPayload = await adminTeacherResponse.json();
+    const currentTeacher = teacherPayload.data.find((teacher) => teacher.id === 'teacher-a1');
+    assert.ok(currentTeacher);
+    assert.deepEqual(currentTeacher.classRoomIds, ['class-a1']);
+  });
+});
+
+test('school_admin ne peut jamais gérer les ressources d’un autre tenant via tenantId explicite', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const listResponse = await apiFetch(baseUrl, '/api/v1/students?tenantId=school-b', { cookie: adminACookie });
+    assert.equal(listResponse.status, 200);
+    const listPayload = await listResponse.json();
+    assert.ok(listPayload.data.every((student) => student.tenant_id === 'school-a'));
+
+    const createResponse = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie: adminACookie,
+      method: 'POST',
+      body: {
+        tenantId: 'school-b',
+        firstName: 'Cross',
+        lastName: 'Tenant',
+        admissionNumber: 'A-CROSS-1',
+        classRoomId: 'class-b1',
+        dateOfBirth: '2013-03-03'
+      }
+    });
+    assert.equal(createResponse.status, 422);
+  });
+});
+
+test('super_admin respecte les règles actuelles: endpoints métier non autorisés et tenantId explicite requis sans contournement', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: superAdminCookie } = await login(baseUrl, 'superadmin@platform.test');
+    assert.ok(superAdminCookie);
+
+    const listWithoutTenantResponse = await apiFetch(baseUrl, '/api/v1/students', { cookie: superAdminCookie });
+    assert.equal(listWithoutTenantResponse.status, 403);
+
+    const listWithTenantResponse = await apiFetch(baseUrl, '/api/v1/students?tenantId=school-a', { cookie: superAdminCookie });
+    assert.equal(listWithTenantResponse.status, 403);
+
+    const attendanceResponse = await apiFetch(baseUrl, '/api/v1/attendance?tenantId=school-a', { cookie: superAdminCookie });
+    assert.equal(attendanceResponse.status, 403);
+  });
+});
