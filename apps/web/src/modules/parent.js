@@ -236,6 +236,27 @@ class ParentStore {
     return updated;
   }
 
+  upsertLinksBatch(tenantId, parentId, studentIds, input = {}) {
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      throw buildValidationError('studentIds must be a non-empty array');
+    }
+
+    const parent = this.get(tenantId, parentId, { includeArchived: false });
+    if (!parent) {
+      throw buildValidationError('parentId must reference an existing parent in tenant scope');
+    }
+
+    const payload = validateLinkInput(input);
+    for (const studentId of studentIds) {
+      const student = this.studentStore.get(tenantId, studentId, { includeArchived: false });
+      if (!student) {
+        throw buildValidationError('studentId must reference an existing student in tenant scope');
+      }
+    }
+
+    return studentIds.map((studentId) => this.upsertLink(tenantId, parentId, studentId, payload));
+  }
+
   getParentWithLinks(tenantId, parentId) {
     const parent = this.get(tenantId, parentId, { includeArchived: true });
     if (!parent) {
