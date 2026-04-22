@@ -41,3 +41,19 @@ Les tests couvrent :
 - périmètre teacher,
 - accès global super_admin,
 - format d'erreur API pour accès non authentifié/interdit.
+
+## Durcissement auth/session (issue #48)
+
+Les mécanismes de session ont été renforcés sans changer le parcours produit principal :
+
+- **Sessions bornées dans le temps** : chaque session possède désormais une expiration serveur (`expiresAt`) avec TTL fixe (12h).
+- **Validation de session côté guard** : `requireAuth` et `authorizeApiRequest` rejettent les sessions incohérentes (rôle invalide, userId absent, tenant manquant hors `super_admin`).
+- **Protection anti-session fixation** : un ancien `sessionId` fourni au moment du login est invalidé avant émission de la nouvelle session.
+- **Cookies de session plus robustes** : cookie `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age` aligné sur la durée de vie serveur; suppression explicite du cookie au logout et en cas de session expirée/stale côté dashboard.
+- **Robustesse parsing cookie** : la lecture des cookies tolère mieux les valeurs corrompues/mal encodées.
+
+Impact attendu :
+
+- les sessions invalides/expirées sont rejetées plus tôt,
+- le cycle login/logout est plus fiable,
+- l’isolation RBAC/tenant existante reste inchangée et mieux protégée par des vérifications d’intégrité de session.

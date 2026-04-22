@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createServer } = require('./server');
+const { SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore } = require('./modules/ai');
 
 async function withServer(run, options = {}) {
@@ -54,6 +55,55 @@ test('redirection après login vers dashboard adapté au rôle', async () => {
     assert.equal(adminLogin.response.headers.get('location'), '/dashboard/admin');
     assert.equal(teacherLogin.response.headers.get('location'), '/dashboard/teacher');
     assert.equal(parentLogin.response.headers.get('location'), '/dashboard/parent');
+  });
+});
+
+
+
+test('login applique des attributs cookie de session sécurisés', async () => {
+  await withServer(async (baseUrl) => {
+    const adminLogin = await login(baseUrl, 'admin@school-a.test');
+    const setCookie = adminLogin.response.headers.get('set-cookie');
+
+    assert.ok(setCookie);
+    assert.match(setCookie, /HttpOnly/i);
+    assert.match(setCookie, /SameSite=Lax/i);
+    assert.match(setCookie, /Path=\//i);
+    assert.match(setCookie, /Max-Age=/i);
+  });
+});
+
+test('session expirée est rejetée proprement et cookie nettoyé', async () => {
+  let now = 1_000;
+  const sessionStore = new SessionStore({ ttlMs: 50, clock: () => now });
+
+  await withServer(async (baseUrl) => {
+    const adminLogin = await login(baseUrl, 'admin@school-a.test');
+
+    now = 1_200;
+    const expiredSessionResponse = await fetch(`${baseUrl}/dashboard/admin`, {
+      headers: { cookie: adminLogin.cookie },
+      redirect: 'manual'
+    });
+
+    assert.equal(expiredSessionResponse.status, 302);
+    assert.equal(expiredSessionResponse.headers.get('location'), '/login');
+    assert.match(expiredSessionResponse.headers.get('set-cookie') ?? '', /Max-Age=0/);
+  }, { sessionStore });
+});
+
+test('logout invalide réellement la session active', async () => {
+  await withServer(async (baseUrl) => {
+    const adminLogin = await login(baseUrl, 'admin@school-a.test');
+
+    await fetch(`${baseUrl}/logout`, {
+      method: 'POST',
+      headers: { cookie: adminLogin.cookie },
+      redirect: 'manual'
+    });
+
+    const afterLogoutResponse = await apiFetch(baseUrl, '/api/v1/students', { cookie: adminLogin.cookie });
+    assert.equal(afterLogoutResponse.status, 401);
   });
 });
 

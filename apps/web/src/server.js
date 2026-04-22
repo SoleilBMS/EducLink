@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { authorizeApiRequest } = require('../../../packages/auth/src/guards/api-guard');
 const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
 const { ROLES } = require('../../../packages/auth/src/roles/roles');
-const { SessionStore } = require('../../../packages/auth/src/session/session-store');
+const { DEFAULT_SESSION_TTL_MS, SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { CoreSchoolStore } = require('./modules/core-school');
 const { StudentStore, buildValidationError } = require('./modules/student');
 const { ParentStore } = require('./modules/parent');
@@ -213,6 +213,21 @@ function canCreateThreads(session) {
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+
+function buildSessionCookie(sessionId) {
+  return [
+    `sessionId=${sessionId}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${Math.floor(DEFAULT_SESSION_TTL_MS / 1000)}`
+  ].join('; ');
+}
+
+function clearSessionCookie() {
+  return 'sessionId=; HttpOnly; Max-Age=0; Path=/; SameSite=Lax';
 }
 
 function renderLoginPage(errorMessage = '') {
@@ -1124,7 +1139,9 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
     const cookies = parseCookies(request.headers.cookie);
-    const session = sessionStore.get(cookies.sessionId);
+    const rawSessionId = cookies.sessionId;
+    const session = sessionStore.get(rawSessionId);
+    const hasStaleSessionCookie = Boolean(rawSessionId && !session);
 
     if (request.method === 'GET' && url.pathname === '/login') {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -1143,7 +1160,11 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
 
       const createdSession = sessionStore.create({ userId: user.id, role: user.role, tenantId: user.tenantId });
       auditWriter.writeAuthEvent(createdSession, 'auth.login.success');
-      response.writeHead(302, { location: getDashboardPathForRole(user.role), 'set-cookie': `sessionId=${createdSession.id}; HttpOnly; Path=/; SameSite=Lax` });
+      if (rawSessionId) {
+        sessionStore.destroy(rawSessionId);
+      }
+
+      response.writeHead(302, { location: getDashboardPathForRole(user.role), 'set-cookie': buildSessionCookie(createdSession.id) });
       response.end();
       return;
     }
@@ -1152,8 +1173,8 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       if (session) {
         auditWriter.writeAuthEvent(session, 'auth.logout');
       }
-      sessionStore.destroy(cookies.sessionId);
-      response.writeHead(302, { location: '/login', 'set-cookie': 'sessionId=; Max-Age=0; Path=/; SameSite=Lax' });
+      sessionStore.destroy(rawSessionId);
+      response.writeHead(302, { location: '/login', 'set-cookie': clearSessionCookie() });
       response.end();
       return;
     }
@@ -1161,7 +1182,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     if (request.method === 'GET' && url.pathname === '/dashboard') {
       const auth = requireAuth(session);
       if (!auth.allowed) {
-        response.writeHead(302, { location: '/login' });
+        response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie() } : {}) });
         response.end();
         return;
       }
@@ -1175,7 +1196,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     if (request.method === 'GET' && dashboardRoleMatch) {
       const auth = requireAuth(session);
       if (!auth.allowed) {
-        response.writeHead(302, { location: '/login' });
+        response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie() } : {}) });
         response.end();
         return;
       }

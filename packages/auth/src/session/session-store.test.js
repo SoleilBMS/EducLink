@@ -17,6 +17,24 @@ test('SessionStore crée une session avec userId, role et tenantId', () => {
   assert.equal(session.userId, 'user-1');
   assert.equal(session.role, 'teacher');
   assert.equal(session.tenantId, 'school-a');
+  assert.equal(typeof session.expiresAt, 'number');
+  assert.ok(session.expiresAt > session.createdAt);
+});
+
+test('SessionStore invalide les sessions expirées', () => {
+  let now = 1_000;
+  const store = new SessionStore({ ttlMs: 500, clock: () => now });
+  const session = store.create({
+    userId: 'user-1',
+    role: 'teacher',
+    tenantId: 'school-a'
+  });
+
+  assert.ok(store.get(session.id));
+
+  now = 1_501;
+  assert.equal(store.get(session.id), null);
+  assert.equal(store.destroy(session.id), false);
 });
 
 test('toSessionContext expose le contexte complet pour une session authentifiée', () => {
@@ -25,7 +43,8 @@ test('toSessionContext expose le contexte complet pour une session authentifiée
     userId: 'user-1',
     role: 'parent',
     tenantId: 'school-a',
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 1000
   });
 
   assert.deepEqual(context, {
