@@ -210,3 +210,168 @@ test('accès refusé proprement si rôle non autorisé en écriture', async () =
     assert.equal(payload.error.code, 'FORBIDDEN');
   });
 });
+
+test('school_admin peut créer un parent', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/parents', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Salma',
+        lastName: 'Mourad',
+        phone: '+1 555-0100',
+        email: 'salma.parent@test.local',
+        address: '12 Main Street',
+        notes: 'Prefers SMS'
+      }
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.data.tenant_id, 'school-a');
+    assert.equal(payload.data.firstName, 'Salma');
+  });
+});
+
+test('school_admin peut lier un parent à plusieurs élèves', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const createParentResponse = await apiFetch(baseUrl, '/api/v1/parents', {
+      cookie,
+      method: 'POST',
+      body: { firstName: 'Rami', lastName: 'Tarek', email: 'rami@test.local' }
+    });
+    const parentPayload = await createParentResponse.json();
+
+    const createStudentOne = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Child',
+        lastName: 'One',
+        admissionNumber: 'A-411',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2013-01-01'
+      }
+    });
+    const studentOnePayload = await createStudentOne.json();
+
+    const createStudentTwo = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Child',
+        lastName: 'Two',
+        admissionNumber: 'A-412',
+        classRoomId: 'class-a2',
+        dateOfBirth: '2014-01-01'
+      }
+    });
+    const studentTwoPayload = await createStudentTwo.json();
+
+    const linkResponse = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}/links`, {
+      cookie,
+      method: 'POST',
+      body: {
+        studentIds: [studentOnePayload.data.id, studentTwoPayload.data.id],
+        relationship: 'guardian',
+        isPrimaryContact: true
+      }
+    });
+
+    assert.equal(linkResponse.status, 201);
+    const linkPayload = await linkResponse.json();
+    assert.equal(linkPayload.data.length, 2);
+
+    const parentDetails = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}`, { cookie });
+    const parentDetailsPayload = await parentDetails.json();
+    assert.equal(parentDetailsPayload.data.links.length, 2);
+  });
+});
+
+test('school_admin peut lier plusieurs responsables à un élève', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const createStudent = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Multi',
+        lastName: 'Responsible',
+        admissionNumber: 'A-510',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2013-06-06'
+      }
+    });
+    const studentPayload = await createStudent.json();
+
+    const parentOne = await apiFetch(baseUrl, '/api/v1/parents', {
+      cookie,
+      method: 'POST',
+      body: { firstName: 'Parent', lastName: 'One', email: 'parent1@test.local' }
+    });
+    const parentOnePayload = await parentOne.json();
+
+    const parentTwo = await apiFetch(baseUrl, '/api/v1/parents', {
+      cookie,
+      method: 'POST',
+      body: { firstName: 'Parent', lastName: 'Two', email: 'parent2@test.local' }
+    });
+    const parentTwoPayload = await parentTwo.json();
+
+    await apiFetch(baseUrl, `/api/v1/parents/${parentOnePayload.data.id}/links`, {
+      cookie,
+      method: 'POST',
+      body: { studentIds: [studentPayload.data.id], relationship: 'mother' }
+    });
+    await apiFetch(baseUrl, `/api/v1/parents/${parentTwoPayload.data.id}/links`, {
+      cookie,
+      method: 'POST',
+      body: { studentIds: [studentPayload.data.id], relationship: 'father' }
+    });
+
+    const studentParentsResponse = await apiFetch(baseUrl, `/api/v1/students/${studentPayload.data.id}/parents`, { cookie });
+    assert.equal(studentParentsResponse.status, 200);
+    const studentParentsPayload = await studentParentsResponse.json();
+    assert.equal(studentParentsPayload.data.length, 2);
+  });
+});
+
+test('isolation tenant stricte pour parents et liens', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    const createParentResponse = await apiFetch(baseUrl, '/api/v1/parents', {
+      cookie: adminACookie,
+      method: 'POST',
+      body: { firstName: 'Tenant', lastName: 'Scoped', email: 'tenant.a@test.local' }
+    });
+    const parentPayload = await createParentResponse.json();
+
+    const crossTenantRead = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}`, {
+      cookie: adminBCookie
+    });
+    assert.equal(crossTenantRead.status, 404);
+
+    const tenantBListResponse = await apiFetch(baseUrl, '/api/v1/parents', { cookie: adminBCookie });
+    const tenantBPayload = await tenantBListResponse.json();
+    assert.ok(tenantBPayload.data.every((parent) => parent.tenant_id === 'school-b'));
+  });
+});
+
+test('accès parent refusé si rôle non autorisé', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/parents', {
+      cookie,
+      method: 'POST',
+      body: { firstName: 'Denied', lastName: 'Director', email: 'denied@test.local' }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});

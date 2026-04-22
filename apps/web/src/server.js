@@ -6,6 +6,7 @@ const { ROLES } = require('../../../packages/auth/src/roles/roles');
 const { SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { CoreSchoolStore } = require('./modules/core-school');
 const { StudentStore, buildValidationError } = require('./modules/student');
+const { ParentStore } = require('./modules/parent');
 
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
@@ -45,7 +46,9 @@ function createSeedData() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }
-    ]
+    ],
+    parents: [],
+    studentParentLinks: []
   };
 }
 
@@ -96,6 +99,18 @@ function parseForm(formBody) {
   };
 }
 
+function parseExtendedForm(formBody) {
+  const searchParams = new URLSearchParams(formBody);
+  return {
+    get(name) {
+      return searchParams.get(name) ?? '';
+    },
+    getAll(name) {
+      return searchParams.getAll(name);
+    }
+  };
+}
+
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload));
@@ -125,6 +140,10 @@ function canViewStudents(session) {
   return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
 }
 
+function canManageParents(session) {
+  return session.role === ROLES.SCHOOL_ADMIN;
+}
+
 function renderLoginPage(errorMessage = '') {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EducLink - Login</title></head><body>
     <h1>Connexion EducLink</h1>
@@ -143,6 +162,7 @@ function renderDashboard(session) {
     <p>role: ${session.role}</p>
     <p>tenantId: ${session.tenantId}</p>
     <p><a href="/admin/students">Gérer les élèves</a></p>
+    <p><a href="/admin/parents">Gérer les responsables</a></p>
     <form method="POST" action="/logout"><button type="submit">Logout</button></form>
   </body></html>`;
 }
@@ -188,6 +208,80 @@ function renderStudentProfile(student) {
   </body></html>`;
 }
 
+function renderParentsPage(session, parents) {
+  const rows = parents
+    .map(
+      (parent) => `<tr>
+        <td><a href="/admin/parents/${parent.id}">${parent.firstName} ${parent.lastName}</a></td>
+        <td>${parent.phone || '-'}</td>
+        <td>${parent.email || '-'}</td>
+        <td>${parent.archived_at ? 'oui' : 'non'}</td>
+      </tr>`
+    )
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parents</title></head><body>
+    <h1>Gestion des responsables</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <h2>Créer un responsable</h2>
+    <form method="POST" action="/admin/parents">
+      <label>Prénom <input name="firstName" required /></label><br/>
+      <label>Nom <input name="lastName" required /></label><br/>
+      <label>Téléphone <input name="phone" /></label><br/>
+      <label>Email <input name="email" type="email" /></label><br/>
+      <label>Adresse <input name="address" /></label><br/>
+      <label>Notes <textarea name="notes"></textarea></label><br/>
+      <button type="submit">Créer</button>
+    </form>
+    <h2>Liste</h2>
+    <table border="1"><thead><tr><th>Nom</th><th>Téléphone</th><th>Email</th><th>Archivé</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderParentProfile(parent, students, links) {
+  const studentCheckboxes = students
+    .map((student) => `<label><input type="checkbox" name="studentIds" value="${student.id}" /> ${student.firstName} ${student.lastName} (${student.classRoomId})</label><br/>`)
+    .join('');
+  const linkRows = links
+    .map((link) => `<tr><td>${link.student?.firstName ?? '-'} ${link.student?.lastName ?? ''}</td><td>${link.relationship}</td><td>${link.isPrimaryContact ? 'oui' : 'non'}</td></tr>`)
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parent profile</title></head><body>
+    <h1>Fiche responsable</h1>
+    <p>id: ${parent.id}</p>
+    <p>Tenant: ${parent.tenant_id}</p>
+    <h2>Informations</h2>
+    <form method="POST" action="/admin/parents/${parent.id}/update">
+      <label>Prénom <input name="firstName" value="${parent.firstName}" required /></label><br/>
+      <label>Nom <input name="lastName" value="${parent.lastName}" required /></label><br/>
+      <label>Téléphone <input name="phone" value="${parent.phone}" /></label><br/>
+      <label>Email <input name="email" type="email" value="${parent.email}" /></label><br/>
+      <label>Adresse <input name="address" value="${parent.address}" /></label><br/>
+      <label>Notes <textarea name="notes">${parent.notes}</textarea></label><br/>
+      <button type="submit">Enregistrer</button>
+    </form>
+    <form method="POST" action="/admin/parents/${parent.id}/archive"><button type="submit">Archiver</button></form>
+    <h2>Lier à des élèves</h2>
+    <form method="POST" action="/admin/parents/${parent.id}/links">
+      ${studentCheckboxes}
+      <label>Relation
+        <select name="relationship">
+          <option value="guardian">Responsable</option>
+          <option value="mother">Mère</option>
+          <option value="father">Père</option>
+          <option value="other">Autre</option>
+        </select>
+      </label><br/>
+      <label>Contact principal <input type="checkbox" name="isPrimaryContact" value="true" /></label><br/>
+      <button type="submit">Lier</button>
+    </form>
+    <h2>Liens existants</h2>
+    <table border="1"><thead><tr><th>Élève</th><th>Relation</th><th>Principal</th></tr></thead><tbody>${linkRows}</tbody></table>
+    <p><a href="/admin/parents">Retour</a></p>
+  </body></html>`;
+}
+
 function buildTenantScope(session, params) {
   if (session.role === ROLES.SUPER_ADMIN) {
     return params.tenantId;
@@ -198,6 +292,7 @@ function buildTenantScope(session, params) {
 function createServer({ sessionStore = new SessionStore(), seed = createSeedData() } = {}) {
   const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms });
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
+  const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -279,6 +374,111 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
 
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderStudentProfile(student));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/parents') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageParents(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const parents = parentStore.list(auth.context.tenantId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentsPage(auth.context, parents));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/parents') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageParents(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        const created = parentStore.create(auth.context.tenantId, {
+          firstName: form.get('firstName'),
+          lastName: form.get('lastName'),
+          phone: form.get('phone'),
+          email: form.get('email'),
+          address: form.get('address'),
+          notes: form.get('notes')
+        });
+        response.writeHead(302, { location: `/admin/parents/${created.id}` });
+      } catch {
+        response.writeHead(302, { location: '/admin/parents' });
+      }
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && /^\/admin\/parents\/[^/]+$/.test(url.pathname)) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageParents(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const parentId = url.pathname.split('/').at(-1);
+      const parentWithLinks = parentStore.getParentWithLinks(auth.context.tenantId, parentId);
+      if (!parentWithLinks) {
+        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Not found');
+        return;
+      }
+
+      const students = studentStore.list(auth.context.tenantId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentProfile(parentWithLinks, students, parentWithLinks.links));
+      return;
+    }
+
+    const adminParentIdMatch = url.pathname.match(/^\/admin\/parents\/([^/]+)\/(update|archive|links)$/);
+    if (adminParentIdMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageParents(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const parentId = adminParentIdMatch[1];
+      const action = adminParentIdMatch[2];
+      const form = parseExtendedForm(await readBody(request));
+
+      try {
+        if (action === 'update') {
+          parentStore.update(auth.context.tenantId, parentId, {
+            firstName: form.get('firstName'),
+            lastName: form.get('lastName'),
+            phone: form.get('phone'),
+            email: form.get('email'),
+            address: form.get('address'),
+            notes: form.get('notes')
+          });
+        } else if (action === 'archive') {
+          parentStore.archive(auth.context.tenantId, parentId);
+        } else if (action === 'links') {
+          const studentIds = form.getAll('studentIds');
+          for (const studentId of studentIds) {
+            parentStore.upsertLink(auth.context.tenantId, parentId, studentId, {
+              relationship: form.get('relationship'),
+              isPrimaryContact: form.get('isPrimaryContact')
+            });
+          }
+        }
+      } catch {
+        // no-op; user keeps workflow simple
+      }
+
+      response.writeHead(302, { location: `/admin/parents/${parentId}` });
+      response.end();
       return;
     }
 
@@ -379,6 +579,147 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         sendApiSuccess(response, archived);
         return;
       }
+    }
+
+    if (url.pathname === '/api/v1/parents' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+      sendApiSuccess(response, parentStore.list(tenantId));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/parents' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const tenantId = buildTenantScope(session, payload);
+        const parent = parentStore.create(tenantId, payload);
+        sendApiSuccess(response, parent, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    const parentByIdMatch = url.pathname.match(/^\/api\/v1\/parents\/([^/]+)$/);
+    if (parentByIdMatch) {
+      const parentId = parentByIdMatch[1];
+      if (request.method === 'GET') {
+        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+        if (!auth.ok) {
+          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+          return;
+        }
+
+        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+        const parent = parentStore.getParentWithLinks(tenantId, parentId);
+        if (!parent) {
+          sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
+          return;
+        }
+        sendApiSuccess(response, parent);
+        return;
+      }
+
+      if (request.method === 'PUT') {
+        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+        if (!auth.ok) {
+          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+          return;
+        }
+
+        try {
+          const payload = await parseJsonBody(request);
+          const tenantId = buildTenantScope(session, payload);
+          const updated = parentStore.update(tenantId, parentId, payload);
+          if (!updated) {
+            sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
+            return;
+          }
+          sendApiSuccess(response, updated);
+        } catch (error) {
+          sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+        }
+        return;
+      }
+
+      if (request.method === 'DELETE') {
+        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+        if (!auth.ok) {
+          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+          return;
+        }
+        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+        const archived = parentStore.archive(tenantId, parentId);
+        if (!archived) {
+          sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
+          return;
+        }
+        sendApiSuccess(response, archived);
+        return;
+      }
+    }
+
+    const parentLinksMatch = url.pathname.match(/^\/api\/v1\/parents\/([^/]+)\/links$/);
+    if (parentLinksMatch && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const tenantId = buildTenantScope(session, payload);
+        if (!Array.isArray(payload.studentIds) || payload.studentIds.length === 0) {
+          throw buildValidationError('studentIds must be a non-empty array');
+        }
+
+        const links = payload.studentIds.map((studentId) =>
+          parentStore.upsertLink(tenantId, parentLinksMatch[1], studentId, {
+            relationship: payload.relationship,
+            isPrimaryContact: payload.isPrimaryContact
+          })
+        );
+
+        sendApiSuccess(response, links, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    const studentParentsMatch = url.pathname.match(/^\/api\/v1\/students\/([^/]+)\/parents$/);
+    if (studentParentsMatch && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+      const student = studentStore.get(tenantId, studentParentsMatch[1], { includeArchived: false });
+      if (!student) {
+        sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
+        return;
+      }
+
+      const links = parentStore.listLinksByStudent(tenantId, studentParentsMatch[1]).map((link) => ({
+        ...link,
+        parent: parentStore.get(tenantId, link.parentId, { includeArchived: true })
+      }));
+      sendApiSuccess(response, links);
+      return;
     }
 
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
