@@ -375,3 +375,153 @@ test('accès parent refusé si rôle non autorisé', async () => {
     assert.equal(payload.error.code, 'FORBIDDEN');
   });
 });
+
+test('school_admin peut créer un enseignant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/teachers', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Ines',
+        lastName: 'Mansouri',
+        email: 'ines.teacher@test.local',
+        phone: '+1-555-0400',
+        notes: 'Titulaire cycle primaire',
+        classRoomIds: ['class-a1'],
+        subjectIds: ['subject-a-math']
+      }
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.data.tenant_id, 'school-a');
+    assert.equal(payload.data.classRoomIds.length, 1);
+    assert.equal(payload.data.subjectIds.length, 1);
+  });
+});
+
+test('school_admin peut modifier un enseignant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const createResponse = await apiFetch(baseUrl, '/api/v1/teachers', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Rachid',
+        lastName: 'Amar',
+        email: 'rachid.teacher@test.local',
+        classRoomIds: ['class-a1'],
+        subjectIds: ['subject-a-math']
+      }
+    });
+    const createdPayload = await createResponse.json();
+
+    const updateResponse = await apiFetch(baseUrl, `/api/v1/teachers/${createdPayload.data.id}`, {
+      cookie,
+      method: 'PUT',
+      body: {
+        firstName: 'Rachid',
+        lastName: 'Amar',
+        email: 'rachid.teacher.updated@test.local',
+        phone: '+1-555-0401',
+        notes: 'Updated profile',
+        classRoomIds: ['class-a2'],
+        subjectIds: ['subject-a-fr']
+      }
+    });
+
+    assert.equal(updateResponse.status, 200);
+    const updatedPayload = await updateResponse.json();
+    assert.equal(updatedPayload.data.email, 'rachid.teacher.updated@test.local');
+    assert.deepEqual(updatedPayload.data.classRoomIds, ['class-a2']);
+    assert.deepEqual(updatedPayload.data.subjectIds, ['subject-a-fr']);
+  });
+});
+
+test('school_admin peut affecter un enseignant à plusieurs classes', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const createResponse = await apiFetch(baseUrl, '/api/v1/teachers', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Mona',
+        lastName: 'Halim',
+        email: 'mona.teacher@test.local',
+        classRoomIds: ['class-a1', 'class-a2'],
+        subjectIds: ['subject-a-math']
+      }
+    });
+
+    assert.equal(createResponse.status, 201);
+    const payload = await createResponse.json();
+    assert.deepEqual(payload.data.classRoomIds, ['class-a1', 'class-a2']);
+  });
+});
+
+test('school_admin peut affecter un enseignant à plusieurs matières', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const createResponse = await apiFetch(baseUrl, '/api/v1/teachers', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Tariq',
+        lastName: 'Salhi',
+        email: 'tariq.teacher@test.local',
+        classRoomIds: ['class-a1'],
+        subjectIds: ['subject-a-math', 'subject-a-fr']
+      }
+    });
+
+    assert.equal(createResponse.status, 201);
+    const payload = await createResponse.json();
+    assert.deepEqual(payload.data.subjectIds, ['subject-a-math', 'subject-a-fr']);
+  });
+});
+
+test('isolation tenant stricte pour enseignants', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    const createResponse = await apiFetch(baseUrl, '/api/v1/teachers', {
+      cookie: adminACookie,
+      method: 'POST',
+      body: {
+        firstName: 'Tenant',
+        lastName: 'Teacher',
+        email: 'tenant.teacher@test.local',
+        classRoomIds: ['class-a1'],
+        subjectIds: ['subject-a-math']
+      }
+    });
+    const createdPayload = await createResponse.json();
+
+    const crossTenantRead = await apiFetch(baseUrl, `/api/v1/teachers/${createdPayload.data.id}`, {
+      cookie: adminBCookie
+    });
+    assert.equal(crossTenantRead.status, 404);
+  });
+});
+
+test('accès enseignant refusé si rôle non autorisé', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/teachers', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Denied',
+        lastName: 'Teacher',
+        classRoomIds: ['class-a1'],
+        subjectIds: ['subject-a-math']
+      }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});
