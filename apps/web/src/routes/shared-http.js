@@ -41,7 +41,11 @@ function parseCookies(cookieHeader) {
     .filter(Boolean)
     .reduce((cookies, entry) => {
       const [name, ...rawValue] = entry.split('=');
-      cookies[name] = decodeURIComponent(rawValue.join('='));
+      try {
+        cookies[name] = decodeURIComponent(rawValue.join('='));
+      } catch {
+        cookies[name] = rawValue.join('=');
+      }
       return cookies;
     }, {});
 }

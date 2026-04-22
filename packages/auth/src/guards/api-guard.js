@@ -1,6 +1,27 @@
 const { canAccessTenantResource } = require('../permissions/permissions');
 const { isRole, ROLES } = require('../roles/roles');
 
+
+function hasValidSessionIdentity(session) {
+  if (!session) {
+    return false;
+  }
+
+  if (typeof session.userId !== 'string' || session.userId.length === 0) {
+    return false;
+  }
+
+  if (!isRole(session.role)) {
+    return false;
+  }
+
+  if (session.role !== ROLES.SUPER_ADMIN && !session.tenantId) {
+    return false;
+  }
+
+  return true;
+}
+
 function buildError(status, code, message) {
   return {
     ok: false,
@@ -23,8 +44,8 @@ function authorizeApiRequest(session, resource, options = {}) {
     return buildError(401, 'UNAUTHORIZED', 'Authentication required');
   }
 
-  if (!isRole(session.role)) {
-    return buildError(403, 'FORBIDDEN', 'Unknown role');
+  if (!hasValidSessionIdentity(session)) {
+    return buildError(401, 'UNAUTHORIZED', 'Invalid session context');
   }
 
   if (options.allowedRoles && !options.allowedRoles.includes(session.role)) {

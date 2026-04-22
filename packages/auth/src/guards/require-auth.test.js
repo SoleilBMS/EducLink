@@ -10,13 +10,31 @@ test('requireAuth redirige vers /login si non authentifié', () => {
   });
 });
 
+test('requireAuth refuse une session incohérente', () => {
+  assert.deepEqual(
+    requireAuth({
+      id: 'session-1',
+      userId: 'user-1',
+      role: 'unknown',
+      tenantId: 'school-a',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 1000
+    }),
+    {
+      allowed: false,
+      redirectTo: '/login'
+    }
+  );
+});
+
 test('requireAuth autorise avec contexte session si authentifié', () => {
   const result = requireAuth({
     id: 'session-1',
     userId: 'user-1',
     role: 'school_admin',
     tenantId: 'school-a',
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 1000
   });
 
   assert.equal(result.allowed, true);
