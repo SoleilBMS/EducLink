@@ -7,6 +7,7 @@ const { SessionStore } = require('../../../packages/auth/src/session/session-sto
 const { CoreSchoolStore } = require('./modules/core-school');
 const { StudentStore, buildValidationError } = require('./modules/student');
 const { ParentStore } = require('./modules/parent');
+const { TeacherStore } = require('./modules/teacher');
 
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
@@ -20,6 +21,11 @@ function createSeedData() {
       { id: 'class-a1', tenant_id: 'school-a', name: 'A1', gradeLevelId: 'grade-a-1', capacity: 32 },
       { id: 'class-a2', tenant_id: 'school-a', name: 'A2', gradeLevelId: 'grade-a-1', capacity: 30 },
       { id: 'class-b1', tenant_id: 'school-b', name: 'B1', gradeLevelId: 'grade-b-1', capacity: 30 }
+    ],
+    subjects: [
+      { id: 'subject-a-math', tenant_id: 'school-a', name: 'Mathématiques', code: 'MATH' },
+      { id: 'subject-a-fr', tenant_id: 'school-a', name: 'Français', code: 'FR' },
+      { id: 'subject-b-math', tenant_id: 'school-b', name: 'Mathématiques', code: 'MATH' }
     ],
     students: [
       {
@@ -48,7 +54,8 @@ function createSeedData() {
       }
     ],
     parents: [],
-    studentParentLinks: []
+    studentParentLinks: [],
+    teachers: []
   };
 }
 
@@ -144,6 +151,10 @@ function canManageParents(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
 
+function canManageTeachers(session) {
+  return session.role === ROLES.SCHOOL_ADMIN;
+}
+
 function renderLoginPage(errorMessage = '') {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EducLink - Login</title></head><body>
     <h1>Connexion EducLink</h1>
@@ -163,6 +174,7 @@ function renderDashboard(session) {
     <p>tenantId: ${session.tenantId}</p>
     <p><a href="/admin/students">Gérer les élèves</a></p>
     <p><a href="/admin/parents">Gérer les responsables</a></p>
+    <p><a href="/admin/teachers">Gérer les enseignants</a></p>
     <form method="POST" action="/logout"><button type="submit">Logout</button></form>
   </body></html>`;
 }
@@ -282,6 +294,78 @@ function renderParentProfile(parent, students, links) {
   </body></html>`;
 }
 
+function renderTeachersPage(session, teachers) {
+  const rows = teachers
+    .map(
+      (teacher) => `<tr>
+        <td><a href="/admin/teachers/${teacher.id}">${teacher.firstName} ${teacher.lastName}</a></td>
+        <td>${teacher.email || '-'}</td>
+        <td>${teacher.classRoomIds.length}</td>
+        <td>${teacher.subjectIds.length}</td>
+        <td>${teacher.archived_at ? 'oui' : 'non'}</td>
+      </tr>`
+    )
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teachers</title></head><body>
+    <h1>Gestion des enseignants</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <h2>Créer un enseignant</h2>
+    <form method="POST" action="/admin/teachers">
+      <label>Prénom <input name="firstName" required /></label><br/>
+      <label>Nom <input name="lastName" required /></label><br/>
+      <label>Email <input name="email" type="email" /></label><br/>
+      <label>Téléphone <input name="phone" /></label><br/>
+      <label>Notes <textarea name="notes"></textarea></label><br/>
+      <button type="submit">Créer</button>
+    </form>
+    <h2>Liste</h2>
+    <table border="1"><thead><tr><th>Nom</th><th>Email</th><th># Classes</th><th># Matières</th><th>Archivé</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderTeacherProfile(teacher, classRooms, subjects) {
+  const classRoomCheckboxes = classRooms
+    .map(
+      (classRoom) =>
+        `<label><input type="checkbox" name="classRoomIds" value="${classRoom.id}" ${teacher.classRoomIds.includes(classRoom.id) ? 'checked' : ''} /> ${classRoom.name}</label><br/>`
+    )
+    .join('');
+  const subjectCheckboxes = subjects
+    .map(
+      (subject) =>
+        `<label><input type="checkbox" name="subjectIds" value="${subject.id}" ${teacher.subjectIds.includes(subject.id) ? 'checked' : ''} /> ${subject.name}</label><br/>`
+    )
+    .join('');
+  const classNames = teacher.classRoomIds.map((classRoomId) => classRooms.find((item) => item.id === classRoomId)?.name || classRoomId).join(', ') || '-';
+  const subjectNames = teacher.subjectIds.map((subjectId) => subjects.find((item) => item.id === subjectId)?.name || subjectId).join(', ') || '-';
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teacher profile</title></head><body>
+    <h1>Fiche enseignant</h1>
+    <p>id: ${teacher.id}</p>
+    <p>Tenant: ${teacher.tenant_id}</p>
+    <h2>Informations</h2>
+    <form method="POST" action="/admin/teachers/${teacher.id}/update">
+      <label>Prénom <input name="firstName" value="${teacher.firstName}" required /></label><br/>
+      <label>Nom <input name="lastName" value="${teacher.lastName}" required /></label><br/>
+      <label>Email <input name="email" type="email" value="${teacher.email}" /></label><br/>
+      <label>Téléphone <input name="phone" value="${teacher.phone}" /></label><br/>
+      <label>Notes <textarea name="notes">${teacher.notes}</textarea></label><br/>
+      <h3>Classes assignées</h3>
+      ${classRoomCheckboxes}
+      <h3>Matières assignées</h3>
+      ${subjectCheckboxes}
+      <button type="submit">Enregistrer</button>
+    </form>
+    <form method="POST" action="/admin/teachers/${teacher.id}/archive"><button type="submit">Archiver</button></form>
+    <h2>Affectations existantes</h2>
+    <p>Classes: ${classNames}</p>
+    <p>Matières: ${subjectNames}</p>
+    <p><a href="/admin/teachers">Retour</a></p>
+  </body></html>`;
+}
+
 function buildTenantScope(session, params) {
   if (session.role === ROLES.SUPER_ADMIN) {
     return params.tenantId;
@@ -290,9 +374,10 @@ function buildTenantScope(session, params) {
 }
 
 function createServer({ sessionStore = new SessionStore(), seed = createSeedData() } = {}) {
-  const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms });
+  const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms, subjects: seed.subjects });
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
   const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
+  const teacherStore = new TeacherStore({ teachers: seed.teachers, classRoomStore: coreSchoolStore });
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -436,6 +521,106 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       const students = studentStore.list(auth.context.tenantId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderParentProfile(parentWithLinks, students, parentWithLinks.links));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/teachers') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageTeachers(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const teachers = teacherStore.list(auth.context.tenantId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderTeachersPage(auth.context, teachers));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/teachers') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageTeachers(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        const created = teacherStore.create(auth.context.tenantId, {
+          firstName: form.get('firstName'),
+          lastName: form.get('lastName'),
+          email: form.get('email'),
+          phone: form.get('phone'),
+          notes: form.get('notes'),
+          classRoomIds: [],
+          subjectIds: []
+        });
+        response.writeHead(302, { location: `/admin/teachers/${created.id}` });
+      } catch {
+        response.writeHead(302, { location: '/admin/teachers' });
+      }
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && /^\/admin\/teachers\/[^/]+$/.test(url.pathname)) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageTeachers(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const teacherId = url.pathname.split('/').at(-1);
+      const teacher = teacherStore.get(auth.context.tenantId, teacherId);
+      if (!teacher) {
+        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Not found');
+        return;
+      }
+
+      const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
+      const subjects = coreSchoolStore.list('subjects', auth.context.tenantId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderTeacherProfile(teacher, classRooms, subjects));
+      return;
+    }
+
+    const adminTeacherIdMatch = url.pathname.match(/^\/admin\/teachers\/([^/]+)\/(update|archive)$/);
+    if (adminTeacherIdMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageTeachers(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const teacherId = adminTeacherIdMatch[1];
+      const action = adminTeacherIdMatch[2];
+      const form = parseExtendedForm(await readBody(request));
+
+      try {
+        if (action === 'update') {
+          teacherStore.update(auth.context.tenantId, teacherId, {
+            firstName: form.get('firstName'),
+            lastName: form.get('lastName'),
+            email: form.get('email'),
+            phone: form.get('phone'),
+            notes: form.get('notes'),
+            classRoomIds: form.getAll('classRoomIds'),
+            subjectIds: form.getAll('subjectIds')
+          });
+        } else if (action === 'archive') {
+          teacherStore.archive(auth.context.tenantId, teacherId);
+        }
+      } catch {
+        // no-op; keep flow simple
+      }
+
+      response.writeHead(302, { location: `/admin/teachers/${teacherId}` });
+      response.end();
       return;
     }
 
@@ -720,6 +905,96 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       }));
       sendApiSuccess(response, links);
       return;
+    }
+
+    if (url.pathname === '/api/v1/teachers' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+      sendApiSuccess(response, teacherStore.list(tenantId));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/teachers' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const tenantId = buildTenantScope(session, payload);
+        const teacher = teacherStore.create(tenantId, payload);
+        sendApiSuccess(response, teacher, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    const teacherByIdMatch = url.pathname.match(/^\/api\/v1\/teachers\/([^/]+)$/);
+    if (teacherByIdMatch) {
+      const teacherId = teacherByIdMatch[1];
+      if (request.method === 'GET') {
+        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+        if (!auth.ok) {
+          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+          return;
+        }
+
+        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+        const teacher = teacherStore.get(tenantId, teacherId);
+        if (!teacher) {
+          sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
+          return;
+        }
+        sendApiSuccess(response, teacher);
+        return;
+      }
+
+      if (request.method === 'PUT') {
+        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+        if (!auth.ok) {
+          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+          return;
+        }
+
+        try {
+          const payload = await parseJsonBody(request);
+          const tenantId = buildTenantScope(session, payload);
+          const updated = teacherStore.update(tenantId, teacherId, payload);
+          if (!updated) {
+            sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
+            return;
+          }
+          sendApiSuccess(response, updated);
+        } catch (error) {
+          sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+        }
+        return;
+      }
+
+      if (request.method === 'DELETE') {
+        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
+        if (!auth.ok) {
+          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+          return;
+        }
+
+        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+        const archived = teacherStore.archive(tenantId, teacherId);
+        if (!archived) {
+          sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
+          return;
+        }
+        sendApiSuccess(response, archived);
+        return;
+      }
     }
 
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
