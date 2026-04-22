@@ -177,6 +177,72 @@ test('UI admin school structure est accessible à school_admin', async () => {
   });
 });
 
+test('UI admin school structure échappe les messages et noms injectés', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const createResponse = await fetch(`${baseUrl}/api/v1/school-structure/school`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '<script>alert("xss")</script>' })
+    });
+    assert.equal(createResponse.status, 201);
+
+    const response = await fetch(
+      `${baseUrl}/admin/school-structure?message=${encodeURIComponent('<img src=x onerror=alert(1)>')}`,
+      { headers: { cookie } }
+    );
+
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.doesNotMatch(html, /<script>alert\("xss"\)<\/script>/);
+    assert.match(html, /&lt;script&gt;alert\(&quot;xss&quot;\)&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<img src=x onerror=alert\(1\)>/);
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  });
+});
+
+test('UI admin rename academic_year fonctionne avec payload partiel', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const createResponse = await fetch(`${baseUrl}/api/v1/school-structure/academic_year`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '2028-2029',
+        school_id: 'school-a',
+        start_date: '2028-09-01',
+        end_date: '2029-06-30',
+        is_current: false
+      })
+    });
+    const createdPayload = await createResponse.json();
+
+    const renameResponse = await fetch(
+      `${baseUrl}/admin/school-structure/academic_year/${createdPayload.data.id}/update`,
+      {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ name: '2028/2029' }).toString(),
+        redirect: 'manual'
+      }
+    );
+    assert.equal(renameResponse.status, 302);
+    assert.match(renameResponse.headers.get('location'), /message=updated/);
+
+    const listResponse = await fetch(`${baseUrl}/api/v1/school-structure/academic_year`, {
+      headers: { cookie }
+    });
+    assert.equal(listResponse.status, 200);
+    const listPayload = await listResponse.json();
+    const year = listPayload.data.find((item) => item.id === createdPayload.data.id);
+    assert.equal(year.name, '2028/2029');
+    assert.equal(year.start_date, '2028-09-01');
+    assert.equal(year.end_date, '2029-06-30');
+  });
+});
+
 test('API protégée renvoie UNAUTHORIZED si non authentifié', async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/v1/classes`);

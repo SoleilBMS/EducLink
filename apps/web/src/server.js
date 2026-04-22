@@ -157,11 +157,20 @@ function renderDashboard(context) {
   </body></html>`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function renderEntitySection(entityType, label, items, tenantId) {
-  return `<section><h2>${label}</h2>
-    <ul>${items.map((item) => `<li>${item.name} (${item.id}) <form method="POST" action="/admin/school-structure/${entityType}/${item.id}/update" style="display:inline"><input name="name" value="${item.name}"/><button>Renommer</button></form></li>`).join('')}</ul>
+  return `<section><h2>${escapeHtml(label)}</h2>
+    <ul>${items.map((item) => `<li>${escapeHtml(item.name)} (${escapeHtml(item.id)}) <form method="POST" action="/admin/school-structure/${entityType}/${item.id}/update" style="display:inline"><input name="name" value="${escapeHtml(item.name)}"/><button>Renommer</button></form></li>`).join('')}</ul>
     <form method="POST" action="/admin/school-structure/${entityType}/create">
-      <input type="hidden" name="tenant_id" value="${tenantId}" />
+      <input type="hidden" name="tenant_id" value="${escapeHtml(tenantId)}" />
       <input name="name" placeholder="Nom" required />
       <button>Créer</button>
     </form>
@@ -183,13 +192,13 @@ function renderSchoolStructurePage(context, service, message = '') {
 
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>School structure</title></head><body>
     <h1>Administration structure école</h1>
-    <p>tenant: ${tenantId}</p>
-    ${message ? `<p>${message}</p>` : ''}
+    <p>tenant: ${escapeHtml(tenantId)}</p>
+    ${message ? `<p>${escapeHtml(message)}</p>` : ''}
     ${renderEntitySection('school', 'Établissements', schools, tenantId)}
-    <section><h2>Années scolaires</h2><ul>${years.map((y) => `<li>${y.name} (${y.start_date} → ${y.end_date}) <form method="POST" action="/admin/school-structure/academic_year/${y.id}/update" style="display:inline"><input name="name" value="${y.name}"/><button>Renommer</button></form></li>`).join('')}</ul>
+    <section><h2>Années scolaires</h2><ul>${years.map((y) => `<li>${escapeHtml(y.name)} (${escapeHtml(y.start_date)} → ${escapeHtml(y.end_date)}) <form method="POST" action="/admin/school-structure/academic_year/${y.id}/update" style="display:inline"><input name="name" value="${escapeHtml(y.name)}"/><button>Renommer</button></form></li>`).join('')}</ul>
       <form method="POST" action="/admin/school-structure/academic_year/create">
         <input name="name" placeholder="2026-2027" required/>
-        <input name="school_id" value="${schoolId}" required/>
+        <input name="school_id" value="${escapeHtml(schoolId)}" required/>
         <input name="start_date" value="2026-09-01" required/>
         <input name="end_date" value="2027-06-30" required/>
         <input name="is_current" value="false" required/>
@@ -199,35 +208,35 @@ function renderSchoolStructurePage(context, service, message = '') {
     <section><h2>Périodes</h2><ul>${terms.map((t) => `<li>${t.name}</li>`).join('')}</ul>
       <form method="POST" action="/admin/school-structure/term/create">
         <input name="name" value="Trimestre 1" required/>
-        <input name="academic_year_id" value="${yearId}" required/>
+        <input name="academic_year_id" value="${escapeHtml(yearId)}" required/>
         <input name="start_date" value="2026-09-01" required/>
         <input name="end_date" value="2026-12-15" required/>
         <input name="order_index" value="1" required/>
         <button>Créer période</button>
       </form>
     </section>
-    <section><h2>Niveaux</h2><ul>${grades.map((g) => `<li>${g.name}</li>`).join('')}</ul>
+    <section><h2>Niveaux</h2><ul>${grades.map((g) => `<li>${escapeHtml(g.name)}</li>`).join('')}</ul>
       <form method="POST" action="/admin/school-structure/grade_level/create">
         <input name="name" value="5ème" required/>
-        <input name="school_id" value="${schoolId}" required/>
+        <input name="school_id" value="${escapeHtml(schoolId)}" required/>
         <input name="order_index" value="2" required/>
         <button>Créer niveau</button>
       </form>
     </section>
-    <section><h2>Classes</h2><ul>${rooms.map((r) => `<li>${r.name}</li>`).join('')}</ul>
+    <section><h2>Classes</h2><ul>${rooms.map((r) => `<li>${escapeHtml(r.name)}</li>`).join('')}</ul>
       <form method="POST" action="/admin/school-structure/class_room/create">
         <input name="name" value="5A" required/>
-        <input name="school_id" value="${schoolId}" required/>
-        <input name="grade_level_id" value="${gradeId}" required/>
+        <input name="school_id" value="${escapeHtml(schoolId)}" required/>
+        <input name="grade_level_id" value="${escapeHtml(gradeId)}" required/>
         <input name="capacity" value="30" required/>
         <button>Créer classe</button>
       </form>
     </section>
-    <section><h2>Matières</h2><ul>${subjects.map((s) => `<li>${s.name} (${s.code})</li>`).join('')}</ul>
+    <section><h2>Matières</h2><ul>${subjects.map((s) => `<li>${escapeHtml(s.name)} (${escapeHtml(s.code)})</li>`).join('')}</ul>
       <form method="POST" action="/admin/school-structure/subject/create">
         <input name="name" value="Français" required/>
         <input name="code" value="FR" required/>
-        <input name="school_id" value="${schoolId}" required/>
+        <input name="school_id" value="${escapeHtml(schoolId)}" required/>
         <button>Créer matière</button>
       </form>
     </section>
@@ -399,7 +408,9 @@ function createServer({ sessionStore = new SessionStore(), schoolStructureServic
 
       const id = adminParts[3];
       if (adminParts[4] === 'update') {
-        const result = schoolStructureService.update(entityType, decision.context.tenantId, id, mapPayload(entityType, form));
+        const existing = schoolStructureService.list(entityType, decision.context.tenantId).find((item) => item.id === id);
+        const payload = entityType === 'academic_year' ? { ...existing, ...form } : form;
+        const result = schoolStructureService.update(entityType, decision.context.tenantId, id, mapPayload(entityType, payload));
         const message = result.ok ? 'updated' : result.errors.join(', ');
         response.writeHead(302, { location: `/admin/school-structure?message=${encodeURIComponent(message)}` });
         response.end();
