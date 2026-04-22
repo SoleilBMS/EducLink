@@ -10,6 +10,7 @@ const { ParentStore } = require('./modules/parent');
 const { TeacherStore } = require('./modules/teacher');
 const { AttendanceStore, ATTENDANCE_STATUSES, requireDateString } = require('./modules/attendance');
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
+const { GradingStore } = require('./modules/grading');
 
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
@@ -126,7 +127,9 @@ function createSeedData() {
     ],
     attendanceRecords: [],
     lessonLogs: [],
-    homeworks: []
+    homeworks: [],
+    assessments: [],
+    gradeEntries: []
   };
 }
 
@@ -325,7 +328,7 @@ function renderTeacherDashboard(session, teacher, classRooms, subjects) {
     <p><a href="/admin/students">Mes classes</a></p>
     <p><a href="/teacher/attendance">Faire l'appel</a></p>
     <p><a href="/teacher/lesson-homework">Cahier de texte & devoirs</a></p>
-    <p>Grading: placeholder MVP</p>
+    <p><a href="/teacher/grades">Évaluations & notes</a></p>
     <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>`
   );
 }
@@ -430,6 +433,7 @@ function renderParentDashboard(session, children) {
     ${list}
     <h2>Informations utiles</h2>
     <p><a href="/parent/homeworks">Consulter les devoirs</a></p>
+    <p><a href="/parent/grades">Consulter les notes</a></p>
     <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>`
   );
 }
@@ -442,7 +446,8 @@ function renderStudentDashboard(session, student) {
     <p>Nom: ${student ? `${student.firstName} ${student.lastName}` : 'Profil étudiant non trouvé'}</p>
     <p>Classe: ${student?.classRoomId ?? '-'}</p>
     <p>Matricule: ${student?.admissionNumber ?? '-'}</p>
-    <p><a href="/student/homeworks">Mes devoirs</a></p>`
+    <p><a href="/student/homeworks">Mes devoirs</a></p>
+    <p><a href="/student/grades">Mes notes</a></p>`
   );
 }
 
@@ -513,6 +518,98 @@ function renderStudentHomeworksPage(session, student, homeworks) {
     <h1>Mes devoirs</h1>
     <p>Étudiant: ${student ? `${student.firstName} ${student.lastName}` : '-'}</p>
     <table border="1"><thead><tr><th>Échéance</th><th>Matière</th><th>Titre</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard/student">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderTeacherGradesPage(session, { teacher, classRooms, subjects, assessments, selectedAssessmentId, students, gradesByStudentId }) {
+  const classOptions = classRooms.map((item) => `<option value="${item.id}">${item.name}</option>`).join('');
+  const subjectOptions = subjects.map((item) => `<option value="${item.id}">${item.name}</option>`).join('');
+  const assessmentOptions = ['<option value="">Choisir une évaluation</option>']
+    .concat(
+      assessments.map(
+        (assessment) =>
+          `<option value="${assessment.id}" ${assessment.id === selectedAssessmentId ? 'selected' : ''}>${assessment.date} - ${assessment.title} (${assessment.classRoomId})</option>`
+      )
+    )
+    .join('');
+  const rows = students
+    .map((student) => {
+      const existing = gradesByStudentId.get(student.id);
+      return `<tr>
+        <td>${student.firstName} ${student.lastName}</td>
+        <td>${student.admissionNumber}</td>
+        <td><input type="hidden" name="studentId" value="${student.id}" /><input type="number" min="0" max="20" step="0.25" name="score" value="${existing?.score ?? ''}" required /></td>
+        <td><input type="text" name="remark" value="${existing?.remark ?? ''}" /></td>
+      </tr>`;
+    })
+    .join('');
+  const assessmentRows = assessments
+    .map(
+      (assessment) =>
+        `<tr><td>${assessment.date}</td><td>${assessment.title}</td><td>${assessment.classRoomId}</td><td>${assessment.subjectId}</td><td>${assessment.coefficient}</td></tr>`
+    )
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teacher Grades</title></head><body>
+    <h1>Évaluations & notes</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
+    <h2>Créer une évaluation</h2>
+    <form method="POST" action="/teacher/assessments">
+      <label>Date <input type="date" name="date" required /></label><br/>
+      <label>Classe <select name="classRoomId" required>${classOptions}</select></label><br/>
+      <label>Matière <select name="subjectId" required>${subjectOptions}</select></label><br/>
+      <label>Titre <input name="title" required /></label><br/>
+      <label>Coefficient <input type="number" min="0.1" max="20" step="0.1" name="coefficient" value="1" required /></label><br/>
+      <button type="submit">Créer l'évaluation</button>
+    </form>
+    <h2>Saisie des notes</h2>
+    <form method="GET" action="/teacher/grades">
+      <label>Évaluation <select name="assessmentId">${assessmentOptions}</select></label>
+      <button type="submit">Charger</button>
+    </form>
+    ${
+      selectedAssessmentId
+        ? `<form method="POST" action="/teacher/grades">
+      <input type="hidden" name="assessmentId" value="${selectedAssessmentId}" />
+      <table border="1"><thead><tr><th>Élève</th><th>Matricule</th><th>Note /20</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
+      <button type="submit">Enregistrer les notes</button>
+    </form>`
+        : '<p>Sélectionnez une évaluation pour saisir des notes.</p>'
+    }
+    <h2>Mes évaluations</h2>
+    <table border="1"><thead><tr><th>Date</th><th>Titre</th><th>Classe</th><th>Matière</th><th>Coeff</th></tr></thead><tbody>${assessmentRows}</tbody></table>
+    <p><a href="/dashboard/teacher">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderParentGradesPage(session, grades) {
+  const rows = grades
+    .map(
+      (entry) =>
+        `<tr><td>${entry.date}</td><td>${entry.student?.firstName ?? ''} ${entry.student?.lastName ?? ''}</td><td>${entry.assessment?.subjectId ?? '-'}</td><td>${entry.assessment?.title ?? '-'}</td><td>${entry.score}</td><td>${entry.assessment?.coefficient ?? '-'}</td><td>${entry.remark || '-'}</td></tr>`
+    )
+    .join('');
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parent Grades</title></head><body>
+    <h1>Notes de mes enfants</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <table border="1"><thead><tr><th>Date</th><th>Élève</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Coeff</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard/parent">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderStudentGradesPage(session, student, grades) {
+  const rows = grades
+    .map(
+      (entry) =>
+        `<tr><td>${entry.date}</td><td>${entry.assessment?.subjectId ?? '-'}</td><td>${entry.assessment?.title ?? '-'}</td><td>${entry.score}</td><td>${entry.assessment?.coefficient ?? '-'}</td><td>${entry.remark || '-'}</td></tr>`
+    )
+    .join('');
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Student Grades</title></head><body>
+    <h1>Mes notes</h1>
+    <p>Étudiant: ${student ? `${student.firstName} ${student.lastName}` : '-'}</p>
+    <table border="1"><thead><tr><th>Date</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Coeff</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
     <p><a href="/dashboard/student">Retour dashboard</a></p>
   </body></html>`;
 }
@@ -735,6 +832,14 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
   const lessonHomeworkStore = new LessonHomeworkStore({
     lessonLogs: seed.lessonLogs,
     homeworks: seed.homeworks,
+    classRoomStore: coreSchoolStore,
+    teacherStore,
+    studentStore,
+    parentStore
+  });
+  const gradingStore = new GradingStore({
+    assessments: seed.assessments,
+    gradeEntries: seed.gradeEntries,
     classRoomStore: coreSchoolStore,
     teacherStore,
     studentStore,
@@ -1036,6 +1141,138 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       const homeworks = lessonHomeworkStore.listHomeworksForStudent(auth.context.tenantId, auth.context.userId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderStudentHomeworksPage(auth.context, student, homeworks));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/teacher/grades') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      const classRooms = teacher ? teacher.classRoomIds.map((id) => coreSchoolStore.get('classRooms', auth.context.tenantId, id)).filter(Boolean) : [];
+      const subjects = teacher ? teacher.subjectIds.map((id) => coreSchoolStore.get('subjects', auth.context.tenantId, id)).filter(Boolean) : [];
+      const assessments = gradingStore.listAssessmentsForTeacher(auth.context.tenantId, auth.context.userId);
+      const selectedAssessmentId = url.searchParams.get('assessmentId') || '';
+      const selectedAssessment =
+        selectedAssessmentId && assessments.find((assessment) => assessment.id === selectedAssessmentId)
+          ? assessments.find((assessment) => assessment.id === selectedAssessmentId)
+          : null;
+
+      const students = selectedAssessment ? studentStore.list(auth.context.tenantId, { classRoomId: selectedAssessment.classRoomId }) : [];
+      const gradesByStudentId = new Map(
+        (selectedAssessment
+          ? gradingStore
+              .listGradesForTeacher(auth.context.tenantId, auth.context.userId)
+              .filter((entry) => entry.assessmentId === selectedAssessment.id)
+          : []
+        ).map((entry) => [entry.studentId, entry])
+      );
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(
+        renderTeacherGradesPage(auth.context, {
+          teacher,
+          classRooms,
+          subjects,
+          assessments,
+          selectedAssessmentId: selectedAssessment?.id ?? '',
+          students,
+          gradesByStudentId
+        })
+      );
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/teacher/assessments') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        gradingStore.createAssessment(auth.context.tenantId, {
+          teacherId: auth.context.userId,
+          classRoomId: form.get('classRoomId'),
+          subjectId: form.get('subjectId'),
+          title: form.get('title'),
+          date: form.get('date'),
+          coefficient: form.get('coefficient')
+        });
+      } catch {
+        // no-op
+      }
+      response.writeHead(302, { location: '/teacher/grades' });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/teacher/grades') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      let assessmentId = '';
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        assessmentId = form.get('assessmentId');
+        const studentIds = form.getAll('studentId');
+        const scores = form.getAll('score');
+        const remarks = form.getAll('remark');
+        const entries = studentIds.map((studentId, index) => ({
+          studentId,
+          score: scores[index] ?? '',
+          remark: remarks[index] ?? ''
+        }));
+        gradingStore.upsertGradesForAssessment(auth.context.tenantId, {
+          teacherId: auth.context.userId,
+          assessmentId,
+          entries
+        });
+      } catch {
+        // no-op
+      }
+
+      response.writeHead(302, { location: `/teacher/grades?assessmentId=${encodeURIComponent(assessmentId)}` });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/parent/grades') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.PARENT) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const grades = gradingStore.listGradesForParent(auth.context.tenantId, auth.context.userId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentGradesPage(auth.context, grades));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/student/grades') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.STUDENT) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const student = studentStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      const grades = gradingStore.listGradesForStudent(auth.context.tenantId, auth.context.userId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderStudentGradesPage(auth.context, student, grades));
       return;
     }
 
@@ -1430,6 +1667,103 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         response,
         lessonHomeworkStore.homeworks.filter((item) => item.tenant_id === tenantId)
       );
+      return;
+    }
+
+    if (url.pathname === '/api/v1/assessments' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.TEACHER] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const created = gradingStore.createAssessment(session.tenantId, {
+          teacherId: session.userId,
+          classRoomId: payload.classRoomId,
+          subjectId: payload.subjectId,
+          title: payload.title,
+          date: payload.date,
+          coefficient: payload.coefficient
+        });
+        sendApiSuccess(response, created, 201);
+      } catch (error) {
+        const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
+        const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        sendApiError(response, status, code, error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/assessments' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.TEACHER, ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      if (session.role === ROLES.TEACHER) {
+        sendApiSuccess(response, gradingStore.listAssessmentsForTeacher(session.tenantId, session.userId));
+        return;
+      }
+
+      sendApiSuccess(
+        response,
+        gradingStore.assessments.filter((item) => item.tenant_id === session.tenantId)
+      );
+      return;
+    }
+
+    const assessmentGradeEntryMatch = url.pathname.match(/^\/api\/v1\/assessments\/([^/]+)\/grades$/);
+    if (assessmentGradeEntryMatch && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.TEACHER] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      try {
+        const payload = await parseJsonBody(request);
+        const saved = gradingStore.upsertGradesForAssessment(session.tenantId, {
+          teacherId: session.userId,
+          assessmentId: assessmentGradeEntryMatch[1],
+          entries: payload.entries
+        });
+        sendApiSuccess(response, saved, 201);
+      } catch (error) {
+        const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
+        const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        sendApiError(response, status, code, error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/grades' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      if (session.role === ROLES.TEACHER) {
+        sendApiSuccess(response, gradingStore.listGradesForTeacher(session.tenantId, session.userId));
+        return;
+      }
+      if (session.role === ROLES.PARENT) {
+        sendApiSuccess(response, gradingStore.listGradesForParent(session.tenantId, session.userId));
+        return;
+      }
+      if (session.role === ROLES.STUDENT) {
+        sendApiSuccess(response, gradingStore.listGradesForStudent(session.tenantId, session.userId));
+        return;
+      }
+
+      sendApiSuccess(response, gradingStore.listGradesForTenant(session.tenantId));
       return;
     }
 

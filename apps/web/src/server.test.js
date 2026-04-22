@@ -892,3 +892,176 @@ test('listing teacher renvoie uniquement ses données autorisées', async () => 
     assert.ok(payload.data.every((entry) => entry.teacherId === 'teacher-a1'));
   });
 });
+
+test('teacher peut créer une évaluation pour une classe autorisée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Devoir surveillé 1',
+        date: '2026-04-23',
+        coefficient: 1
+      }
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.data.tenant_id, 'school-a');
+    assert.equal(payload.data.classRoomId, 'class-a1');
+    assert.equal(payload.data.teacherId, 'teacher-a1');
+  });
+});
+
+test('teacher peut saisir des notes pour les élèves de sa classe autorisée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const createAssessment = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Interro chapitre 2',
+        date: '2026-04-24',
+        coefficient: 1.5
+      }
+    });
+    const assessmentPayload = await createAssessment.json();
+
+    const saveGrades = await apiFetch(baseUrl, `/api/v1/assessments/${assessmentPayload.data.id}/grades`, {
+      cookie,
+      method: 'POST',
+      body: {
+        entries: [{ studentId: 'student-a1', score: 16.5, remark: 'Bon travail' }]
+      }
+    });
+
+    assert.equal(saveGrades.status, 201);
+    const listGrades = await apiFetch(baseUrl, '/api/v1/grades', { cookie });
+    const listPayload = await listGrades.json();
+    assert.ok(listPayload.data.some((entry) => entry.assessmentId === assessmentPayload.data.id && entry.studentId === 'student-a1'));
+  });
+});
+
+test('teacher ne peut pas créer/saisir sur une classe non autorisée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const createResponse = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a2',
+        subjectId: 'subject-a-math',
+        title: 'Tentative interdite',
+        date: '2026-04-24',
+        coefficient: 1
+      }
+    });
+
+    assert.equal(createResponse.status, 403);
+  });
+});
+
+test('parent voit uniquement les notes de ses enfants liés', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+
+    const createAssessment = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Evaluation parent',
+        date: '2026-04-25',
+        coefficient: 1
+      }
+    });
+    const assessmentPayload = await createAssessment.json();
+
+    await apiFetch(baseUrl, `/api/v1/assessments/${assessmentPayload.data.id}/grades`, {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        entries: [{ studentId: 'student-a1', score: 14 }]
+      }
+    });
+
+    const listResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: parentCookie });
+    assert.equal(listResponse.status, 200);
+    const payload = await listResponse.json();
+    assert.ok(payload.data.length >= 1);
+    assert.ok(payload.data.every((entry) => entry.studentId === 'student-a1' || entry.studentId === 'student-a2'));
+    assert.ok(payload.data.every((entry) => entry.tenant_id === 'school-a'));
+  });
+});
+
+test('student voit uniquement ses propres notes', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: studentCookie } = await login(baseUrl, 'student@school-a.test');
+
+    const createAssessment = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Evaluation student',
+        date: '2026-04-26',
+        coefficient: 1
+      }
+    });
+    const assessmentPayload = await createAssessment.json();
+    await apiFetch(baseUrl, `/api/v1/assessments/${assessmentPayload.data.id}/grades`, {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        entries: [{ studentId: 'student-a1', score: 18 }]
+      }
+    });
+
+    const listResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: studentCookie });
+    assert.equal(listResponse.status, 200);
+    const payload = await listResponse.json();
+    assert.ok(payload.data.length >= 1);
+    assert.ok(payload.data.every((entry) => entry.studentId === 'student-a1'));
+  });
+});
+
+test('isolation tenant stricte sur les notes et évaluations', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    const createAssessment = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Isolation grading',
+        date: '2026-04-26',
+        coefficient: 1
+      }
+    });
+    const assessmentPayload = await createAssessment.json();
+    await apiFetch(baseUrl, `/api/v1/assessments/${assessmentPayload.data.id}/grades`, {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        entries: [{ studentId: 'student-a1', score: 12 }]
+      }
+    });
+
+    const listResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: adminBCookie });
+    assert.equal(listResponse.status, 200);
+    const payload = await listResponse.json();
+    assert.equal(payload.data.length, 0);
+  });
+});
