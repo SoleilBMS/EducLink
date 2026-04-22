@@ -18,6 +18,7 @@ const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
 const { AuditLogStore, createAuditEventWriter } = require('./modules/audit');
+const { FinanceStore } = require('./modules/finance');
 
 const users = [
   { id: 'super-admin', email: 'superadmin@platform.test', password: 'password123', role: ROLES.SUPER_ADMIN, tenantId: null },
@@ -156,7 +157,10 @@ function createSeedData() {
     announcements: [],
     messageThreads: [],
     messages: [],
-    auditLogs: []
+    auditLogs: [],
+    feePlans: [],
+    invoices: [],
+    payments: []
   };
 }
 
@@ -312,6 +316,14 @@ function canPublishAnnouncements(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
 
+function canManageFinance(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.ACCOUNTANT;
+}
+
+function canViewParentFinance(session) {
+  return session.role === ROLES.PARENT;
+}
+
 function canCreateThreads(session) {
   return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.TEACHER;
 }
@@ -376,6 +388,7 @@ function renderAdminDashboard(session, metrics) {
     <p><a href="/admin/students">Gérer les élèves</a></p>
     <p><a href="/admin/parents">Gérer les responsables</a></p>
     <p><a href="/admin/teachers">Gérer les enseignants</a></p>
+    <p><a href="/admin/finance">Suivi finance</a></p>
     <p><a href="/admin/attendance">Consulter les présences</a></p>
     <p><a href="/admin/announcements">Publier une annonce</a></p>
     <p><a href="/inbox">Ouvrir l'inbox</a></p>`
@@ -518,6 +531,7 @@ function renderParentDashboard(session, children) {
     <h2>Informations utiles</h2>
     <p><a href="/parent/homeworks">Consulter les devoirs</a></p>
     <p><a href="/parent/grades">Consulter les notes</a></p>
+    <p><a href="/parent/finance">Consulter le statut financier</a></p>
     <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>
     <p><a href="/inbox">Ouvrir l'inbox</a></p>`
   );
@@ -764,13 +778,84 @@ function renderStudentGradesPage(session, student, grades) {
   </body></html>`;
 }
 
+function renderAdminFinancePage(session, { students, feePlans, invoices, payments }) {
+  const studentOptions = students.map((student) => `<option value="${student.id}">${student.firstName} ${student.lastName}</option>`).join('');
+  const feePlanOptions = ['<option value="">Aucun plan (facture directe)</option>']
+    .concat(feePlans.map((plan) => `<option value="${plan.id}">${plan.name} - ${plan.amountDue}</option>`))
+    .join('');
+  const feePlanRows = feePlans
+    .map((plan) => `<tr><td>${plan.name}</td><td>${plan.amountDue}</td><td>${plan.dueDate}</td><td>${plan.description || '-'}</td></tr>`)
+    .join('');
+  const invoiceRows = invoices
+    .map(
+      (invoice) =>
+        `<tr><td>${invoice.studentId}</td><td>${invoice.amountDue}</td><td>${invoice.totalPaid}</td><td>${invoice.remainingBalance}</td><td>${invoice.status}</td><td>${invoice.dueDate}</td></tr>`
+    )
+    .join('');
+  const paymentRows = payments
+    .map((payment) => `<tr><td>${payment.invoiceId}</td><td>${payment.studentId}</td><td>${payment.amountPaid}</td><td>${payment.paidAt}</td><td>${payment.method}</td></tr>`)
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Finance Admin</title></head><body>
+    <h1>Finance - Frais / Factures / Paiements</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <h2>Nouveau plan de frais</h2>
+    <form method="POST" action="/admin/finance/fee-plans">
+      <label>Nom <input name="name" required /></label><br/>
+      <label>Montant <input name="amountDue" type="number" step="0.01" min="0" required /></label><br/>
+      <label>Échéance <input name="dueDate" type="date" required /></label><br/>
+      <label>Description <textarea name="description"></textarea></label><br/>
+      <button type="submit">Créer plan de frais</button>
+    </form>
+    <h2>Nouvelle facture</h2>
+    <form method="POST" action="/admin/finance/invoices">
+      <label>Élève <select name="studentId" required>${studentOptions}</select></label><br/>
+      <label>Plan de frais <select name="feePlanId">${feePlanOptions}</select></label><br/>
+      <label>Montant <input name="amountDue" type="number" step="0.01" min="0" required /></label><br/>
+      <label>Échéance <input name="dueDate" type="date" required /></label><br/>
+      <label>Description <textarea name="description"></textarea></label><br/>
+      <button type="submit">Créer facture</button>
+    </form>
+    <h2>Nouveau paiement</h2>
+    <form method="POST" action="/admin/finance/payments">
+      <label>Facture <input name="invoiceId" required /></label><br/>
+      <label>Montant payé <input name="amountPaid" type="number" step="0.01" min="0.01" required /></label><br/>
+      <label>Date paiement <input name="paidAt" type="date" required /></label><br/>
+      <label>Méthode <input name="method" value="manual" /></label><br/>
+      <label>Note <textarea name="note"></textarea></label><br/>
+      <button type="submit">Enregistrer paiement</button>
+    </form>
+    <h2>Plans de frais</h2>
+    <table border="1"><thead><tr><th>Nom</th><th>Montant</th><th>Échéance</th><th>Description</th></tr></thead><tbody>${feePlanRows}</tbody></table>
+    <h2>Factures</h2>
+    <table border="1"><thead><tr><th>Élève</th><th>Montant</th><th>Payé</th><th>Reste</th><th>Statut</th><th>Échéance</th></tr></thead><tbody>${invoiceRows}</tbody></table>
+    <h2>Paiements</h2>
+    <table border="1"><thead><tr><th>Facture</th><th>Élève</th><th>Montant</th><th>Date</th><th>Méthode</th></tr></thead><tbody>${paymentRows}</tbody></table>
+    <p><a href="/dashboard">Retour dashboard</a></p>
+  </body></html>`;
+}
+
+function renderParentFinancePage(session, invoices) {
+  const rows = invoices
+    .map(
+      (invoice) =>
+        `<tr><td>${invoice.studentId}</td><td>${invoice.amountDue}</td><td>${invoice.totalPaid}</td><td>${invoice.remainingBalance}</td><td>${invoice.status}</td><td>${invoice.dueDate}</td></tr>`
+    )
+    .join('');
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parent Finance</title></head><body>
+    <h1>Statut financier de mes enfants</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <table border="1"><thead><tr><th>Élève</th><th>Montant</th><th>Payé</th><th>Reste</th><th>Statut</th><th>Échéance</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><a href="/dashboard/parent">Retour dashboard</a></p>
+  </body></html>`;
+}
+
 function renderAccountantDashboard(session) {
   return renderDashboardLayout(
     'Dashboard Accountant',
     session,
-    `<h2>Finance (placeholder)</h2>
-    <p>Le module finance complet n'est pas encore disponible dans ce MVP.</p>
-    <p>Prochaine étape: facturation et paiements.</p>`
+    `<h2>Finance</h2>
+    <p><a href="/admin/finance">Accéder aux frais, factures et paiements</a></p>`
   );
 }
 
@@ -1011,6 +1096,13 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     announcements: seed.announcements,
     threads: seed.messageThreads,
     messages: seed.messages
+  });
+  const financeStore = new FinanceStore({
+    feePlans: seed.feePlans,
+    invoices: seed.invoices,
+    payments: seed.payments,
+    studentStore,
+    parentStore
   });
   const auditLogStore = new AuditLogStore({ logs: seed.auditLogs });
   const auditWriter = createAuditEventWriter({ auditLogStore });
@@ -1446,6 +1538,111 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       const grades = gradingStore.listGradesForStudent(auth.context.tenantId, auth.context.userId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderStudentGradesPage(auth.context, student, grades));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/finance') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageFinance(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const students = studentStore.list(auth.context.tenantId);
+      const feePlans = financeStore.listFeePlans(auth.context.tenantId);
+      const invoices = financeStore.listInvoices(auth.context.tenantId);
+      const payments = financeStore.listPayments(auth.context.tenantId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminFinancePage(auth.context, { students, feePlans, invoices, payments }));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/finance/fee-plans') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageFinance(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        financeStore.createFeePlan(auth.context.tenantId, {
+          name: form.get('name'),
+          amountDue: form.get('amountDue'),
+          dueDate: form.get('dueDate'),
+          description: form.get('description')
+        });
+      } catch {
+        // no-op
+      }
+      response.writeHead(302, { location: '/admin/finance' });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/finance/invoices') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageFinance(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        financeStore.createInvoice(auth.context.tenantId, {
+          studentId: form.get('studentId'),
+          feePlanId: form.get('feePlanId'),
+          amountDue: form.get('amountDue'),
+          dueDate: form.get('dueDate'),
+          description: form.get('description')
+        });
+      } catch {
+        // no-op
+      }
+      response.writeHead(302, { location: '/admin/finance' });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/finance/payments') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageFinance(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      try {
+        const form = parseExtendedForm(await readBody(request));
+        financeStore.recordPayment(auth.context.tenantId, {
+          invoiceId: form.get('invoiceId'),
+          amountPaid: form.get('amountPaid'),
+          paidAt: form.get('paidAt'),
+          method: form.get('method'),
+          note: form.get('note')
+        });
+      } catch {
+        // no-op
+      }
+      response.writeHead(302, { location: '/admin/finance' });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/parent/finance') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewParentFinance(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const invoices = financeStore.listParentFinance(auth.context.tenantId, auth.context.userId);
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentFinancePage(auth.context, invoices));
       return;
     }
 
@@ -2214,6 +2411,92 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       }
 
       sendApiSuccess(response, gradingStore.listGradesForTenant(session.tenantId));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/finance/fee-plans' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+      sendApiSuccess(response, financeStore.listFeePlans(session.tenantId));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/finance/fee-plans' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+      try {
+        const payload = await parseJsonBody(request);
+        const feePlan = financeStore.createFeePlan(session.tenantId, payload);
+        sendApiSuccess(response, feePlan, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/finance/invoices' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT, ROLES.PARENT]
+      });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+
+      if (session.role === ROLES.PARENT) {
+        sendApiSuccess(response, financeStore.listParentFinance(session.tenantId, session.userId));
+        return;
+      }
+
+      sendApiSuccess(response, financeStore.listInvoices(session.tenantId));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/finance/invoices' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+      try {
+        const payload = await parseJsonBody(request);
+        const invoice = financeStore.createInvoice(session.tenantId, payload);
+        sendApiSuccess(response, invoice, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/v1/finance/payments' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+      sendApiSuccess(response, financeStore.listPayments(session.tenantId));
+      return;
+    }
+
+    if (url.pathname === '/api/v1/finance/payments' && request.method === 'POST') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        return;
+      }
+      try {
+        const payload = await parseJsonBody(request);
+        const payment = financeStore.recordPayment(session.tenantId, payload);
+        sendApiSuccess(response, payment, 201);
+      } catch (error) {
+        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+      }
       return;
     }
 
