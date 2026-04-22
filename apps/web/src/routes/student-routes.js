@@ -1,7 +1,7 @@
 const { ROLES } = require('../../../../packages/auth/src/roles/roles');
 const { authorizeApiRequest } = require('../../../../packages/auth/src/guards/api-guard');
 
-function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
+function createStudentRoutes({ studentService, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
   return async function handleStudentRoutes({ request, response, url, session }) {
     if (url.pathname === '/api/v1/students' && request.method === 'GET') {
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] });
@@ -12,7 +12,7 @@ function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendA
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
       const classRoomId = url.searchParams.get('classRoomId') ?? undefined;
-      sendApiSuccess(response, studentStore.list(tenantId, { classRoomId }));
+      sendApiSuccess(response, studentService.listStudents(tenantId, { classRoomId }));
       return true;
     }
 
@@ -26,7 +26,7 @@ function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendA
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        const student = studentStore.create(tenantId, payload);
+        const student = studentService.createStudent(tenantId, payload);
         auditWriter.writeEntityEvent(session, 'student.create', 'student', student.id);
         sendApiSuccess(response, student, 201);
       } catch (error) {
@@ -46,7 +46,7 @@ function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendA
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const student = studentStore.get(tenantId, studentId);
+        const student = studentService.getStudent(tenantId, studentId);
         if (!student) {
           sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
           return true;
@@ -65,7 +65,7 @@ function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendA
         try {
           const payload = await parseJsonBody(request);
           const tenantId = buildTenantScope(session, payload);
-          const updated = studentStore.update(tenantId, studentId, payload);
+          const updated = studentService.updateStudent(tenantId, studentId, payload);
           if (!updated) {
             sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
             return true;
@@ -86,7 +86,7 @@ function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendA
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = studentStore.archive(tenantId, studentId);
+        const archived = studentService.archiveStudent(tenantId, studentId);
         if (!archived) {
           sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
           return true;
@@ -104,7 +104,7 @@ function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendA
         return true;
       }
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, coreSchoolStore.list('classRooms', tenantId));
+      sendApiSuccess(response, studentService.listClassRooms(tenantId));
       return true;
     }
 
@@ -115,7 +115,7 @@ function createStudentRoutes({ studentStore, coreSchoolStore, auditWriter, sendA
         return true;
       }
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, coreSchoolStore.list('subjects', tenantId));
+      sendApiSuccess(response, studentService.listSubjects(tenantId));
       return true;
     }
 

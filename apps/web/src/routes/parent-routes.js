@@ -1,7 +1,7 @@
 const { ROLES } = require('../../../../packages/auth/src/roles/roles');
 const { authorizeApiRequest } = require('../../../../packages/auth/src/guards/api-guard');
 
-function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope, buildValidationError }) {
+function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
   return async function handleParentRoutes({ request, response, url, session }) {
     if (url.pathname === '/api/v1/parents' && request.method === 'GET') {
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
@@ -11,7 +11,7 @@ function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiErr
       }
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, parentStore.list(tenantId));
+      sendApiSuccess(response, parentService.listParents(tenantId));
       return true;
     }
 
@@ -25,7 +25,7 @@ function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiErr
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        const parent = parentStore.create(tenantId, payload);
+        const parent = parentService.createParent(tenantId, payload);
         auditWriter.writeEntityEvent(session, 'parent.create', 'parent', parent.id);
         sendApiSuccess(response, parent, 201);
       } catch (error) {
@@ -45,7 +45,7 @@ function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiErr
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const parent = parentStore.getParentWithLinks(tenantId, parentId);
+        const parent = parentService.getParentWithLinks(tenantId, parentId);
         if (!parent) {
           sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
           return true;
@@ -64,7 +64,7 @@ function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiErr
         try {
           const payload = await parseJsonBody(request);
           const tenantId = buildTenantScope(session, payload);
-          const updated = parentStore.update(tenantId, parentId, payload);
+          const updated = parentService.updateParent(tenantId, parentId, payload);
           if (!updated) {
             sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
             return true;
@@ -84,7 +84,7 @@ function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiErr
           return true;
         }
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = parentStore.archive(tenantId, parentId);
+        const archived = parentService.archiveParent(tenantId, parentId);
         if (!archived) {
           sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
           return true;
@@ -106,16 +106,7 @@ function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiErr
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        if (!Array.isArray(payload.studentIds) || payload.studentIds.length === 0) {
-          throw buildValidationError('studentIds must be a non-empty array');
-        }
-
-        const links = payload.studentIds.map((studentId) =>
-          parentStore.upsertLink(tenantId, parentLinksMatch[1], studentId, {
-            relationship: payload.relationship,
-            isPrimaryContact: payload.isPrimaryContact
-          })
-        );
+        const links = parentService.upsertParentLinks(tenantId, parentLinksMatch[1], payload);
 
         sendApiSuccess(response, links, 201);
       } catch (error) {
@@ -133,16 +124,12 @@ function createParentRoutes({ parentStore, studentStore, auditWriter, sendApiErr
       }
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      const student = studentStore.get(tenantId, studentParentsMatch[1], { includeArchived: false });
-      if (!student) {
+      const links = parentService.listParentsForStudent(tenantId, studentParentsMatch[1]);
+      if (!links) {
         sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
         return true;
       }
 
-      const links = parentStore.listLinksByStudent(tenantId, studentParentsMatch[1]).map((link) => ({
-        ...link,
-        parent: parentStore.get(tenantId, link.parentId, { includeArchived: true })
-      }));
       sendApiSuccess(response, links);
       return true;
     }

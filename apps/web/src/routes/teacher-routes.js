@@ -1,7 +1,7 @@
 const { ROLES } = require('../../../../packages/auth/src/roles/roles');
 const { authorizeApiRequest } = require('../../../../packages/auth/src/guards/api-guard');
 
-function createTeacherRoutes({ teacherStore, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
+function createTeacherRoutes({ teacherService, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
   return async function handleTeacherRoutes({ request, response, url, session }) {
     if (url.pathname === '/api/v1/teachers' && request.method === 'GET') {
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
@@ -11,7 +11,7 @@ function createTeacherRoutes({ teacherStore, auditWriter, sendApiError, sendApiS
       }
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, teacherStore.list(tenantId));
+      sendApiSuccess(response, teacherService.listTeachers(tenantId));
       return true;
     }
 
@@ -25,7 +25,7 @@ function createTeacherRoutes({ teacherStore, auditWriter, sendApiError, sendApiS
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        const teacher = teacherStore.create(tenantId, payload);
+        const teacher = teacherService.createTeacher(tenantId, payload);
         auditWriter.writeEntityEvent(session, 'teacher.create', 'teacher', teacher.id);
         sendApiSuccess(response, teacher, 201);
       } catch (error) {
@@ -45,7 +45,7 @@ function createTeacherRoutes({ teacherStore, auditWriter, sendApiError, sendApiS
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const teacher = teacherStore.get(tenantId, teacherId);
+        const teacher = teacherService.getTeacher(tenantId, teacherId);
         if (!teacher) {
           sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
           return true;
@@ -64,7 +64,7 @@ function createTeacherRoutes({ teacherStore, auditWriter, sendApiError, sendApiS
         try {
           const payload = await parseJsonBody(request);
           const tenantId = buildTenantScope(session, payload);
-          const updated = teacherStore.update(tenantId, teacherId, payload);
+          const updated = teacherService.updateTeacher(tenantId, teacherId, payload);
           if (!updated) {
             sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
             return true;
@@ -85,7 +85,7 @@ function createTeacherRoutes({ teacherStore, auditWriter, sendApiError, sendApiS
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = teacherStore.archive(tenantId, teacherId);
+        const archived = teacherService.archiveTeacher(tenantId, teacherId);
         if (!archived) {
           sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
           return true;
