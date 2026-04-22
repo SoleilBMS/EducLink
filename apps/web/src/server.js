@@ -12,6 +12,7 @@ const { AttendanceStore, ATTENDANCE_STATUSES, requireDateString } = require('./m
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
+const { AuditLogStore, createAuditEventWriter } = require('./modules/audit');
 
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
@@ -133,7 +134,8 @@ function createSeedData() {
     gradeEntries: [],
     announcements: [],
     messageThreads: [],
-    messages: []
+    messages: [],
+    auditLogs: []
   };
 }
 
@@ -935,6 +937,8 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     threads: seed.messageThreads,
     messages: seed.messages
   });
+  const auditLogStore = new AuditLogStore({ logs: seed.auditLogs });
+  const auditWriter = createAuditEventWriter({ auditLogStore });
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -957,12 +961,16 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       }
 
       const createdSession = sessionStore.create({ userId: user.id, role: user.role, tenantId: user.tenantId });
+      auditWriter.writeAuthEvent(createdSession, 'auth.login.success');
       response.writeHead(302, { location: getDashboardPathForRole(user.role), 'set-cookie': `sessionId=${createdSession.id}; HttpOnly; Path=/; SameSite=Lax` });
       response.end();
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/logout') {
+      if (session) {
+        auditWriter.writeAuthEvent(session, 'auth.logout');
+      }
       sessionStore.destroy(cookies.sessionId);
       response.writeHead(302, { location: '/login', 'set-cookie': 'sessionId=; Max-Age=0; Path=/; SameSite=Lax' });
       response.end();
@@ -2088,6 +2096,9 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       const students = studentStore.list(tenantId, {
         classRoomId: url.searchParams.get('classRoomId') ?? undefined
       });
+      auditWriter.writeSensitiveDataAccess(session, 'student', 'list', {
+        classRoomId: url.searchParams.get('classRoomId') ?? null
+      });
       sendApiSuccess(response, students);
       return;
     }
@@ -2103,6 +2114,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
         const student = studentStore.create(tenantId, payload);
+        auditWriter.writeEntityEvent(session, 'student.create', 'student', student.id);
         sendApiSuccess(response, student, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2149,6 +2161,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
             sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
             return;
           }
+          auditWriter.writeEntityEvent(session, 'student.update', 'student', updated.id);
           sendApiSuccess(response, updated);
         } catch (error) {
           sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2169,6 +2182,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
           return;
         }
+        auditWriter.writeEntityEvent(session, 'student.archive', 'student', archived.id);
         sendApiSuccess(response, archived);
         return;
       }
@@ -2197,6 +2211,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
         const parent = parentStore.create(tenantId, payload);
+        auditWriter.writeEntityEvent(session, 'parent.create', 'parent', parent.id);
         sendApiSuccess(response, parent, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2239,6 +2254,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
             sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
             return;
           }
+          auditWriter.writeEntityEvent(session, 'parent.update', 'parent', updated.id);
           sendApiSuccess(response, updated);
         } catch (error) {
           sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2258,6 +2274,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
           return;
         }
+        auditWriter.writeEntityEvent(session, 'parent.archive', 'parent', archived.id);
         sendApiSuccess(response, archived);
         return;
       }
@@ -2338,6 +2355,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
         const teacher = teacherStore.create(tenantId, payload);
+        auditWriter.writeEntityEvent(session, 'teacher.create', 'teacher', teacher.id);
         sendApiSuccess(response, teacher, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2380,6 +2398,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
             sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
             return;
           }
+          auditWriter.writeEntityEvent(session, 'teacher.update', 'teacher', updated.id);
           sendApiSuccess(response, updated);
         } catch (error) {
           sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2400,9 +2419,31 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
           return;
         }
+        auditWriter.writeEntityEvent(session, 'teacher.archive', 'teacher', archived.id);
         sendApiSuccess(response, archived);
         return;
       }
+    }
+
+    if (url.pathname === '/api/v1/audit-logs' && request.method === 'GET') {
+      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN] });
+      if (!auth.ok) {
+        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        if (session) {
+          auditWriter.writeAuthEvent(session, 'auth.access_denied', { path: '/api/v1/audit-logs' });
+        }
+        return;
+      }
+
+      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
+      const logs = auditLogStore.listByTenant(tenantId, {
+        action: url.searchParams.get('action') ?? undefined,
+        targetType: url.searchParams.get('targetType') ?? undefined,
+        actorUserId: url.searchParams.get('actorUserId') ?? undefined,
+        limit: url.searchParams.get('limit') ?? undefined
+      });
+      sendApiSuccess(response, logs);
+      return;
     }
 
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
