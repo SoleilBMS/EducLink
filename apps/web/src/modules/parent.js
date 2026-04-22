@@ -254,7 +254,41 @@ class ParentStore {
       }
     }
 
-    return studentIds.map((studentId) => this.upsertLink(tenantId, parentId, studentId, payload));
+    const now = new Date().toISOString();
+    const nextLinks = [...this.links];
+    const upsertedLinks = [];
+
+    for (const studentId of studentIds) {
+      const index = nextLinks.findIndex((item) => item.parentId === parentId && item.studentId === studentId && item.tenant_id === tenantId);
+
+      if (index < 0) {
+        const created = {
+          id: `splink-${crypto.randomUUID()}`,
+          tenant_id: tenantId,
+          parentId,
+          studentId,
+          relationship: payload.relationship,
+          isPrimaryContact: payload.isPrimaryContact,
+          created_at: now,
+          updated_at: now
+        };
+        nextLinks.push(created);
+        upsertedLinks.push(created);
+        continue;
+      }
+
+      const updated = {
+        ...nextLinks[index],
+        relationship: payload.relationship,
+        isPrimaryContact: payload.isPrimaryContact,
+        updated_at: now
+      };
+      nextLinks[index] = updated;
+      upsertedLinks.push(updated);
+    }
+
+    this.links = nextLinks;
+    return upsertedLinks;
   }
 
   getParentWithLinks(tenantId, parentId) {
