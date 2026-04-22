@@ -267,6 +267,165 @@ test('accès refusé proprement si rôle non autorisé en écriture', async () =
   });
 });
 
+test('school_admin peut créer un fee plan et une facture', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const feePlanResponse = await apiFetch(baseUrl, '/api/v1/finance/fee-plans', {
+      cookie,
+      method: 'POST',
+      body: {
+        name: 'Scolarité T1',
+        amountDue: 450,
+        dueDate: '2026-09-30',
+        description: 'Frais trimestre 1'
+      }
+    });
+    assert.equal(feePlanResponse.status, 201);
+    const feePlanPayload = await feePlanResponse.json();
+
+    const invoiceResponse = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie,
+      method: 'POST',
+      body: {
+        studentId: 'student-a1',
+        feePlanId: feePlanPayload.data.id,
+        amountDue: 450,
+        dueDate: '2026-09-30',
+        description: 'Facture T1'
+      }
+    });
+    assert.equal(invoiceResponse.status, 201);
+    const invoicePayload = await invoiceResponse.json();
+    assert.equal(invoicePayload.data.studentId, 'student-a1');
+    assert.equal(invoicePayload.data.status, 'unpaid');
+  });
+});
+
+test('accountant peut enregistrer un paiement et le statut facture devient paid', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: accountantCookie } = await login(baseUrl, 'accountant@school-a.test');
+
+    const invoiceResponse = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        studentId: 'student-a1',
+        amountDue: 120,
+        dueDate: '2026-10-10',
+        description: 'Cantine'
+      }
+    });
+    const invoicePayload = await invoiceResponse.json();
+
+    const paymentResponse = await apiFetch(baseUrl, '/api/v1/finance/payments', {
+      cookie: accountantCookie,
+      method: 'POST',
+      body: {
+        invoiceId: invoicePayload.data.id,
+        amountPaid: 120,
+        paidAt: '2026-10-11',
+        method: 'cash'
+      }
+    });
+    assert.equal(paymentResponse.status, 201);
+
+    const invoicesResponse = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: accountantCookie
+    });
+    const invoicesPayload = await invoicesResponse.json();
+    const paidInvoice = invoicesPayload.data.find((invoice) => invoice.id === invoicePayload.data.id);
+    assert.equal(paidInvoice.status, 'paid');
+    assert.equal(paidInvoice.remainingBalance, 0);
+  });
+});
+
+test('parent voit uniquement les données finance de ses enfants liés', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+
+    const linkedInvoice = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        studentId: 'student-a1',
+        amountDue: 200,
+        dueDate: '2026-11-01',
+        description: 'Transport'
+      }
+    });
+    assert.equal(linkedInvoice.status, 201);
+
+    const notLinkedInvoice = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        studentId: 'student-b1',
+        amountDue: 300,
+        dueDate: '2026-11-01',
+        description: 'Cross tenant'
+      }
+    });
+    assert.equal(notLinkedInvoice.status, 422);
+
+    const parentInvoicesResponse = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: parentCookie
+    });
+    assert.equal(parentInvoicesResponse.status, 200);
+    const parentInvoicesPayload = await parentInvoicesResponse.json();
+    assert.ok(parentInvoicesPayload.data.length >= 1);
+    assert.ok(parentInvoicesPayload.data.every((invoice) => ['student-a1', 'student-a2'].includes(invoice.studentId)));
+  });
+});
+
+test('les données finance sont isolées par tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: adminACookie,
+      method: 'POST',
+      body: {
+        studentId: 'student-a1',
+        amountDue: 90,
+        dueDate: '2026-12-01',
+        description: 'Activité'
+      }
+    });
+
+    const tenantBInvoicesResponse = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: adminBCookie
+    });
+    assert.equal(tenantBInvoicesResponse.status, 200);
+    const tenantBPayload = await tenantBInvoicesResponse.json();
+    assert.equal(tenantBPayload.data.length, 0);
+  });
+});
+
+test('un rôle non autorisé ne peut pas écrire en finance', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+
+    const createResponse = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie,
+      method: 'POST',
+      body: {
+        studentId: 'student-a1',
+        amountDue: 111,
+        dueDate: '2026-12-05',
+        description: 'Denied'
+      }
+    });
+
+    assert.equal(createResponse.status, 403);
+    const payload = await createResponse.json();
+    assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});
+
 test('audit log enregistre login/logout avec actor/action/tenant/timestamp', async () => {
   await withServer(async (baseUrl) => {
     const adminLogin = await login(baseUrl, 'admin@school-a.test');
