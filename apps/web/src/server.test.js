@@ -43,6 +43,62 @@ async function apiFetch(baseUrl, path, { cookie, method = 'GET', body } = {}) {
   });
 }
 
+test('redirection après login vers dashboard adapté au rôle', async () => {
+  await withServer(async (baseUrl) => {
+    const adminLogin = await login(baseUrl, 'admin@school-a.test');
+    const teacherLogin = await login(baseUrl, 'teacher@school-a.test');
+    const parentLogin = await login(baseUrl, 'parent@school-a.test');
+
+    assert.equal(adminLogin.response.status, 302);
+    assert.equal(adminLogin.response.headers.get('location'), '/dashboard/admin');
+    assert.equal(teacherLogin.response.headers.get('location'), '/dashboard/teacher');
+    assert.equal(parentLogin.response.headers.get('location'), '/dashboard/parent');
+  });
+});
+
+test('le contenu du dashboard diffère selon le rôle', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: studentCookie } = await login(baseUrl, 'student@school-a.test');
+
+    const adminResponse = await apiFetch(baseUrl, '/dashboard/admin', { cookie: adminCookie });
+    const studentResponse = await apiFetch(baseUrl, '/dashboard/student', { cookie: studentCookie });
+
+    assert.equal(adminResponse.status, 200);
+    assert.equal(studentResponse.status, 200);
+
+    const adminHtml = await adminResponse.text();
+    const studentHtml = await studentResponse.text();
+    assert.match(adminHtml, /Dashboard Admin/);
+    assert.match(adminHtml, /Synthèse établissement/);
+    assert.match(studentHtml, /Dashboard Student/);
+    assert.match(studentHtml, /Mon espace/);
+  });
+});
+
+test('accès interdit à un dashboard non autorisé', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/dashboard/admin', { cookie });
+
+    assert.equal(response.status, 403);
+  });
+});
+
+test('dashboard admin respecte l’isolation tenant sur les métriques', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-b.test');
+    const response = await apiFetch(baseUrl, '/dashboard/admin', { cookie });
+
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /Classes actives: 1/);
+    assert.match(html, /Élèves actifs: 1/);
+    assert.match(html, /Responsables actifs: 0/);
+    assert.match(html, /Enseignants actifs: 0/);
+  });
+});
+
 test('school_admin peut créer un élève', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'admin@school-a.test');

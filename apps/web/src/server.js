@@ -12,7 +12,11 @@ const { TeacherStore } = require('./modules/teacher');
 const users = [
   { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
   { id: 'admin-b', email: 'admin@school-b.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-b' },
-  { id: 'director-a', email: 'director@school-a.test', password: 'password123', role: ROLES.DIRECTOR, tenantId: 'school-a' }
+  { id: 'director-a', email: 'director@school-a.test', password: 'password123', role: ROLES.DIRECTOR, tenantId: 'school-a' },
+  { id: 'teacher-a1', email: 'teacher@school-a.test', password: 'password123', role: ROLES.TEACHER, tenantId: 'school-a' },
+  { id: 'parent-a1', email: 'parent@school-a.test', password: 'password123', role: ROLES.PARENT, tenantId: 'school-a' },
+  { id: 'student-a1', email: 'student@school-a.test', password: 'password123', role: ROLES.STUDENT, tenantId: 'school-a' },
+  { id: 'accountant-a', email: 'accountant@school-a.test', password: 'password123', role: ROLES.ACCOUNTANT, tenantId: 'school-a' }
 ];
 
 function createSeedData() {
@@ -51,11 +55,73 @@ function createSeedData() {
         archived_at: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
+      },
+      {
+        id: 'student-a2',
+        tenant_id: 'school-a',
+        firstName: 'Salim',
+        lastName: 'Brahim',
+        admissionNumber: 'A-002',
+        classRoomId: 'class-a2',
+        dateOfBirth: '2014-10-22',
+        archived_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       }
     ],
-    parents: [],
-    studentParentLinks: [],
-    teachers: []
+    parents: [
+      {
+        id: 'parent-a1',
+        tenant_id: 'school-a',
+        firstName: 'Meryem',
+        lastName: 'Nadir',
+        phone: '+1 555-0134',
+        email: 'parent@school-a.test',
+        address: '12 Avenue Centrale',
+        notes: '',
+        archived_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ],
+    studentParentLinks: [
+      {
+        id: 'splink-a1',
+        tenant_id: 'school-a',
+        parentId: 'parent-a1',
+        studentId: 'student-a1',
+        relationship: 'guardian',
+        isPrimaryContact: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: 'splink-a2',
+        tenant_id: 'school-a',
+        parentId: 'parent-a1',
+        studentId: 'student-a2',
+        relationship: 'mother',
+        isPrimaryContact: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ],
+    teachers: [
+      {
+        id: 'teacher-a1',
+        tenant_id: 'school-a',
+        firstName: 'Samira',
+        lastName: 'Alami',
+        email: 'teacher@school-a.test',
+        phone: '+1 555-0110',
+        notes: 'Prof principale',
+        classRoomIds: ['class-a1'],
+        subjectIds: ['subject-a-math'],
+        archived_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ]
   };
 }
 
@@ -167,16 +233,116 @@ function renderLoginPage(errorMessage = '') {
   </body></html>`;
 }
 
-function renderDashboard(session) {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Dashboard</title></head><body>
-    <h1>Dashboard</h1>
+function getDashboardPathForRole(role) {
+  const roleToPath = {
+    [ROLES.SCHOOL_ADMIN]: '/dashboard/admin',
+    [ROLES.DIRECTOR]: '/dashboard/director',
+    [ROLES.TEACHER]: '/dashboard/teacher',
+    [ROLES.PARENT]: '/dashboard/parent',
+    [ROLES.STUDENT]: '/dashboard/student',
+    [ROLES.ACCOUNTANT]: '/dashboard/accountant'
+  };
+
+  return roleToPath[role] ?? '/dashboard';
+}
+
+function renderDashboardLayout(title, session, body) {
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${title}</title></head><body>
+    <h1>${title}</h1>
     <p>role: ${session.role}</p>
     <p>tenantId: ${session.tenantId}</p>
-    <p><a href="/admin/students">Gérer les élèves</a></p>
-    <p><a href="/admin/parents">Gérer les responsables</a></p>
-    <p><a href="/admin/teachers">Gérer les enseignants</a></p>
+    ${body}
     <form method="POST" action="/logout"><button type="submit">Logout</button></form>
   </body></html>`;
+}
+
+function renderAdminDashboard(session, metrics) {
+  return renderDashboardLayout(
+    'Dashboard Admin',
+    session,
+    `<h2>Synthèse établissement</h2>
+    <ul>
+      <li>Classes actives: ${metrics.classRoomsCount}</li>
+      <li>Élèves actifs: ${metrics.studentsCount}</li>
+      <li>Responsables actifs: ${metrics.parentsCount}</li>
+      <li>Enseignants actifs: ${metrics.teachersCount}</li>
+    </ul>
+    <h2>Raccourcis</h2>
+    <p><a href="/admin/students">Gérer les élèves</a></p>
+    <p><a href="/admin/parents">Gérer les responsables</a></p>
+    <p><a href="/admin/teachers">Gérer les enseignants</a></p>`
+  );
+}
+
+function renderDirectorDashboard(session, metrics) {
+  return renderDashboardLayout(
+    'Dashboard Director',
+    session,
+    `<h2>Pilotage synthétique</h2>
+    <ul>
+      <li>Effectif élèves: ${metrics.studentsCount}</li>
+      <li>Classes ouvertes: ${metrics.classRoomsCount}</li>
+      <li>Enseignants actifs: ${metrics.teachersCount}</li>
+    </ul>
+    <p><a href="/admin/students">Voir les élèves</a></p>
+    <p>Suivi attendance/grading: disponible prochainement.</p>`
+  );
+}
+
+function renderTeacherDashboard(session, teacher, classRooms, subjects) {
+  const classNames = classRooms.map((classRoom) => classRoom.name).join(', ') || 'Aucune classe assignée';
+  const subjectNames = subjects.map((subject) => subject.name).join(', ') || 'Aucune matière assignée';
+
+  return renderDashboardLayout(
+    'Dashboard Teacher',
+    session,
+    `<h2>Vue enseignant</h2>
+    <p>Classes assignées: ${classNames}</p>
+    <p>Matières assignées: ${subjectNames}</p>
+    <h2>Raccourcis métier</h2>
+    <p><a href="/admin/students">Mes classes</a></p>
+    <p>Attendance: placeholder MVP</p>
+    <p>Grading: placeholder MVP</p>
+    <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>`
+  );
+}
+
+function renderParentDashboard(session, children) {
+  const list = children.length
+    ? `<ul>${children.map((student) => `<li>${student.firstName} ${student.lastName} (${student.classRoomId})</li>`).join('')}</ul>`
+    : '<p>Aucun enfant lié pour le moment.</p>';
+
+  return renderDashboardLayout(
+    'Dashboard Parent',
+    session,
+    `<h2>Mes enfants</h2>
+    ${list}
+    <h2>Informations utiles</h2>
+    <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>
+    <p>Devoirs/notes: placeholder MVP</p>`
+  );
+}
+
+function renderStudentDashboard(session, student) {
+  return renderDashboardLayout(
+    'Dashboard Student',
+    session,
+    `<h2>Mon espace</h2>
+    <p>Nom: ${student ? `${student.firstName} ${student.lastName}` : 'Profil étudiant non trouvé'}</p>
+    <p>Classe: ${student?.classRoomId ?? '-'}</p>
+    <p>Matricule: ${student?.admissionNumber ?? '-'}</p>
+    <p>Emploi du temps/notes: placeholder MVP</p>`
+  );
+}
+
+function renderAccountantDashboard(session) {
+  return renderDashboardLayout(
+    'Dashboard Accountant',
+    session,
+    `<h2>Finance (placeholder)</h2>
+    <p>Le module finance complet n'est pas encore disponible dans ce MVP.</p>
+    <p>Prochaine étape: facturation et paiements.</p>`
+  );
 }
 
 function renderStudentsPage(session, classRooms, students, selectedClassRoomId = '') {
@@ -400,7 +566,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       }
 
       const createdSession = sessionStore.create({ userId: user.id, role: user.role, tenantId: user.tenantId });
-      response.writeHead(302, { location: '/dashboard', 'set-cookie': `sessionId=${createdSession.id}; HttpOnly; Path=/; SameSite=Lax` });
+      response.writeHead(302, { location: getDashboardPathForRole(user.role), 'set-cookie': `sessionId=${createdSession.id}; HttpOnly; Path=/; SameSite=Lax` });
       response.end();
       return;
     }
@@ -420,8 +586,67 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         return;
       }
 
+      response.writeHead(302, { location: getDashboardPathForRole(auth.context.role) });
+      response.end();
+      return;
+    }
+
+    const dashboardRoleMatch = url.pathname.match(/^\/dashboard\/(admin|director|teacher|parent|student|accountant)$/);
+    if (request.method === 'GET' && dashboardRoleMatch) {
+      const auth = requireAuth(session);
+      if (!auth.allowed) {
+        response.writeHead(302, { location: '/login' });
+        response.end();
+        return;
+      }
+
+      const routeRoleKey = dashboardRoleMatch[1];
+      const expectedRoleByRoute = {
+        admin: ROLES.SCHOOL_ADMIN,
+        director: ROLES.DIRECTOR,
+        teacher: ROLES.TEACHER,
+        parent: ROLES.PARENT,
+        student: ROLES.STUDENT,
+        accountant: ROLES.ACCOUNTANT
+      };
+
+      if (auth.context.role !== expectedRoleByRoute[routeRoleKey]) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const tenantId = auth.context.tenantId;
+      const metrics = {
+        classRoomsCount: coreSchoolStore.list('classRooms', tenantId).length,
+        studentsCount: studentStore.list(tenantId).length,
+        parentsCount: parentStore.list(tenantId).length,
+        teachersCount: teacherStore.list(tenantId).length
+      };
+
+      let html = '';
+      if (auth.context.role === ROLES.SCHOOL_ADMIN) {
+        html = renderAdminDashboard(auth.context, metrics);
+      } else if (auth.context.role === ROLES.DIRECTOR) {
+        html = renderDirectorDashboard(auth.context, metrics);
+      } else if (auth.context.role === ROLES.TEACHER) {
+        const teacher = teacherStore.get(tenantId, auth.context.userId, { includeArchived: false });
+        const classRooms = teacher ? teacher.classRoomIds.map((id) => coreSchoolStore.get('classRooms', tenantId, id)).filter(Boolean) : [];
+        const subjects = teacher ? teacher.subjectIds.map((id) => coreSchoolStore.get('subjects', tenantId, id)).filter(Boolean) : [];
+        html = renderTeacherDashboard(auth.context, teacher, classRooms, subjects);
+      } else if (auth.context.role === ROLES.PARENT) {
+        const links = parentStore.listLinksByParent(tenantId, auth.context.userId);
+        const children = links.map((link) => studentStore.get(tenantId, link.studentId, { includeArchived: false })).filter(Boolean);
+        html = renderParentDashboard(auth.context, children);
+      } else if (auth.context.role === ROLES.STUDENT) {
+        const student = studentStore.get(tenantId, auth.context.userId, { includeArchived: false });
+        html = renderStudentDashboard(auth.context, student);
+      } else if (auth.context.role === ROLES.ACCOUNTANT) {
+        html = renderAccountantDashboard(auth.context);
+      }
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderDashboard(auth.context));
+      response.end(html);
       return;
     }
 
