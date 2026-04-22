@@ -1,4 +1,5 @@
 const http = require('node:http');
+const crypto = require('node:crypto');
 
 const { authorizeApiRequest } = require('../../../packages/auth/src/guards/api-guard');
 const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
