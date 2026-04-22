@@ -95,6 +95,39 @@ Le MVP inclut :
 - tableau de bord par rôle
 - premières fonctionnalités IA
 
+
+## Implémentation actuelle (socle métier école)
+
+Le prototype backend expose maintenant un référentiel établissement minimal multi-tenant :
+- `School`
+- `AcademicYear`
+- `Term`
+- `GradeLevel`
+- `ClassRoom`
+- `Subject`
+
+Endpoints CRUD JSON :
+- `GET/POST /api/v1/schools`
+- `GET/PUT/DELETE /api/v1/schools/:id`
+- `GET/POST /api/v1/academic-years`
+- `GET/PUT/DELETE /api/v1/academic-years/:id`
+- `GET/POST /api/v1/terms`
+- `GET/PUT/DELETE /api/v1/terms/:id`
+- `GET/POST /api/v1/grade-levels`
+- `GET/PUT/DELETE /api/v1/grade-levels/:id`
+- `GET/POST /api/v1/class-rooms`
+- `GET/PUT/DELETE /api/v1/class-rooms/:id`
+- `GET/POST /api/v1/subjects`
+- `GET/PUT/DELETE /api/v1/subjects/:id`
+
+Écran admin simple :
+- `GET /admin/core-structure`
+
+Règles d'accès :
+- `school_admin` : lecture + écriture
+- `director` : lecture seule
+- `super_admin` : accès global avec `tenantId` explicite sur les appels API
+
 ## Structure documentaire du repo
 
 - `PRD.md` : Product Requirements Document complet
