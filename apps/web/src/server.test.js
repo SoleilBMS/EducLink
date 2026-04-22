@@ -210,3 +210,52 @@ test('accès refusé proprement si rôle non autorisé en écriture', async () =
     assert.equal(payload.error.code, 'FORBIDDEN');
   });
 });
+
+test('pages admin students échappent les champs pour éviter XSS stockée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const injectedFirstName = '<img src=x onerror=alert(1)>';
+    const createResponse = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: injectedFirstName,
+        lastName: 'Safe',
+        admissionNumber: 'A-777',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-03-02'
+      }
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await createResponse.json();
+
+    const listPage = await apiFetch(baseUrl, '/admin/students', { cookie });
+    const listHtml = await listPage.text();
+    assert.equal(listPage.status, 200);
+    assert.ok(listHtml.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    assert.ok(!listHtml.includes(injectedFirstName));
+
+    const profilePage = await apiFetch(baseUrl, `/admin/students/${created.data.id}`, { cookie });
+    const profileHtml = await profilePage.text();
+    assert.equal(profilePage.status, 200);
+    assert.ok(profileHtml.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    assert.ok(!profileHtml.includes(injectedFirstName));
+  });
+});
+
+test('endpoints core-school restent accessibles', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const schoolsResponse = await apiFetch(baseUrl, '/api/v1/schools', { cookie });
+    assert.equal(schoolsResponse.status, 200);
+    const schoolsPayload = await schoolsResponse.json();
+    assert.ok(Array.isArray(schoolsPayload.data));
+    assert.ok(schoolsPayload.data.length >= 1);
+
+    const gradeLevelsResponse = await apiFetch(baseUrl, '/api/v1/grade-levels', { cookie });
+    assert.equal(gradeLevelsResponse.status, 200);
+    const gradesPayload = await gradeLevelsResponse.json();
+    assert.ok(gradesPayload.data.every((grade) => grade.tenant_id === 'school-a'));
+  });
+});
