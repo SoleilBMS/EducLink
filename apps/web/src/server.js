@@ -15,6 +15,10 @@ const { MessagingStore } = require('./modules/messaging');
 const { AuditLogStore, createAuditEventWriter } = require('./modules/audit');
 const { FinanceStore } = require('./modules/finance');
 const { AiService, PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore, DevEchoAiProvider } = require('./modules/ai');
+const { createStudentRoutes } = require('./routes/student-routes');
+const { createParentRoutes } = require('./routes/parent-routes');
+const { createTeacherRoutes } = require('./routes/teacher-routes');
+const { parseCookies, parseExtendedForm, parseForm, parseJsonBody: parseJsonBodyRaw, readBody, sendApiError, sendApiSuccess, sendJson } = require('./routes/shared-http');
 
 const users = [
   { id: 'super-admin', email: 'superadmin@platform.test', password: 'password123', role: ROLES.SUPER_ADMIN, tenantId: null },
@@ -145,84 +149,8 @@ function createSeedData() {
   };
 }
 
-function parseCookies(cookieHeader) {
-  if (!cookieHeader) {
-    return {};
-  }
-
-  return cookieHeader
-    .split(';')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .reduce((cookies, entry) => {
-      const [name, ...rawValue] = entry.split('=');
-      cookies[name] = decodeURIComponent(rawValue.join('='));
-      return cookies;
-    }, {});
-}
-
-function readBody(request) {
-  return new Promise((resolve) => {
-    let body = '';
-    request.on('data', (chunk) => {
-      body += chunk;
-    });
-    request.on('end', () => resolve(body));
-  });
-}
-
-async function parseJsonBody(request) {
-  const rawBody = await readBody(request);
-  if (!rawBody) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(rawBody);
-  } catch {
-    throw buildValidationError('Request body must be valid JSON');
-  }
-}
-
-function parseForm(formBody) {
-  const searchParams = new URLSearchParams(formBody);
-  return {
-    email: searchParams.get('email') ?? '',
-    password: searchParams.get('password') ?? ''
-  };
-}
-
-function parseExtendedForm(formBody) {
-  const searchParams = new URLSearchParams(formBody);
-  return {
-    get(name) {
-      return searchParams.get(name) ?? '';
-    },
-    getAll(name) {
-      return searchParams.getAll(name);
-    }
-  };
-}
-
-function sendJson(response, statusCode, payload) {
-  response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
-  response.end(JSON.stringify(payload));
-}
-
-function sendApiSuccess(response, data, statusCode = 200) {
-  sendJson(response, statusCode, {
-    data,
-    meta: { request_id: crypto.randomUUID() }
-  });
-}
-
-const crypto = require('node:crypto');
-
-function sendApiError(response, statusCode, code, message) {
-  sendJson(response, statusCode, {
-    error: { code, message },
-    meta: { request_id: crypto.randomUUID() }
-  });
+function parseJsonBody(request) {
+  return parseJsonBodyRaw(request, buildValidationError);
 }
 
 function canManageStudents(session) {
@@ -1105,6 +1033,36 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       logStore: aiLogStore
     });
   const reportComments = [];
+
+  const domainRouteHandlers = [
+    createStudentRoutes({
+      studentStore,
+      coreSchoolStore,
+      auditWriter,
+      sendApiError,
+      sendApiSuccess,
+      parseJsonBody,
+      buildTenantScope
+    }),
+    createParentRoutes({
+      parentStore,
+      studentStore,
+      auditWriter,
+      sendApiError,
+      sendApiSuccess,
+      parseJsonBody,
+      buildTenantScope,
+      buildValidationError
+    }),
+    createTeacherRoutes({
+      teacherStore,
+      auditWriter,
+      sendApiError,
+      sendApiSuccess,
+      parseJsonBody,
+      buildTenantScope
+    })
+  ];
 
   async function generateReportCommentDraft({ tenantId, teacherId, studentId }) {
     const teacher = teacherStore.get(tenantId, teacherId, { includeArchived: false });
@@ -2620,344 +2578,9 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       return;
     }
 
-    if (url.pathname === '/api/v1/students' && request.method === 'GET') {
-      const auth = authorizeApiRequest(session, null, {
-        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR]
-      });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      const students = studentStore.list(tenantId, {
-        classRoomId: url.searchParams.get('classRoomId') ?? undefined
-      });
-      auditWriter.writeSensitiveDataAccess(session, 'student', 'list', {
-        classRoomId: url.searchParams.get('classRoomId') ?? null
-      });
-      sendApiSuccess(response, students);
-      return;
-    }
-
-    if (url.pathname === '/api/v1/students' && request.method === 'POST') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      try {
-        const payload = await parseJsonBody(request);
-        const tenantId = buildTenantScope(session, payload);
-        const student = studentStore.create(tenantId, payload);
-        auditWriter.writeEntityEvent(session, 'student.create', 'student', student.id);
-        sendApiSuccess(response, student, 201);
-      } catch (error) {
-        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-      }
-      return;
-    }
-
-    const studentByIdMatch = url.pathname.match(/^\/api\/v1\/students\/([^/]+)$/);
-    if (studentByIdMatch) {
-      const studentId = studentByIdMatch[1];
-
-      if (request.method === 'GET') {
-        const auth = authorizeApiRequest(session, null, {
-          allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR]
-        });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const student = studentStore.get(tenantId, studentId);
-        if (!student) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
-          return;
-        }
-
-        sendApiSuccess(response, student);
-        return;
-      }
-
-      if (request.method === 'PUT') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        try {
-          const payload = await parseJsonBody(request);
-          const tenantId = buildTenantScope(session, payload);
-          const updated = studentStore.update(tenantId, studentId, payload);
-          if (!updated) {
-            sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
-            return;
-          }
-          auditWriter.writeEntityEvent(session, 'student.update', 'student', updated.id);
-          sendApiSuccess(response, updated);
-        } catch (error) {
-          sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-        }
-        return;
-      }
-
-      if (request.method === 'DELETE') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = studentStore.archive(tenantId, studentId);
-        if (!archived) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
-          return;
-        }
-        auditWriter.writeEntityEvent(session, 'student.archive', 'student', archived.id);
-        sendApiSuccess(response, archived);
-        return;
-      }
-    }
-
-    if (url.pathname === '/api/v1/parents' && request.method === 'GET') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, parentStore.list(tenantId));
-      return;
-    }
-
-    if (url.pathname === '/api/v1/parents' && request.method === 'POST') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      try {
-        const payload = await parseJsonBody(request);
-        const tenantId = buildTenantScope(session, payload);
-        const parent = parentStore.create(tenantId, payload);
-        auditWriter.writeEntityEvent(session, 'parent.create', 'parent', parent.id);
-        sendApiSuccess(response, parent, 201);
-      } catch (error) {
-        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-      }
-      return;
-    }
-
-    const parentByIdMatch = url.pathname.match(/^\/api\/v1\/parents\/([^/]+)$/);
-    if (parentByIdMatch) {
-      const parentId = parentByIdMatch[1];
-      if (request.method === 'GET') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const parent = parentStore.getParentWithLinks(tenantId, parentId);
-        if (!parent) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
-          return;
-        }
-        sendApiSuccess(response, parent);
-        return;
-      }
-
-      if (request.method === 'PUT') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        try {
-          const payload = await parseJsonBody(request);
-          const tenantId = buildTenantScope(session, payload);
-          const updated = parentStore.update(tenantId, parentId, payload);
-          if (!updated) {
-            sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
-            return;
-          }
-          auditWriter.writeEntityEvent(session, 'parent.update', 'parent', updated.id);
-          sendApiSuccess(response, updated);
-        } catch (error) {
-          sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-        }
-        return;
-      }
-
-      if (request.method === 'DELETE') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = parentStore.archive(tenantId, parentId);
-        if (!archived) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
-          return;
-        }
-        auditWriter.writeEntityEvent(session, 'parent.archive', 'parent', archived.id);
-        sendApiSuccess(response, archived);
-        return;
-      }
-    }
-
-    const parentLinksMatch = url.pathname.match(/^\/api\/v1\/parents\/([^/]+)\/links$/);
-    if (parentLinksMatch && request.method === 'POST') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      try {
-        const payload = await parseJsonBody(request);
-        const tenantId = buildTenantScope(session, payload);
-        if (!Array.isArray(payload.studentIds) || payload.studentIds.length === 0) {
-          throw buildValidationError('studentIds must be a non-empty array');
-        }
-
-        const links = payload.studentIds.map((studentId) =>
-          parentStore.upsertLink(tenantId, parentLinksMatch[1], studentId, {
-            relationship: payload.relationship,
-            isPrimaryContact: payload.isPrimaryContact
-          })
-        );
-
-        sendApiSuccess(response, links, 201);
-      } catch (error) {
-        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-      }
-      return;
-    }
-
-    const studentParentsMatch = url.pathname.match(/^\/api\/v1\/students\/([^/]+)\/parents$/);
-    if (studentParentsMatch && request.method === 'GET') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      const student = studentStore.get(tenantId, studentParentsMatch[1], { includeArchived: false });
-      if (!student) {
-        sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
-        return;
-      }
-
-      const links = parentStore.listLinksByStudent(tenantId, studentParentsMatch[1]).map((link) => ({
-        ...link,
-        parent: parentStore.get(tenantId, link.parentId, { includeArchived: true })
-      }));
-      sendApiSuccess(response, links);
-      return;
-    }
-
-    if (url.pathname === '/api/v1/teachers' && request.method === 'GET') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, teacherStore.list(tenantId));
-      return;
-    }
-
-    if (url.pathname === '/api/v1/teachers' && request.method === 'POST') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
-        return;
-      }
-
-      try {
-        const payload = await parseJsonBody(request);
-        const tenantId = buildTenantScope(session, payload);
-        const teacher = teacherStore.create(tenantId, payload);
-        auditWriter.writeEntityEvent(session, 'teacher.create', 'teacher', teacher.id);
-        sendApiSuccess(response, teacher, 201);
-      } catch (error) {
-        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-      }
-      return;
-    }
-
-    const teacherByIdMatch = url.pathname.match(/^\/api\/v1\/teachers\/([^/]+)$/);
-    if (teacherByIdMatch) {
-      const teacherId = teacherByIdMatch[1];
-      if (request.method === 'GET') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const teacher = teacherStore.get(tenantId, teacherId);
-        if (!teacher) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
-          return;
-        }
-        sendApiSuccess(response, teacher);
-        return;
-      }
-
-      if (request.method === 'PUT') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        try {
-          const payload = await parseJsonBody(request);
-          const tenantId = buildTenantScope(session, payload);
-          const updated = teacherStore.update(tenantId, teacherId, payload);
-          if (!updated) {
-            sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
-            return;
-          }
-          auditWriter.writeEntityEvent(session, 'teacher.update', 'teacher', updated.id);
-          sendApiSuccess(response, updated);
-        } catch (error) {
-          sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
-        }
-        return;
-      }
-
-      if (request.method === 'DELETE') {
-        const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
-          return;
-        }
-
-        const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = teacherStore.archive(tenantId, teacherId);
-        if (!archived) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Teacher not found');
-          return;
-        }
-        auditWriter.writeEntityEvent(session, 'teacher.archive', 'teacher', archived.id);
-        sendApiSuccess(response, archived);
+    for (const handleDomainRoute of domainRouteHandlers) {
+      const handled = await handleDomainRoute({ request, response, url, session });
+      if (handled) {
         return;
       }
     }
