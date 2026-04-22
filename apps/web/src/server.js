@@ -186,7 +186,7 @@ function ensureCoreRoleAllowed(session, writeOperation) {
 function renderLoginPage(errorMessage = '') {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EducLink - Login</title></head><body>
     <h1>Connexion EducLink</h1>
-    ${errorMessage ? `<p style="color:red">${errorMessage}</p>` : ''}
+    ${errorMessage ? `<p style="color:red">${escapeHtml(errorMessage)}</p>` : ''}
     <form method="POST" action="/login">
       <label>Email <input type="email" name="email" required /></label><br/>
       <label>Mot de passe <input type="password" name="password" required /></label><br/>
@@ -198,8 +198,8 @@ function renderLoginPage(errorMessage = '') {
 function renderDashboard(session) {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Dashboard</title></head><body>
     <h1>Dashboard</h1>
-    <p>role: ${session.role}</p>
-    <p>tenantId: ${session.tenantId}</p>
+    <p>role: ${escapeHtml(session.role)}</p>
+    <p>tenantId: ${escapeHtml(session.tenantId)}</p>
     <p><a href="/admin/students">Gérer les élèves</a></p>
     <form method="POST" action="/logout"><button type="submit">Logout</button></form>
   </body></html>`;
@@ -222,7 +222,7 @@ function renderStudentsPage(session, classRooms, students, selectedClassRoomId =
 
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Students</title></head><body>
     <h1>Gestion des élèves</h1>
-    <p>Tenant: ${session.tenantId}</p>
+    <p>Tenant: ${escapeHtml(session.tenantId)}</p>
     <form method="GET" action="/admin/students">
       <label>Filtre classe
         <select name="classRoomId">${options}</select>

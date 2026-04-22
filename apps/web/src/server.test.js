@@ -247,15 +247,21 @@ test('pages admin students échappent les champs pour éviter XSS stockée', asy
 test('endpoints core-school restent accessibles', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'admin@school-a.test');
-    const schoolsResponse = await apiFetch(baseUrl, '/api/v1/schools', { cookie });
-    assert.equal(schoolsResponse.status, 200);
-    const schoolsPayload = await schoolsResponse.json();
-    assert.ok(Array.isArray(schoolsPayload.data));
-    assert.ok(schoolsPayload.data.length >= 1);
+    const corePaths = [
+      '/api/v1/schools',
+      '/api/v1/academic-years',
+      '/api/v1/terms',
+      '/api/v1/grade-levels',
+      '/api/v1/class-rooms',
+      '/api/v1/subjects'
+    ];
 
-    const gradeLevelsResponse = await apiFetch(baseUrl, '/api/v1/grade-levels', { cookie });
-    assert.equal(gradeLevelsResponse.status, 200);
-    const gradesPayload = await gradeLevelsResponse.json();
-    assert.ok(gradesPayload.data.every((grade) => grade.tenant_id === 'school-a'));
+    for (const path of corePaths) {
+      const routeResponse = await apiFetch(baseUrl, path, { cookie });
+      assert.equal(routeResponse.status, 200, `Expected ${path} to stay reachable`);
+      const routePayload = await routeResponse.json();
+      assert.ok(Array.isArray(routePayload.data), `Expected ${path} payload to include a data array`);
+      assert.ok(routePayload.data.every((item) => item.tenant_id === 'school-a'), `Expected ${path} data to stay tenant-scoped`);
+    }
   });
 });
