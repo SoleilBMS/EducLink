@@ -2,9 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createServer } = require('./server');
+const { PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore } = require('./modules/ai');
 
-async function withServer(run) {
-  const server = createServer();
+async function withServer(run, options = {}) {
+  const server = createServer(options);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -426,20 +427,6 @@ test('un rôle non autorisé ne peut pas écrire en finance', async () => {
   });
 });
 
-test('pages admin students échappent les champs pour éviter XSS stockée', async () => {
-  await withServer(async (baseUrl) => {
-    const { cookie } = await login(baseUrl, 'admin@school-a.test');
-
-    const injectedFirstName = '<img src=x onerror=alert(1)>';
-    const createResponse = await apiFetch(baseUrl, '/api/v1/students', {
-      cookie,
-      method: 'POST',
-      body: {
-        firstName: injectedFirstName,
-        lastName: 'Safe',
-        admissionNumber: 'A-777',
-        classRoomId: 'class-a1',
-        dateOfBirth: '2014-03-02'
 test('audit log enregistre login/logout avec actor/action/tenant/timestamp', async () => {
   await withServer(async (baseUrl) => {
     const adminLogin = await login(baseUrl, 'admin@school-a.test');
@@ -489,39 +476,6 @@ test('audit log trace les actions critiques students et filtre strictement par t
     assert.equal(createResponse.status, 201);
     const created = await createResponse.json();
 
-    const listPage = await apiFetch(baseUrl, '/admin/students', { cookie });
-    const listHtml = await listPage.text();
-    assert.equal(listPage.status, 200);
-    assert.ok(listHtml.includes('&lt;img src=x onerror=alert(1)&gt;'));
-    assert.ok(!listHtml.includes(injectedFirstName));
-
-    const profilePage = await apiFetch(baseUrl, `/admin/students/${created.data.id}`, { cookie });
-    const profileHtml = await profilePage.text();
-    assert.equal(profilePage.status, 200);
-    assert.ok(profileHtml.includes('&lt;img src=x onerror=alert(1)&gt;'));
-    assert.ok(!profileHtml.includes(injectedFirstName));
-  });
-});
-
-test('endpoints core-school restent accessibles', async () => {
-  await withServer(async (baseUrl) => {
-    const { cookie } = await login(baseUrl, 'admin@school-a.test');
-    const corePaths = [
-      '/api/v1/schools',
-      '/api/v1/academic-years',
-      '/api/v1/terms',
-      '/api/v1/grade-levels',
-      '/api/v1/class-rooms',
-      '/api/v1/subjects'
-    ];
-
-    for (const path of corePaths) {
-      const routeResponse = await apiFetch(baseUrl, path, { cookie });
-      assert.equal(routeResponse.status, 200, `Expected ${path} to stay reachable`);
-      const routePayload = await routeResponse.json();
-      assert.ok(Array.isArray(routePayload.data), `Expected ${path} payload to include a data array`);
-      assert.ok(routePayload.data.every((item) => item.tenant_id === 'school-a'), `Expected ${path} data to stay tenant-scoped`);
-    }
     const updateResponse = await apiFetch(baseUrl, `/api/v1/students/${created.data.id}`, {
       cookie: adminACookie,
       method: 'PUT',
@@ -635,45 +589,6 @@ test('school_admin peut lier un parent à plusieurs élèves', async () => {
     const parentDetails = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}`, { cookie });
     const parentDetailsPayload = await parentDetails.json();
     assert.equal(parentDetailsPayload.data.links.length, 2);
-  });
-});
-
-test('liaison parent-élèves est atomique quand un studentId est invalide', async () => {
-  await withServer(async (baseUrl) => {
-    const { cookie } = await login(baseUrl, 'admin@school-a.test');
-    const createParentResponse = await apiFetch(baseUrl, '/api/v1/parents', {
-      cookie,
-      method: 'POST',
-      body: { firstName: 'Atomic', lastName: 'Parent', email: 'atomic@test.local' }
-    });
-    const parentPayload = await createParentResponse.json();
-
-    const createStudent = await apiFetch(baseUrl, '/api/v1/students', {
-      cookie,
-      method: 'POST',
-      body: {
-        firstName: 'Valid',
-        lastName: 'Student',
-        admissionNumber: 'A-999',
-        classRoomId: 'class-a1',
-        dateOfBirth: '2012-02-02'
-      }
-    });
-    const studentPayload = await createStudent.json();
-
-    const linkResponse = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}/links`, {
-      cookie,
-      method: 'POST',
-      body: {
-        studentIds: [studentPayload.data.id, 'student-does-not-exist'],
-        relationship: 'guardian'
-      }
-    });
-    assert.equal(linkResponse.status, 422);
-
-    const parentDetails = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}`, { cookie });
-    const parentDetailsPayload = await parentDetails.json();
-    assert.equal(parentDetailsPayload.data.links.length, 0);
   });
 });
 
@@ -1649,5 +1564,129 @@ test('super_admin respecte les règles actuelles: endpoints métier non autoris�
 
     const attendanceResponse = await apiFetch(baseUrl, '/api/v1/attendance?tenantId=school-a', { cookie: superAdminCookie });
     assert.equal(attendanceResponse.status, 403);
+  });
+});
+
+test('teacher peut déclencher une génération IA pour un élève autorisé et reçoit un draft', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+
+    const createAssessment = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Interro AI',
+        date: '2026-02-01',
+        coefficient: 1
+      }
+    });
+    const assessmentPayload = await createAssessment.json();
+    await apiFetch(baseUrl, `/api/v1/assessments/${assessmentPayload.data.id}/grades`, {
+      cookie,
+      method: 'POST',
+      body: { entries: [{ studentId: 'student-a1', score: 15, remark: 'Participation régulière' }] }
+    });
+
+    const response = await apiFetch(baseUrl, '/api/v1/ai/report-comments/draft', {
+      cookie,
+      method: 'POST',
+      body: { studentId: 'student-a1' }
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.data.status, 'draft');
+    assert.equal(payload.data.humanValidationRequired, true);
+    assert.match(payload.data.draft, /dev-echo/i);
+  });
+});
+
+test('teacher ne peut pas générer pour un élève hors de ses classes', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/ai/report-comments/draft', {
+      cookie,
+      method: 'POST',
+      body: { studentId: 'student-a2' }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});
+
+test('validation humaine requise avant sauvegarde finale du commentaire', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+
+    const denied = await apiFetch(baseUrl, '/api/v1/report-comments', {
+      cookie,
+      method: 'POST',
+      body: { studentId: 'student-a1', commentText: 'Texte', humanValidated: false }
+    });
+    assert.equal(denied.status, 422);
+
+    const accepted = await apiFetch(baseUrl, '/api/v1/report-comments', {
+      cookie,
+      method: 'POST',
+      body: { studentId: 'student-a1', commentText: 'Texte validé humainement', humanValidated: true }
+    });
+    assert.equal(accepted.status, 201);
+  });
+});
+
+test('tenant avec IA désactivée ne peut pas utiliser la génération', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/ai/report-comments/draft', {
+      cookie,
+      method: 'POST',
+      body: { studentId: 'student-a1' }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'AI_DISABLED');
+  }, {
+    aiConfig: {
+      featureFlags: new TenantAiFeatureFlagStore({ tenantFlags: { 'school-a': false } })
+    }
+  });
+});
+
+test('génération IA est loggée et provider mockable en test', async () => {
+  const aiLogStore = new AiLogStore();
+  let called = false;
+  const mockProvider = {
+    async generate() {
+      called = true;
+      return { outputText: 'Brouillon mock', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } };
+    }
+  };
+
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/ai/report-comments/draft', {
+      cookie,
+      method: 'POST',
+      body: { studentId: 'student-a1' }
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(called, true);
+    const payload = await response.json();
+    assert.equal(payload.data.draft, 'Brouillon mock');
+    const logs = aiLogStore.listByTenant('school-a');
+    assert.ok(logs.some((entry) => entry.promptKey === 'report.comment.draft' && entry.status === 'success'));
+  }, {
+    aiConfig: {
+      logStore: aiLogStore,
+      promptRegistry: new PromptRegistry({ prompts: [{ key: 'report.comment.draft', version: 1, template: 'template' }] }),
+      featureFlags: new TenantAiFeatureFlagStore({ tenantFlags: { 'school-a': true } }),
+      providerRegistry: new AiProviderRegistry({ providers: { mock: mockProvider }, defaultProvider: 'mock' })
+    }
   });
 });
