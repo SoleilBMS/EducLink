@@ -267,6 +267,92 @@ test('accès refusé proprement si rôle non autorisé en écriture', async () =
   });
 });
 
+test('audit log enregistre login/logout avec actor/action/tenant/timestamp', async () => {
+  await withServer(async (baseUrl) => {
+    const adminLogin = await login(baseUrl, 'admin@school-a.test');
+    assert.equal(adminLogin.response.status, 302);
+
+    const logoutResponse = await apiFetch(baseUrl, '/logout', {
+      cookie: adminLogin.cookie,
+      method: 'POST'
+    });
+    assert.equal(logoutResponse.status, 200);
+
+    const secondLogin = await login(baseUrl, 'admin@school-a.test');
+    const logsResponse = await apiFetch(baseUrl, '/api/v1/audit-logs', { cookie: secondLogin.cookie });
+    assert.equal(logsResponse.status, 200);
+
+    const payload = await logsResponse.json();
+    const loginEvent = payload.data.find((entry) => entry.action === 'auth.login.success');
+    const logoutEvent = payload.data.find((entry) => entry.action === 'auth.logout');
+
+    assert.ok(loginEvent);
+    assert.ok(logoutEvent);
+    assert.equal(loginEvent.tenantId, 'school-a');
+    assert.equal(loginEvent.actorUserId, 'admin-a');
+    assert.equal(loginEvent.actorRole, 'school_admin');
+    assert.equal(loginEvent.targetType, 'auth');
+    assert.ok(loginEvent.targetId);
+    assert.ok(loginEvent.timestamp);
+  });
+});
+
+test('audit log trace les actions critiques students et filtre strictement par tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
+    const createResponse = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie: adminACookie,
+      method: 'POST',
+      body: {
+        firstName: 'Audit',
+        lastName: 'Target',
+        admissionNumber: 'A-AUDIT-1',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2012-01-01'
+      }
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await createResponse.json();
+
+    const updateResponse = await apiFetch(baseUrl, `/api/v1/students/${created.data.id}`, {
+      cookie: adminACookie,
+      method: 'PUT',
+      body: {
+        firstName: 'Audit',
+        lastName: 'Target',
+        admissionNumber: 'A-AUDIT-2',
+        classRoomId: 'class-a2',
+        dateOfBirth: '2012-01-01'
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const logsAResponse = await apiFetch(baseUrl, '/api/v1/audit-logs?targetType=student', { cookie: adminACookie });
+    const logsAPayload = await logsAResponse.json();
+    assert.ok(logsAPayload.data.some((entry) => entry.action === 'student.create' && entry.targetId === created.data.id));
+    assert.ok(logsAPayload.data.some((entry) => entry.action === 'student.update' && entry.targetId === created.data.id));
+    assert.ok(logsAPayload.data.every((entry) => entry.tenantId === 'school-a'));
+
+    const logsBResponse = await apiFetch(baseUrl, '/api/v1/audit-logs?targetType=student', { cookie: adminBCookie });
+    const logsBPayload = await logsBResponse.json();
+    assert.ok(logsBPayload.data.every((entry) => entry.tenantId === 'school-b'));
+    assert.ok(logsBPayload.data.every((entry) => entry.targetId !== created.data.id));
+  });
+});
+
+test('lecture des audit logs refuse les rôles non autorisés', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/audit-logs', { cookie });
+    assert.equal(response.status, 403);
+
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});
+
 test('school_admin peut créer un parent', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'admin@school-a.test');
