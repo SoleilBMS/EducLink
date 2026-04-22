@@ -341,6 +341,53 @@ test('accountant peut enregistrer un paiement et le statut facture devient paid'
   });
 });
 
+test('un paiement ne peut pas dépasser le solde restant de la facture', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const { cookie: accountantCookie } = await login(baseUrl, 'accountant@school-a.test');
+
+    const invoiceResponse = await apiFetch(baseUrl, '/api/v1/finance/invoices', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        studentId: 'student-a1',
+        amountDue: 100,
+        dueDate: '2026-10-10',
+        description: 'Frais examen'
+      }
+    });
+    assert.equal(invoiceResponse.status, 201);
+    const invoicePayload = await invoiceResponse.json();
+
+    const firstPaymentResponse = await apiFetch(baseUrl, '/api/v1/finance/payments', {
+      cookie: accountantCookie,
+      method: 'POST',
+      body: {
+        invoiceId: invoicePayload.data.id,
+        amountPaid: 80,
+        paidAt: '2026-10-11',
+        method: 'cash'
+      }
+    });
+    assert.equal(firstPaymentResponse.status, 201);
+
+    const overpaymentResponse = await apiFetch(baseUrl, '/api/v1/finance/payments', {
+      cookie: accountantCookie,
+      method: 'POST',
+      body: {
+        invoiceId: invoicePayload.data.id,
+        amountPaid: 50,
+        paidAt: '2026-10-12',
+        method: 'cash'
+      }
+    });
+    assert.equal(overpaymentResponse.status, 422);
+    const overpaymentPayload = await overpaymentResponse.json();
+    assert.equal(overpaymentPayload.error.code, 'VALIDATION_ERROR');
+    assert.equal(overpaymentPayload.error.message, 'amountPaid cannot exceed the remaining balance');
+  });
+});
+
 test('parent voit uniquement les données finance de ses enfants liés', async () => {
   await withServer(async (baseUrl) => {
     const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
