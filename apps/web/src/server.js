@@ -2292,16 +2292,10 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        if (!Array.isArray(payload.studentIds) || payload.studentIds.length === 0) {
-          throw buildValidationError('studentIds must be a non-empty array');
-        }
-
-        const links = payload.studentIds.map((studentId) =>
-          parentStore.upsertLink(tenantId, parentLinksMatch[1], studentId, {
-            relationship: payload.relationship,
-            isPrimaryContact: payload.isPrimaryContact
-          })
-        );
+        const links = parentStore.upsertLinksBatch(tenantId, parentLinksMatch[1], payload.studentIds, {
+          relationship: payload.relationship,
+          isPrimaryContact: payload.isPrimaryContact
+        });
 
         sendApiSuccess(response, links, 201);
       } catch (error) {

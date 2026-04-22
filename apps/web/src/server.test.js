@@ -432,6 +432,45 @@ test('school_admin peut lier un parent à plusieurs élèves', async () => {
   });
 });
 
+test('liaison parent-élèves est atomique quand un studentId est invalide', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const createParentResponse = await apiFetch(baseUrl, '/api/v1/parents', {
+      cookie,
+      method: 'POST',
+      body: { firstName: 'Atomic', lastName: 'Parent', email: 'atomic@test.local' }
+    });
+    const parentPayload = await createParentResponse.json();
+
+    const createStudent = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Valid',
+        lastName: 'Student',
+        admissionNumber: 'A-999',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2012-02-02'
+      }
+    });
+    const studentPayload = await createStudent.json();
+
+    const linkResponse = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}/links`, {
+      cookie,
+      method: 'POST',
+      body: {
+        studentIds: [studentPayload.data.id, 'student-does-not-exist'],
+        relationship: 'guardian'
+      }
+    });
+    assert.equal(linkResponse.status, 422);
+
+    const parentDetails = await apiFetch(baseUrl, `/api/v1/parents/${parentPayload.data.id}`, { cookie });
+    const parentDetailsPayload = await parentDetails.json();
+    assert.equal(parentDetailsPayload.data.links.length, 0);
+  });
+});
+
 test('school_admin peut lier plusieurs responsables à un élève', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'admin@school-a.test');
