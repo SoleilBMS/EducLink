@@ -12,7 +12,7 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
       const classRoomId = url.searchParams.get('classRoomId') ?? undefined;
-      sendApiSuccess(response, studentService.listStudents(tenantId, { classRoomId }));
+      sendApiSuccess(response, await studentService.listStudents(tenantId, { classRoomId }));
       return true;
     }
 
@@ -26,7 +26,7 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        const student = studentService.createStudent(tenantId, payload);
+        const student = await studentService.createStudent(tenantId, payload);
         auditWriter.writeEntityEvent(session, 'student.create', 'student', student.id);
         sendApiSuccess(response, student, 201);
       } catch (error) {
@@ -46,7 +46,7 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const student = studentService.getStudent(tenantId, studentId);
+        const student = await studentService.getStudent(tenantId, studentId);
         if (!student) {
           sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
           return true;
@@ -65,7 +65,7 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
         try {
           const payload = await parseJsonBody(request);
           const tenantId = buildTenantScope(session, payload);
-          const updated = studentService.updateStudent(tenantId, studentId, payload);
+          const updated = await studentService.updateStudent(tenantId, studentId, payload);
           if (!updated) {
             sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
             return true;
@@ -86,7 +86,7 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = studentService.archiveStudent(tenantId, studentId);
+        const archived = await studentService.archiveStudent(tenantId, studentId);
         if (!archived) {
           sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
           return true;
@@ -104,7 +104,7 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
         return true;
       }
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, studentService.listClassRooms(tenantId));
+      sendApiSuccess(response, await studentService.listClassRooms(tenantId));
       return true;
     }
 
@@ -115,7 +115,7 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
         return true;
       }
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, studentService.listSubjects(tenantId));
+      sendApiSuccess(response, await studentService.listSubjects(tenantId));
       return true;
     }
 

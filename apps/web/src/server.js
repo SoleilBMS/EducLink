@@ -25,6 +25,9 @@ const { StudentService } = require('./services/student-service');
 const { ParentService } = require('./services/parent-service');
 const { TeacherService } = require('./services/teacher-service');
 const { AttendanceService } = require('./services/attendance-service');
+const { getPool, closePool, isPersistenceEnabled } = require('../../../packages/database/src/client');
+const { PostgresCoreSchoolRepository } = require('./modules/persistence/postgres-core-school-repository');
+const { PostgresStudentRepository } = require('./modules/persistence/postgres-student-repository');
 
 const users = [
   { id: 'super-admin', email: 'superadmin@platform.test', password: 'password123', role: ROLES.SUPER_ADMIN, tenantId: null },
@@ -1040,6 +1043,15 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     });
   const coreSchoolService = new CoreSchoolService({ coreSchoolStore });
   const studentService = new StudentService({ studentStore, coreSchoolService });
+
+  let studentApiService = studentService;
+  if (isPersistenceEnabled()) {
+    const pool = getPool();
+    const persistentCoreSchool = new PostgresCoreSchoolRepository({ pool });
+    const persistentStudentStore = new PostgresStudentRepository({ pool, classRoomRepository: persistentCoreSchool });
+    const persistentCoreSchoolService = new CoreSchoolService({ coreSchoolStore: persistentCoreSchool });
+    studentApiService = new StudentService({ studentStore: persistentStudentStore, coreSchoolService: persistentCoreSchoolService });
+  }
   const parentService = new ParentService({ parentStore, studentStore, buildValidationError });
   const teacherService = new TeacherService({ teacherStore });
   const attendanceService = new AttendanceService({ attendanceStore, requireDateString });
@@ -1048,7 +1060,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
 
   const domainRouteHandlers = [
     createStudentRoutes({
-      studentService,
+      studentService: studentApiService,
       auditWriter,
       sendApiError,
       sendApiSuccess,
@@ -2595,5 +2607,10 @@ if (require.main === module) {
   server.listen(port, () => {
     // eslint-disable-next-line no-console
     console.log(`EducLink web app running on http://localhost:${port}`);
+  });
+
+  process.on('SIGTERM', async () => {
+    await closePool();
+    server.close();
   });
 }
