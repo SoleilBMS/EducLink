@@ -1,5 +1,6 @@
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
+const { createLogger } = require('./observability/logger');
 
 const { authorizeApiRequest } = require('../../../packages/auth/src/guards/api-guard');
 const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
@@ -993,7 +994,27 @@ function buildTenantScope(session, params) {
   return session.tenantId;
 }
 
-function createServer({ sessionStore = new SessionStore(), seed = createSeedData(), aiConfig = {} } = {}) {
+function serializeError(error) {
+  if (!error) {
+    return null;
+  }
+
+  return {
+    code: error.code || null,
+    status: error.status || null,
+    message: String(error.message || 'Unknown error').slice(0, 200)
+  };
+}
+
+function logAuthEvent(logger, message, session) {
+  logger.info(message, {
+    tenantId: session?.tenantId ?? null,
+    userId: session?.userId ?? null,
+    role: session?.role ?? null
+  });
+}
+
+function createServer({ sessionStore = new SessionStore(), seed = createSeedData(), aiConfig = {}, logger = createLogger({ module: 'web.server' }) } = {}) {
   const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms, subjects: seed.subjects });
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
   const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
@@ -1073,6 +1094,15 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
   const teacherService = new TeacherService({ teacherStore });
   const attendanceService = new AttendanceService({ attendanceStore, requireDateString });
 
+  logger.info('Application server initialized', {
+    persistenceMode: isPersistenceEnabled() ? 'postgres' : 'memory',
+    aiDefaultProvider: aiProviderRegistry.defaultProvider
+  });
+
+  if (isPersistenceEnabled()) {
+    logger.info('Postgres persistence enabled for student API');
+  }
+
   const reportComments = [];
 
   const domainRouteHandlers = [
@@ -1138,11 +1168,35 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
   }
 
   return http.createServer(async (request, response) => {
+    const requestStartedAt = Date.now();
+    const requestId = request.headers['x-request-id'] || randomUUID();
+    response.setHeader('x-request-id', requestId);
+
     const url = new URL(request.url, 'http://localhost');
     const cookies = parseCookies(request.headers.cookie);
     const rawSessionId = cookies.sessionId;
     const session = sessionStore.get(rawSessionId);
     const hasStaleSessionCookie = Boolean(rawSessionId && !session);
+    const requestLogger = logger.child(
+      {
+        requestId,
+        method: request.method,
+        path: url.pathname,
+        tenantId: session?.tenantId ?? null,
+        userId: session?.userId ?? null
+      },
+      'web.http'
+    );
+
+    requestLogger.info('HTTP request received');
+    response.on('finish', () => {
+      const durationMs = Date.now() - requestStartedAt;
+      const level = response.statusCode >= 500 ? 'error' : 'info';
+      requestLogger[level]('HTTP request completed', {
+        statusCode: response.statusCode,
+        durationMs
+      });
+    });
 
     if (request.method === 'GET' && url.pathname === '/login') {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -1154,12 +1208,14 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       const form = parseForm(await readBody(request));
       const user = users.find((candidate) => candidate.email === form.email && candidate.password === form.password);
       if (!user) {
+        requestLogger.warn('Authentication failed', { actor: form.email || null });
         response.writeHead(401, { 'content-type': 'text/html; charset=utf-8' });
         response.end(renderLoginPage('Identifiants invalides'));
         return;
       }
 
       const createdSession = sessionStore.create({ userId: user.id, role: user.role, tenantId: user.tenantId });
+      logAuthEvent(requestLogger, 'Authentication succeeded', createdSession);
       auditWriter.writeAuthEvent(createdSession, 'auth.login.success');
       if (rawSessionId) {
         sessionStore.destroy(rawSessionId);
@@ -1173,6 +1229,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     if (request.method === 'POST' && url.pathname === '/logout') {
       if (session) {
         auditWriter.writeAuthEvent(session, 'auth.logout');
+        logAuthEvent(requestLogger, 'Logout succeeded', session);
       }
       sessionStore.destroy(rawSessionId);
       response.writeHead(302, { location: '/login', 'set-cookie': clearSessionCookie() });
@@ -1335,8 +1392,8 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           date: form.get('date'),
           records
         });
-      } catch {
-        // no-op to keep teacher flow fast
+      } catch (error) {
+        requestLogger.warn('Unable to persist attendance form submission', { error: serializeError(error) });
       }
 
       response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}` });
@@ -1380,8 +1437,8 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           date: form.get('date'),
           content: form.get('content')
         });
-      } catch {
-        // no-op
+      } catch (error) {
+        requestLogger.warn('Unable to save teacher lesson log from form', { error: serializeError(error) });
       }
 
       response.writeHead(302, { location: '/teacher/lesson-homework' });
@@ -1407,8 +1464,8 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           title: form.get('title'),
           description: form.get('description')
         });
-      } catch {
-        // no-op
+      } catch (error) {
+        requestLogger.warn('Unable to save teacher homework from form', { error: serializeError(error) });
       }
 
       response.writeHead(302, { location: '/teacher/lesson-homework' });
@@ -2268,6 +2325,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       } catch (error) {
         const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
         const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        requestLogger.warn('Lesson log API request failed', { module: 'lesson-homework', error: serializeError(error) });
         sendApiError(response, status, code, error.message);
       }
       return;
@@ -2305,6 +2363,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       } catch (error) {
         const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
         const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        requestLogger.warn('Homework API request failed', { module: 'lesson-homework', error: serializeError(error) });
         sendApiError(response, status, code, error.message);
       }
       return;
@@ -2361,6 +2420,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       } catch (error) {
         const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
         const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        requestLogger.warn('Assessment API request failed', { module: 'grading', error: serializeError(error) });
         sendApiError(response, status, code, error.message);
       }
       return;
@@ -2406,6 +2466,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       } catch (error) {
         const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
         const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        requestLogger.warn('Assessment grades API request failed', { module: 'grading', error: serializeError(error) });
         sendApiError(response, status, code, error.message);
       }
       return;
@@ -2451,6 +2512,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
           teacherId: session.userId,
           studentId: payload.studentId
         });
+        requestLogger.info('AI draft generated', { module: 'ai', studentId: payload.studentId });
         sendApiSuccess(response, generated, 201);
       } catch (error) {
         if (error.code === 'AI_DISABLED') {
@@ -2459,6 +2521,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         }
         const status = error.message.startsWith('Teacher is not authorized') ? 403 : error.status ?? 422;
         const code = error.message.startsWith('Teacher is not authorized') ? 'FORBIDDEN' : error.code ?? 'VALIDATION_ERROR';
+        requestLogger.warn('AI draft generation failed', { module: 'ai', error: serializeError(error) });
         sendApiError(response, status, code, error.message);
       }
       return;
@@ -2596,6 +2659,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN] });
       if (!auth.ok) {
         sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        requestLogger.warn('Audit log access denied', { module: 'audit', status: auth.status });
         if (session) {
           auditWriter.writeAuthEvent(session, 'auth.access_denied', { path: '/api/v1/audit-logs' });
         }
@@ -2609,6 +2673,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         actorUserId: url.searchParams.get('actorUserId') ?? undefined,
         limit: url.searchParams.get('limit') ?? undefined
       });
+      requestLogger.info('Audit logs fetched', { module: 'audit', count: logs.length });
       sendApiSuccess(response, logs);
       return;
     }

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createServer } = require('./server');
 const { SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore } = require('./modules/ai');
+const { createLogger } = require('./observability/logger');
 
 async function withServer(run, options = {}) {
   const server = createServer(options);
@@ -34,6 +35,19 @@ async function login(baseUrl, email, password = 'password123') {
   };
 }
 
+
+function createLogCollector() {
+  const entries = [];
+  const logger = createLogger({
+    module: 'test',
+    format: 'json',
+    clock: () => '2026-01-01T00:00:00.000Z',
+    sink: (_line, entry) => entries.push(entry)
+  });
+
+  return { logger, entries };
+}
+
 async function apiFetch(baseUrl, path, { cookie, method = 'GET', body } = {}) {
   return fetch(`${baseUrl}${path}`, {
     method,
@@ -60,6 +74,53 @@ test('redirection après login vers dashboard adapté au rôle', async () => {
 
 
 
+
+
+test('logger structure les entrées et masque les champs sensibles', () => {
+  const entries = [];
+  const logger = createLogger({
+    module: 'test.logger',
+    format: 'json',
+    clock: () => '2026-01-01T00:00:00.000Z',
+    sink: (_line, entry) => entries.push(entry)
+  });
+
+  logger.info('sample log', { tenantId: 'school-a', actor: 'teacher-a1', password: 'should-not-appear' });
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].timestamp, '2026-01-01T00:00:00.000Z');
+  assert.equal(entries[0].module, 'test.logger');
+  assert.equal(entries[0].tenantId, 'school-a');
+  assert.equal(entries[0].password, '[REDACTED]');
+});
+
+test('server loggue les événements auth importants', async () => {
+  const { logger, entries } = createLogCollector();
+
+  await withServer(async (baseUrl) => {
+    const failedLogin = await login(baseUrl, 'admin@school-a.test', 'wrong-password');
+    assert.equal(failedLogin.response.status, 401);
+
+    const successLogin = await login(baseUrl, 'admin@school-a.test');
+    assert.equal(successLogin.response.status, 302);
+  }, { logger });
+
+  assert.ok(entries.some((entry) => entry.message === 'Authentication failed' && entry.level === 'warn'));
+  assert.ok(entries.some((entry) => entry.message === 'Authentication succeeded' && entry.level === 'info' && entry.userId === 'admin-a'));
+});
+
+test('server ajoute un request id et loggue fin de requête', async () => {
+  const { logger, entries } = createLogCollector();
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/login`, { headers: { 'x-request-id': 'req-123' } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-request-id'), 'req-123');
+  }, { logger });
+
+  assert.ok(entries.some((entry) => entry.requestId === 'req-123' && entry.message === 'HTTP request received'));
+  assert.ok(entries.some((entry) => entry.requestId === 'req-123' && entry.message === 'HTTP request completed'));
+});
 test('login applique des attributs cookie de session sécurisés', async () => {
   await withServer(async (baseUrl) => {
     const adminLogin = await login(baseUrl, 'admin@school-a.test');
