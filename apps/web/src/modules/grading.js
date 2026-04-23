@@ -121,6 +121,12 @@ class GradingStore {
       .sort((a, b) => (a.date < b.date ? 1 : -1));
   }
 
+  listAssessmentsForTenant(tenantId) {
+    return this.assessments
+      .filter((item) => item.tenant_id === tenantId)
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
   getAssessment(tenantId, assessmentId) {
     return this.assessments.find((item) => item.id === assessmentId && item.tenant_id === tenantId) ?? null;
   }

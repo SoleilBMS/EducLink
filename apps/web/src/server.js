@@ -2648,7 +2648,7 @@ function createServer({
 
       sendApiSuccess(
         response,
-        gradingStore.assessments.filter((item) => item.tenant_id === session.tenantId)
+        await gradingApiStore.listAssessmentsForTenant(session.tenantId)
       );
       return;
     }
