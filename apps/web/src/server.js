@@ -2884,6 +2884,11 @@ function createServer({
       return;
     }
 
+    if (url.pathname.startsWith('/api/v1/')) {
+      sendApiError(response, 404, 'NOT_FOUND', 'Resource not found');
+      return;
+    }
+
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   });

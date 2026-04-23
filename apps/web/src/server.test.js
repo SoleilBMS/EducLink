@@ -1738,6 +1738,83 @@ test('super_admin respecte les règles actuelles: endpoints métier non autoris�
   });
 });
 
+
+test('contrat API: succès inclut success/data/meta.request_id', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/students', { cookie });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.success, true);
+    assert.ok(Array.isArray(payload.data));
+    assert.equal(typeof payload.meta?.request_id, 'string');
+    assert.ok(payload.meta.request_id.length > 0);
+  });
+});
+
+test('contrat API: erreurs incluent success=false/error/meta.request_id', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Denied',
+        lastName: 'Role',
+        admissionNumber: 'A-ROLE-1',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2013-10-01'
+      }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, 'FORBIDDEN');
+    assert.equal(typeof payload.error.message, 'string');
+    assert.equal(typeof payload.meta?.request_id, 'string');
+    assert.ok(payload.meta.request_id.length > 0);
+  });
+});
+
+test('contrat API: validation JSON invalide expose code stable et details', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/api/v1/students`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json'
+      },
+      body: '{"firstName":"Aya"'
+    });
+
+    assert.equal(response.status, 422);
+    const payload = await response.json();
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, 'VALIDATION_ERROR');
+    assert.equal(payload.error.message, 'Request body must be valid JSON');
+    assert.equal(payload.error.details?.source, 'body');
+    assert.equal(payload.error.details?.issue, 'invalid_json');
+  });
+});
+
+test('contrat API: route API inconnue retourne une erreur JSON NOT_FOUND', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/does-not-exist', { cookie });
+
+    assert.equal(response.status, 404);
+    const payload = await response.json();
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, 'NOT_FOUND');
+    assert.equal(payload.error.message, 'Resource not found');
+    assert.equal(typeof payload.meta?.request_id, 'string');
+    assert.ok(payload.meta.request_id.length > 0);
+  });
+});
+
 test('teacher peut déclencher une génération IA pour un élève autorisé et reçoit un draft', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'teacher@school-a.test');
