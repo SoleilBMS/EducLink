@@ -24,9 +24,11 @@ Ce document décrit la stratégie minimale implémentée pour l'issue #3.
 - `packages/auth/src/roles/roles.js` : constantes et validation des rôles.
 - `packages/auth/src/permissions/permissions.js` : règles d'accès explicites (`canReadStudent`, `canReadClassRoom`) + contrôle de tenant.
 - `packages/auth/src/guards/api-guard.js` : erreurs propres (`UNAUTHORIZED`, `FORBIDDEN`, `TENANT_SCOPE_REQUIRED`) et enforcement du scope API.
-- `packages/core/src/tenantScope.js` : helper de scoping tenant (`filterByTenant`) réutilisé.
+- `packages/core/src/tenantScope.js` : helpers de scoping tenant (`filterByTenant`, `resolveTenantScope`) réutilisés.
 
 ## Règles clés implémentées
+
+- `resolveTenantScope` impose désormais un `tenantId` explicite pour `super_admin` sur les routes tenant-scopées, et bloque tout override cross-tenant pour les rôles établissement.
 
 - Parent : accès uniquement aux élèves liés.
 - Teacher : accès uniquement à ses classes et aux élèves de ses classes.
