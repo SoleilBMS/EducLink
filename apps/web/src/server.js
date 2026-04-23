@@ -39,21 +39,28 @@ const users = [
   { id: 'admin-b', email: 'admin@school-b.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-b' },
   { id: 'director-a', email: 'director@school-a.test', password: 'password123', role: ROLES.DIRECTOR, tenantId: 'school-a' },
   { id: 'teacher-a1', email: 'teacher@school-a.test', password: 'password123', role: ROLES.TEACHER, tenantId: 'school-a' },
+  { id: 'teacher-a2', email: 'teacher2@school-a.test', password: 'password123', role: ROLES.TEACHER, tenantId: 'school-a' },
   { id: 'parent-a1', email: 'parent@school-a.test', password: 'password123', role: ROLES.PARENT, tenantId: 'school-a' },
+  { id: 'parent-a2', email: 'parent2@school-a.test', password: 'password123', role: ROLES.PARENT, tenantId: 'school-a' },
   { id: 'student-a1', email: 'student@school-a.test', password: 'password123', role: ROLES.STUDENT, tenantId: 'school-a' },
   { id: 'accountant-a', email: 'accountant@school-a.test', password: 'password123', role: ROLES.ACCOUNTANT, tenantId: 'school-a' }
 ];
 
 function createSeedData() {
+  const now = new Date().toISOString();
   return {
     classRooms: [
-      { id: 'class-a1', tenant_id: 'school-a', name: 'A1', gradeLevelId: 'grade-a-1', capacity: 32 },
-      { id: 'class-a2', tenant_id: 'school-a', name: 'A2', gradeLevelId: 'grade-a-1', capacity: 30 },
+      { id: 'class-a1', tenant_id: 'school-a', name: '6ème A', gradeLevelId: 'grade-a-1', capacity: 32 },
+      { id: 'class-a2', tenant_id: 'school-a', name: '6ème B', gradeLevelId: 'grade-a-1', capacity: 30 },
+      { id: 'class-a3', tenant_id: 'school-a', name: '5ème A', gradeLevelId: 'grade-a-2', capacity: 30 },
       { id: 'class-b1', tenant_id: 'school-b', name: 'B1', gradeLevelId: 'grade-b-1', capacity: 30 }
     ],
     subjects: [
       { id: 'subject-a-math', tenant_id: 'school-a', name: 'Mathématiques', code: 'MATH' },
       { id: 'subject-a-fr', tenant_id: 'school-a', name: 'Français', code: 'FR' },
+      { id: 'subject-a-eng', tenant_id: 'school-a', name: 'Anglais', code: 'ENG' },
+      { id: 'subject-a-sci', tenant_id: 'school-a', name: 'Sciences', code: 'SCI' },
+      { id: 'subject-a-his', tenant_id: 'school-a', name: 'Histoire-Géo', code: 'HIST' },
       { id: 'subject-b-math', tenant_id: 'school-b', name: 'Mathématiques', code: 'MATH' }
     ],
     students: [
@@ -66,8 +73,20 @@ function createSeedData() {
         classRoomId: 'class-a1',
         dateOfBirth: '2013-03-09',
         archived_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'student-a3',
+        tenant_id: 'school-a',
+        firstName: 'Yanis',
+        lastName: 'Nadir',
+        admissionNumber: 'A-003',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2013-08-14',
+        archived_at: null,
+        created_at: now,
+        updated_at: now
       },
       {
         id: 'student-b1',
@@ -78,8 +97,8 @@ function createSeedData() {
         classRoomId: 'class-b1',
         dateOfBirth: '2012-12-01',
         archived_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: now,
+        updated_at: now
       },
       {
         id: 'student-a2',
@@ -90,8 +109,32 @@ function createSeedData() {
         classRoomId: 'class-a2',
         dateOfBirth: '2014-10-22',
         archived_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'student-a4',
+        tenant_id: 'school-a',
+        firstName: 'Ines',
+        lastName: 'Brahim',
+        admissionNumber: 'A-004',
+        classRoomId: 'class-a2',
+        dateOfBirth: '2014-01-19',
+        archived_at: null,
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'student-a5',
+        tenant_id: 'school-a',
+        firstName: 'Rayan',
+        lastName: 'Kaci',
+        admissionNumber: 'A-005',
+        classRoomId: 'class-a3',
+        dateOfBirth: '2012-11-07',
+        archived_at: null,
+        created_at: now,
+        updated_at: now
       }
     ],
     parents: [
@@ -102,11 +145,24 @@ function createSeedData() {
         lastName: 'Nadir',
         phone: '+1 555-0134',
         email: 'parent@school-a.test',
-        address: '12 Avenue Centrale',
-        notes: '',
+        address: '12 Avenue Centrale, Alger',
+        notes: 'Disponible après 18h.',
         archived_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'parent-a2',
+        tenant_id: 'school-a',
+        firstName: 'Karim',
+        lastName: 'Brahim',
+        phone: '+1 555-0188',
+        email: 'parent2@school-a.test',
+        address: '4 Rue des Orangers, Alger',
+        notes: 'Préfère les échanges via inbox.',
+        archived_at: null,
+        created_at: now,
+        updated_at: now
       }
     ],
     studentParentLinks: [
@@ -117,8 +173,8 @@ function createSeedData() {
         studentId: 'student-a1',
         relationship: 'guardian',
         isPrimaryContact: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: now,
+        updated_at: now
       },
       {
         id: 'splink-a2',
@@ -127,8 +183,28 @@ function createSeedData() {
         studentId: 'student-a2',
         relationship: 'mother',
         isPrimaryContact: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'splink-a3',
+        tenant_id: 'school-a',
+        parentId: 'parent-a2',
+        studentId: 'student-a2',
+        relationship: 'father',
+        isPrimaryContact: true,
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'splink-a4',
+        tenant_id: 'school-a',
+        parentId: 'parent-a2',
+        studentId: 'student-a4',
+        relationship: 'father',
+        isPrimaryContact: false,
+        created_at: now,
+        updated_at: now
       }
     ],
     teachers: [
@@ -139,26 +215,81 @@ function createSeedData() {
         lastName: 'Alami',
         email: 'teacher@school-a.test',
         phone: '+1 555-0110',
-        notes: 'Prof principale',
+        notes: 'Prof principale de 6ème A, référente évaluations.',
         classRoomIds: ['class-a1'],
         subjectIds: ['subject-a-math'],
         archived_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'teacher-a2',
+        tenant_id: 'school-a',
+        firstName: 'Youssef',
+        lastName: 'Mansouri',
+        email: 'teacher2@school-a.test',
+        phone: '+1 555-0111',
+        notes: 'Référent FR/Histoire/Sciences pour 6ème B et 5ème A.',
+        classRoomIds: ['class-a2', 'class-a3'],
+        subjectIds: ['subject-a-fr', 'subject-a-his', 'subject-a-sci'],
+        archived_at: null,
+        created_at: now,
+        updated_at: now
       }
     ],
-    attendanceRecords: [],
-    lessonLogs: [],
-    homeworks: [],
-    assessments: [],
-    gradeEntries: [],
-    announcements: [],
-    messageThreads: [],
-    messages: [],
-    auditLogs: [],
-    feePlans: [],
-    invoices: [],
-    payments: []
+    attendanceRecords: [
+      { id: 'attendance-a1-2026-04-20-s1', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a1', studentId: 'student-a1', teacherId: 'teacher-a1', status: 'present', created_at: now, updated_at: now },
+      { id: 'attendance-a1-2026-04-20-s3', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a1', studentId: 'student-a3', teacherId: 'teacher-a1', status: 'late', created_at: now, updated_at: now },
+      { id: 'attendance-a2-2026-04-20-s2', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a2', studentId: 'student-a2', teacherId: 'teacher-a2', status: 'present', created_at: now, updated_at: now },
+      { id: 'attendance-a2-2026-04-20-s4', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a2', studentId: 'student-a4', teacherId: 'teacher-a2', status: 'absent', created_at: now, updated_at: now }
+    ],
+    lessonLogs: [
+      { id: 'lesson-a1-math-2026-04-18', tenant_id: 'school-a', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', date: '2026-04-18', content: 'Fractions équivalentes et exercices guidés.', created_at: now, updated_at: now },
+      { id: 'lesson-a2-sci-2026-04-17', tenant_id: 'school-a', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', date: '2026-04-17', content: 'Cycle de l’eau + schéma à compléter.', created_at: now, updated_at: now }
+    ],
+    homeworks: [
+      { id: 'homework-a1-math-2026-04-22', tenant_id: 'school-a', assignedDate: '2026-04-18', dueDate: '2026-04-22', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', title: 'Exercices fractions p.42', description: 'Faire ex. 3, 4 et 8. Vérifier les étapes de simplification.', created_at: now, updated_at: now },
+      { id: 'homework-a2-sci-2026-04-23', tenant_id: 'school-a', assignedDate: '2026-04-17', dueDate: '2026-04-23', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', title: 'Mini compte-rendu', description: 'Rédiger 8 lignes sur le cycle de l’eau + un schéma.', created_at: now, updated_at: now }
+    ],
+    assessments: [
+      { id: 'assessment-a1-math-2026-04-15', tenant_id: 'school-a', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', title: 'Contrôle fractions', date: '2026-04-15', coefficient: 2, created_at: now, updated_at: now },
+      { id: 'assessment-a2-sci-2026-04-16', tenant_id: 'school-a', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', title: 'Quiz sciences', date: '2026-04-16', coefficient: 1, created_at: now, updated_at: now }
+    ],
+    gradeEntries: [
+      { id: 'grade-a1-fractions-aya', tenant_id: 'school-a', assessmentId: 'assessment-a1-math-2026-04-15', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', studentId: 'student-a1', date: '2026-04-15', score: 15.5, remark: 'Bonne maîtrise, attention aux détails.', created_at: now, updated_at: now },
+      { id: 'grade-a1-fractions-yanis', tenant_id: 'school-a', assessmentId: 'assessment-a1-math-2026-04-15', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', studentId: 'student-a3', date: '2026-04-15', score: 12.25, remark: 'Résultats corrects, revoir la méthode.', created_at: now, updated_at: now },
+      { id: 'grade-a2-sci-salim', tenant_id: 'school-a', assessmentId: 'assessment-a2-sci-2026-04-16', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', studentId: 'student-a2', date: '2026-04-16', score: 14, remark: 'Participation active en classe.', created_at: now, updated_at: now },
+      { id: 'grade-a2-sci-ines', tenant_id: 'school-a', assessmentId: 'assessment-a2-sci-2026-04-16', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', studentId: 'student-a4', date: '2026-04-16', score: 10.5, remark: 'Peut progresser avec plus de rigueur.', created_at: now, updated_at: now }
+    ],
+    announcements: [
+      { id: 'announcement-a1', tenant_id: 'school-a', title: 'Portes ouvertes samedi', body: 'Accueil des familles samedi à 10h. Merci de confirmer la présence.', visibility: 'global', roles: [], authorId: 'admin-a', authorRole: ROLES.SCHOOL_ADMIN, created_at: now, updated_at: now },
+      { id: 'announcement-a2', tenant_id: 'school-a', title: 'Rappel documents scolarité', body: 'Parents: merci de déposer les dossiers avant le 30 avril.', visibility: 'roles', roles: [ROLES.PARENT], authorId: 'admin-a', authorRole: ROLES.SCHOOL_ADMIN, created_at: now, updated_at: now }
+    ],
+    messageThreads: [
+      { id: 'thread-demo-parent-followup', tenant_id: 'school-a', subject: 'Suivi Salim Brahim - Devoirs', participantIds: ['admin-a', 'teacher-a2', 'parent-a2'], createdByUserId: 'teacher-a2', created_at: '2026-04-19T08:15:00.000Z', updated_at: '2026-04-20T10:45:00.000Z', last_message_at: '2026-04-20T10:45:00.000Z' }
+    ],
+    messages: [
+      { id: 'message-demo-1', tenant_id: 'school-a', threadId: 'thread-demo-parent-followup', senderId: 'teacher-a2', body: 'Bonjour, Salim progresse bien en sciences. Merci de vérifier le compte-rendu.', created_at: '2026-04-19T08:15:00.000Z' },
+      { id: 'message-demo-2', tenant_id: 'school-a', threadId: 'thread-demo-parent-followup', senderId: 'parent-a2', body: 'Merci, nous allons revoir cela ce soir.', created_at: '2026-04-19T19:05:00.000Z' },
+      { id: 'message-demo-3', tenant_id: 'school-a', threadId: 'thread-demo-parent-followup', senderId: 'admin-a', body: 'Parfait, je reste disponible en cas de besoin.', created_at: '2026-04-20T10:45:00.000Z' }
+    ],
+    auditLogs: [
+      { id: 'audit-demo-1', tenant_id: 'school-a', actorUserId: 'admin-a', actorRole: ROLES.SCHOOL_ADMIN, eventType: 'student.created', entityType: 'student', entityId: 'student-a5', metadata: { source: 'seed-demo' }, created_at: now },
+      { id: 'audit-demo-2', tenant_id: 'school-a', actorUserId: 'teacher-a1', actorRole: ROLES.TEACHER, eventType: 'attendance.updated', entityType: 'attendance', entityId: 'attendance-a1-2026-04-20-s1', metadata: { source: 'seed-demo' }, created_at: now }
+    ],
+    feePlans: [
+      { id: 'feeplan-a-tuition-t3', tenant_id: 'school-a', name: 'Scolarité T3', amountDue: 320, dueDate: '2026-05-10', description: 'Frais de scolarité troisième trimestre.', created_at: now, updated_at: now },
+      { id: 'feeplan-a-canteen-apr', tenant_id: 'school-a', name: 'Cantine avril', amountDue: 95, dueDate: '2026-04-30', description: 'Abonnement mensuel cantine.', created_at: now, updated_at: now }
+    ],
+    invoices: [
+      { id: 'invoice-a1-tuition', tenant_id: 'school-a', studentId: 'student-a1', feePlanId: 'feeplan-a-tuition-t3', amountDue: 320, dueDate: '2026-05-10', description: 'Scolarité Aya Nadir - T3', created_at: now, updated_at: now },
+      { id: 'invoice-a3-canteen', tenant_id: 'school-a', studentId: 'student-a3', feePlanId: 'feeplan-a-canteen-apr', amountDue: 95, dueDate: '2026-04-30', description: 'Cantine Yanis Nadir - Avril', created_at: now, updated_at: now },
+      { id: 'invoice-a2-tuition', tenant_id: 'school-a', studentId: 'student-a2', feePlanId: 'feeplan-a-tuition-t3', amountDue: 320, dueDate: '2026-05-10', description: 'Scolarité Salim Brahim - T3', created_at: now, updated_at: now }
+    ],
+    payments: [
+      { id: 'payment-a1-partial', tenant_id: 'school-a', invoiceId: 'invoice-a1-tuition', studentId: 'student-a1', amountPaid: 120, paidAt: '2026-04-12', method: 'card', note: 'Acompte', created_at: now, updated_at: now },
+      { id: 'payment-a3-full', tenant_id: 'school-a', invoiceId: 'invoice-a3-canteen', studentId: 'student-a3', amountPaid: 95, paidAt: '2026-04-10', method: 'bank_transfer', note: 'Réglé en totalité', created_at: now, updated_at: now }
+    ]
   };
 }
 
@@ -237,11 +368,39 @@ function renderLoginPage(errorMessage = '') {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EducLink - Login</title></head><body>
     <h1>Connexion EducLink</h1>
     ${errorMessage ? `<p style="color:red">${errorMessage}</p>` : ''}
+    <p><a href="/demo">Voir le guide de démo (comptes + parcours recommandés)</a></p>
     <form method="POST" action="/login">
       <label>Email <input type="email" name="email" required /></label><br/>
       <label>Mot de passe <input type="password" name="password" required /></label><br/>
       <button type="submit">Se connecter</button>
     </form>
+  </body></html>`;
+}
+
+function renderDemoGuidePage() {
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Guide de démonstration EducLink</title></head><body>
+    <h1>Guide de démonstration EducLink</h1>
+    <p>Tenant principal recommandé: <strong>school-a</strong> (jeu de données réaliste préchargé).</p>
+    <p>Mot de passe pour tous les comptes de démo: <code>password123</code>.</p>
+    <h2>Comptes clés</h2>
+    <ul>
+      <li>Admin: admin@school-a.test</li>
+      <li>Teacher: teacher@school-a.test</li>
+      <li>Parent: parent@school-a.test</li>
+      <li>Student: student@school-a.test</li>
+      <li>Accountant: accountant@school-a.test</li>
+      <li>Director: director@school-a.test</li>
+    </ul>
+    <h2>Parcours conseillé (15-20 min)</h2>
+    <ol>
+      <li><strong>Admin</strong>: ouvrir <code>/dashboard/admin</code>, consulter élèves/parents/teachers, puis finance et attendance.</li>
+      <li><strong>Teacher</strong>: ouvrir <code>/dashboard/teacher</code>, faire l'appel, visualiser cahier de texte/devoirs, puis notes.</li>
+      <li><strong>Teacher IA</strong>: depuis teacher, ouvrir <code>/teacher/report-comments</code> et générer un brouillon d'appréciation.</li>
+      <li><strong>Parent</strong>: ouvrir <code>/dashboard/parent</code>, vérifier devoirs, notes, inbox et statut financier.</li>
+      <li><strong>Student</strong>: ouvrir <code>/dashboard/student</code> pour devoirs et notes.</li>
+      <li><strong>Accountant</strong>: ouvrir <code>/dashboard/accountant</code>, puis module finance pour factures/paiements.</li>
+    </ol>
+    <p><a href="/login">Aller à la connexion</a></p>
   </body></html>`;
 }
 
@@ -1202,6 +1361,12 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     if (request.method === 'GET' && url.pathname === '/login') {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderLoginPage());
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/demo') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderDemoGuidePage());
       return;
     }
 
