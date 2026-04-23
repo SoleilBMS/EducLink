@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createServer } = require('./server');
+const { createServer, parseCookies } = require('./server');
 const { SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore } = require('./modules/ai');
 const { createLogger } = require('./observability/logger');
@@ -166,6 +166,15 @@ test('session expirée est rejetée proprement et cookie nettoyé', async () => 
   }, { sessionStore });
 });
 
+test('parseCookies ignore les clés dangereuses et malformed cookies', () => {
+  const parsed = parseCookies('__proto__=polluted; constructor=bad; prototype=bad; sessionId=abc123; malformed');
+
+  assert.equal(parsed.sessionId, 'abc123');
+  assert.equal(Object.prototype.polluted, undefined);
+  assert.equal(parsed.constructor, undefined);
+  assert.equal(parsed.prototype, undefined);
+});
+
 test('logout invalide réellement la session active', async () => {
   await withServer(async (baseUrl) => {
     const adminLogin = await login(baseUrl, 'admin@school-a.test');
@@ -178,6 +187,27 @@ test('logout invalide réellement la session active', async () => {
 
     const afterLogoutResponse = await apiFetch(baseUrl, '/api/v1/students', { cookie: adminLogin.cookie });
     assert.equal(afterLogoutResponse.status, 401);
+  });
+});
+
+test('enseignant ne peut pas enregistrer un commentaire pour un élève hors périmètre', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/teacher/report-comments/save`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        studentId: 'student-a2',
+        draftText: 'Très bon trimestre',
+        humanValidated: 'true'
+      }).toString(),
+      redirect: 'manual'
+    });
+
+    assert.equal(response.status, 302);
+    const location = response.headers.get('location') ?? '';
+    assert.match(location, /\/teacher\/report-comments\?/);
+    assert.match(decodeURIComponent(location), /Accès refusé pour cet élève\./);
   });
 });
 

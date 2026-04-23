@@ -37,19 +37,30 @@ function parseCookies(cookieHeader) {
     return {};
   }
 
+  const cookies = Object.create(null);
   return cookieHeader
     .split(';')
     .map((entry) => entry.trim())
     .filter(Boolean)
-    .reduce((cookies, entry) => {
+    .reduce((accumulator, entry) => {
       const [name, ...rawValue] = entry.split('=');
-      try {
-        cookies[name] = decodeURIComponent(rawValue.join('='));
-      } catch {
-        cookies[name] = rawValue.join('=');
+      if (!name || rawValue.length === 0) {
+        return accumulator;
       }
-      return cookies;
-    }, {});
+      if (!/^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/.test(name)) {
+        return accumulator;
+      }
+      if (name === '__proto__' || name === 'constructor' || name === 'prototype') {
+        return accumulator;
+      }
+
+      try {
+        accumulator[name] = decodeURIComponent(rawValue.join('='));
+      } catch {
+        accumulator[name] = rawValue.join('=');
+      }
+      return accumulator;
+    }, cookies);
 }
 
 async function parseJsonBody(request, validationErrorBuilder = buildValidationError) {
