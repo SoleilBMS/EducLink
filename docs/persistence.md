@@ -34,7 +34,7 @@ docker compose -f docker-compose.db.yml up -d
 # 2) appliquer les migrations
 EDUCLINK_PERSISTENCE=postgres DATABASE_URL=postgres://postgres:postgres@localhost:5432/educlink npm run db:migrate
 
-# 3) optionnel: charger un seed minimal
+# 3) optionnel: charger le seed pilot-ready (demo + staging + smoke tests)
 EDUCLINK_PERSISTENCE=postgres DATABASE_URL=postgres://postgres:postgres@localhost:5432/educlink npm run db:seed
 
 # 4) lancer l'app en mode postgres
@@ -56,3 +56,13 @@ Le workflow CI démarre un service PostgreSQL puis exécute `npm run db:migrate`
 - Persistance Postgres branchée en priorité sur les endpoints API (mode web historique inchangé tant que non migré explicitement).
 - Pas d'ORM pour l'instant (garder le socle léger).
 - Pas de rollback automatique des migrations (forward-only pour cette phase).
+
+
+## Seed pilot-ready
+
+Le script `npm run db:seed` insère un jeu de données réaliste et multi-tenant, compatible avec le flux PostgreSQL actuel:
+
+- `school-a` (principal): classes, matières, élèves, parents, liens parent/enfant, enseignants (affectations classes+matières), attendance, évaluations, notes, annonces, threads/messages, plans de frais, factures et paiements.
+- `school-b` (léger): structure miroir minimale pour vérifier l'isolation tenant en demo et en smoke tests.
+
+Le seed est idempotent (`ON CONFLICT DO NOTHING`) pour rester sûr en local/CI.
