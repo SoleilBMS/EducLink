@@ -386,26 +386,64 @@ function renderLoginPage(errorMessage = '') {
 function renderDemoGuidePage() {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Guide de démonstration EducLink</title></head><body>
     <h1>Guide de démonstration EducLink</h1>
+    <p>Objectif: dérouler une démo complète et stable en <strong>15-20 minutes</strong>, sans connaissance cachée.</p>
     <p>Tenant principal recommandé: <strong>school-a</strong> (jeu de données réaliste préchargé).</p>
     <p>Mot de passe pour tous les comptes de démo: <code>password123</code>.</p>
-    <h2>Comptes clés</h2>
-    <ul>
-      <li>Admin: admin@school-a.test</li>
-      <li>Teacher: teacher@school-a.test</li>
-      <li>Parent: parent@school-a.test</li>
-      <li>Student: student@school-a.test</li>
-      <li>Accountant: accountant@school-a.test</li>
-      <li>Director: director@school-a.test</li>
-    </ul>
-    <h2>Parcours conseillé (15-20 min)</h2>
+    <p>Règle de changement de rôle: <strong>Logout</strong> puis reconnectez-vous avec un autre compte via <a href="/login">/login</a>.</p>
+
+    <h2>Comptes de démo (cliquez pour connexion)</h2>
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead><tr><th>Rôle</th><th>Email</th><th>Entrée recommandée</th></tr></thead>
+      <tbody>
+        <tr><td>School Admin</td><td><code>admin@school-a.test</code></td><td><a href="/dashboard/admin">/dashboard/admin</a></td></tr>
+        <tr><td>Teacher</td><td><code>teacher@school-a.test</code></td><td><a href="/dashboard/teacher">/dashboard/teacher</a></td></tr>
+        <tr><td>Parent</td><td><code>parent@school-a.test</code></td><td><a href="/dashboard/parent">/dashboard/parent</a></td></tr>
+        <tr><td>Student</td><td><code>student@school-a.test</code></td><td><a href="/dashboard/student">/dashboard/student</a></td></tr>
+        <tr><td>Accountant</td><td><code>accountant@school-a.test</code></td><td><a href="/dashboard/accountant">/dashboard/accountant</a></td></tr>
+        <tr><td>Director</td><td><code>director@school-a.test</code></td><td><a href="/dashboard/director">/dashboard/director</a></td></tr>
+      </tbody>
+    </table>
+
+    <h2>Parcours guidé recommandé</h2>
+    <h3>1) School Admin (5 min)</h3>
     <ol>
-      <li><strong>Admin</strong>: ouvrir <code>/dashboard/admin</code>, consulter élèves/parents/teachers, puis finance et attendance.</li>
-      <li><strong>Teacher</strong>: ouvrir <code>/dashboard/teacher</code>, faire l'appel, visualiser cahier de texte/devoirs, puis notes.</li>
-      <li><strong>Teacher IA</strong>: depuis teacher, ouvrir <code>/teacher/report-comments</code> et générer un brouillon d'appréciation.</li>
-      <li><strong>Parent</strong>: ouvrir <code>/dashboard/parent</code>, vérifier devoirs, notes, inbox et statut financier.</li>
-      <li><strong>Student</strong>: ouvrir <code>/dashboard/student</code> pour devoirs et notes.</li>
-      <li><strong>Accountant</strong>: ouvrir <code>/dashboard/accountant</code>, puis module finance pour factures/paiements.</li>
+      <li>Ouvrir le <a href="/dashboard/admin">dashboard admin</a> puis vérifier les métriques globales.</li>
+      <li>Cliquer ensuite: <a href="/admin/students">élèves</a> → <a href="/admin/parents">responsables</a> → <a href="/admin/teachers">enseignants</a>.</li>
+      <li>Finir par <a href="/admin/finance">finance</a>, <a href="/admin/attendance">attendance</a> puis <a href="/inbox">inbox</a>.</li>
     </ol>
+
+    <h3>2) Teacher (5 min)</h3>
+    <ol>
+      <li>Aller sur <a href="/dashboard/teacher">dashboard teacher</a>.</li>
+      <li>Faire l'appel via <a href="/teacher/attendance">/teacher/attendance</a> (classe assignée uniquement).</li>
+      <li>Montrer les contenus de cours via <a href="/teacher/lesson-homework">lesson/homework</a> puis les notes via <a href="/teacher/grades">grades</a>.</li>
+      <li>Option IA: ouvrir <a href="/teacher/report-comments">report-comments</a> et générer un brouillon.</li>
+    </ol>
+
+    <h3>3) Parent (4 min)</h3>
+    <ol>
+      <li>Ouvrir <a href="/dashboard/parent">dashboard parent</a>.</li>
+      <li>Suivre l'ordre: <a href="/parent/homeworks">devoirs</a> → <a href="/parent/grades">notes</a> → <a href="/parent/finance">finance</a> → <a href="/inbox">inbox</a>.</li>
+    </ol>
+
+    <h3>4) Student (2 min, si inclus)</h3>
+    <ol>
+      <li>Ouvrir <a href="/dashboard/student">dashboard student</a>.</li>
+      <li>Montrer <a href="/student/homeworks">devoirs</a> puis <a href="/student/grades">notes</a>.</li>
+    </ol>
+
+    <h3>5) Accountant (2 min, optionnel)</h3>
+    <ol>
+      <li>Ouvrir <a href="/dashboard/accountant">dashboard accountant</a> puis <a href="/admin/finance">finance</a>.</li>
+    </ol>
+
+    <h2>Conseils anti-friction</h2>
+    <ul>
+      <li>Si une page renvoie 403, vérifiez le rôle connecté et revenez au compte recommandé.</li>
+      <li>Si vous perdez le fil, retournez au guide <a href="/demo">/demo</a> depuis n'importe quel dashboard.</li>
+      <li>Les routes sensibles sont volontairement cloisonnées par rôle (comportement attendu en démo).</li>
+    </ul>
+
     <p><a href="/login">Aller à la connexion</a></p>
   </body></html>`;
 }
@@ -428,6 +466,7 @@ function renderDashboardLayout(title, session, body) {
     <h1>${title}</h1>
     <p>role: ${session.role}</p>
     <p>tenantId: ${session.tenantId}</p>
+    <p><a href="/demo">Guide démo</a> · Pour changer de rôle: Logout puis reconnectez-vous sur <a href="/login">/login</a>.</p>
     ${body}
     <form method="POST" action="/logout"><button type="submit">Logout</button></form>
   </body></html>`;

@@ -86,6 +86,33 @@ test('redirection après login vers dashboard adapté au rôle', async () => {
 
 
 
+
+test('guide de démonstration expose les étapes et routes clés de la démo', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/demo`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+
+    const expectedLinks = [
+      '/dashboard/admin',
+      '/dashboard/teacher',
+      '/dashboard/parent',
+      '/dashboard/student',
+      '/admin/students',
+      '/teacher/attendance',
+      '/parent/homeworks',
+      '/student/grades',
+      '/login'
+    ];
+
+    for (const link of expectedLinks) {
+      assert.ok(html.includes(`href="${link}"`));
+    }
+
+    assert.ok(html.includes('Règle de changement de rôle'));
+  });
+});
+
 test('guide de démonstration est protégé en environnement non fiable', async () => {
   await withServer(async (baseUrl) => {
     const guestResponse = await fetch(`${baseUrl}/demo`, { redirect: 'manual' });
