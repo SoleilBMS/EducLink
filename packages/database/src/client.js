@@ -1,11 +1,13 @@
+const { loadRuntimeEnv } = require('../../core/src/runtime-env');
+
 let pool = null;
 
-function getDatabaseUrl() {
-  return process.env.DATABASE_URL ?? '';
+function getRuntimeConfig() {
+  return loadRuntimeEnv(process.env);
 }
 
 function isPersistenceEnabled() {
-  return process.env.EDUCLINK_PERSISTENCE === 'postgres';
+  return getRuntimeConfig().persistenceMode === 'postgres';
 }
 
 function createPool(connectionString) {
@@ -17,12 +19,12 @@ function createPool(connectionString) {
 
 function getPool() {
   if (!pool) {
-    const connectionString = getDatabaseUrl();
-    if (!connectionString) {
+    const config = getRuntimeConfig();
+    if (!config.databaseUrl) {
       throw new Error('DATABASE_URL is required when using postgres persistence');
     }
 
-    pool = createPool(connectionString);
+    pool = createPool(config.databaseUrl);
   }
 
   return pool;

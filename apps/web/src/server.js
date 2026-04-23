@@ -28,6 +28,7 @@ const { ParentService } = require('./services/parent-service');
 const { TeacherService } = require('./services/teacher-service');
 const { AttendanceService } = require('./services/attendance-service');
 const { getPool, closePool, isPersistenceEnabled } = require('../../../packages/database/src/client');
+const { loadRuntimeEnv } = require('../../../packages/core/src/runtime-env');
 const { PostgresCoreSchoolRepository } = require('./modules/persistence/postgres-core-school-repository');
 const { PostgresStudentRepository } = require('./modules/persistence/postgres-student-repository');
 const { buildValidationError, buildForbiddenError } = require('./modules/error-utils');
@@ -2690,15 +2691,23 @@ module.exports = {
 };
 
 if (require.main === module) {
-  const server = createServer();
-  const port = Number(process.env.PORT ?? 3000);
-  server.listen(port, () => {
-    // eslint-disable-next-line no-console
-    console.log(`EducLink web app running on http://localhost:${port}`);
-  });
+  try {
+    const runtimeConfig = loadRuntimeEnv(process.env);
+    const server = createServer();
+    server.listen(runtimeConfig.port, () => {
+      // eslint-disable-next-line no-console
+      console.log(`EducLink web app running on http://localhost:${runtimeConfig.port}`);
+      // eslint-disable-next-line no-console
+      console.log(`Runtime mode: ${runtimeConfig.nodeEnv} | persistence: ${runtimeConfig.persistenceMode}`);
+    });
 
-  process.on('SIGTERM', async () => {
-    await closePool();
-    server.close();
-  });
+    process.on('SIGTERM', async () => {
+      await closePool();
+      server.close();
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }
