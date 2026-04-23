@@ -1878,6 +1878,18 @@ function createServer({
       const studentId = form.get('studentId');
       const draftText = form.get('draftText');
       const humanValidated = form.get('humanValidated') === 'true';
+      const student = studentStore.get(auth.context.tenantId, studentId, { includeArchived: false });
+      const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      if (!student || !teacher || !teacher.classRoomIds.includes(student.classRoomId)) {
+        response.writeHead(
+          302,
+          {
+            location: `/teacher/report-comments?studentId=${encodeURIComponent(studentId)}&draft=${encodeURIComponent(draftText)}&message=${encodeURIComponent('Accès refusé pour cet élève.')}`
+          }
+        );
+        response.end();
+        return;
+      }
       if (!humanValidated) {
         response.writeHead(
           302,
