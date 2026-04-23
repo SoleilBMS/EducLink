@@ -61,7 +61,10 @@ async function parseJsonBody(request, validationErrorBuilder = buildValidationEr
   try {
     return JSON.parse(rawBody);
   } catch {
-    throw validationErrorBuilder('Request body must be valid JSON');
+    throw validationErrorBuilder('Request body must be valid JSON', {
+      source: 'body',
+      issue: 'invalid_json'
+    });
   }
 }
 
@@ -81,7 +84,7 @@ function sendApiSuccess(response, data, statusCode = 200, meta = {}) {
 function sendApiError(response, statusOrError, code, message, details) {
   const errorPayload =
     typeof statusOrError === 'number'
-      ? { status: statusOrError, code, message, details }
+      ? toApiErrorPayload({ status: statusOrError, code, message, details })
       : toApiErrorPayload(statusOrError);
 
   sendJson(response, errorPayload.status, {
