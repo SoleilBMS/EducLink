@@ -279,3 +279,23 @@ Une couche de persistance durable est maintenant disponible en mode transition.
   - `npm run db:seed`
 
 Voir `docs/persistence.md` pour le setup local complet, la stratégie tenant, et la coexistence mémoire/DB.
+
+
+## Configuration d'environnement & déploiement
+
+Le repo inclut maintenant des bases de configuration explicites :
+
+- `.env.example` (base locale/dev)
+- `.env.staging.example`
+- `.env.production.example`
+
+Scripts de démarrage :
+
+- `npm run start`
+- `npm run start:dev`
+- `npm run start:staging`
+- `npm run start:prod`
+
+La configuration runtime est validée au démarrage (port, mode de persistance, format de logs, présence de `DATABASE_URL` en mode postgres).
+
+Voir `docs/deployment.md` pour le guide local/staging/production.
