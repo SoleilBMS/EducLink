@@ -1,7 +1,6 @@
 # apps/web
 
 Prototype web minimal pour valider le socle auth + RBAC/tenant (issues #2 et #3).
-Prototype web minimal pour valider le socle d'authentification (issue #2).
 
 ## Fonctionnalités disponibles
 
@@ -35,12 +34,37 @@ Puis ouvrir `http://localhost:3000/login`.
 
 ## Comptes de démonstration
 
-- super admin: `super@platform.test`
+- super admin: `superadmin@platform.test`
 - school admin: `admin@school-a.test`
 - teacher: `teacher@school-a.test`
 - parent: `parent@school-a.test`
 - mot de passe (tous): `password123`
-## Compte de démonstration
 
-- email: `admin@school-a.test`
-- mot de passe: `password123`
+## Suite smoke E2E
+
+La suite smoke E2E est volontairement HTTP-level (sans navigateur) pour rester rapide, déterministe et alignée avec l'architecture modulaire actuelle.
+
+### Exécution locale
+
+```bash
+npm run test:e2e:smoke
+```
+
+### Positionnement dans la stratégie de tests
+
+- `npm test` : couverture unitaire/intégration existante (large et exhaustive)
+- `npm run test:e2e:smoke` : parcours critiques de bout en bout pour readiness pilote
+
+### Prérequis
+
+- Node.js `>=20`
+- Aucun service externe requis par défaut (les tests démarrent leur propre serveur sur port éphémère)
+
+### Exemple CI
+
+```bash
+npm ci
+npm run lint
+npm test
+npm run test:e2e:smoke
+```

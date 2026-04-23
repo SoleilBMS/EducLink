@@ -9,14 +9,15 @@
   ],
   "scripts": {
     "check": "npm run lint && npm run test",
-    "lint": "node --check packages/core/src/tenantScope.js packages/auth/src/roles/roles.js packages/auth/src/permissions/permissions.js packages/auth/src/guards/require-auth.js packages/auth/src/guards/api-guard.js packages/auth/src/session/session-store.js packages/auth/src/session/session-context.js packages/auth/src/password/password-reset.js packages/domain/src/school-structure/models.js packages/domain/src/school-structure/validation.js packages/domain/src/school-structure/repository.js packages/domain/src/school-structure/service.js apps/web/src/modules/core-school.js apps/web/src/modules/student.js apps/web/src/modules/parent.js apps/web/src/modules/attendance.js apps/web/src/modules/lesson-homework.js apps/web/src/modules/grading.js apps/web/src/modules/messaging.js apps/web/src/modules/finance.js apps/web/src/server.js packages/core/src/runtime-env.js",
+    "lint": "node --check packages/core/src/tenantScope.js packages/auth/src/roles/roles.js packages/auth/src/permissions/permissions.js packages/auth/src/guards/require-auth.js packages/auth/src/guards/api-guard.js packages/auth/src/session/session-store.js packages/auth/src/session/session-context.js packages/auth/src/password/password-reset.js packages/domain/src/school-structure/models.js packages/domain/src/school-structure/validation.js packages/domain/src/school-structure/repository.js packages/domain/src/school-structure/service.js apps/web/src/modules/core-school.js apps/web/src/modules/student.js apps/web/src/modules/parent.js apps/web/src/modules/attendance.js apps/web/src/modules/lesson-homework.js apps/web/src/modules/grading.js apps/web/src/modules/messaging.js apps/web/src/modules/finance.js apps/web/src/server.js packages/core/src/runtime-env.js apps/web/src/e2e.smoke.test.js",
     "test": "node --test packages/core/src/tenantScope.test.js packages/auth/src/session/session-store.test.js packages/auth/src/guards/require-auth.test.js packages/auth/src/guards/api-guard.test.js packages/auth/src/permissions/permissions.test.js packages/domain/src/school-structure/service.test.js apps/web/src/server.test.js packages/core/src/runtime-env.test.js",
     "db:migrate": "node packages/database/src/migrate.js",
     "db:seed": "node packages/database/src/seed.js",
     "start": "node apps/web/src/server.js",
     "start:dev": "NODE_ENV=development node apps/web/src/server.js",
     "start:staging": "NODE_ENV=staging EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
-    "start:prod": "NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js"
+    "start:prod": "NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
+    "test:e2e:smoke": "node --test apps/web/src/e2e.smoke.test.js"
   },
   "engines": {
     "node": ">=20.0.0"
