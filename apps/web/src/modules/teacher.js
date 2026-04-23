@@ -1,11 +1,6 @@
 const crypto = require('node:crypto');
 
-function buildValidationError(message) {
-  const error = new Error(message);
-  error.code = 'VALIDATION_ERROR';
-  error.status = 422;
-  return error;
-}
+const { buildValidationError } = require('./error-utils');
 
 function requireString(value, fieldName, min = 1, max = 120) {
   if (typeof value !== 'string') {

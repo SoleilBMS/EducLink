@@ -1,12 +1,14 @@
 const { ROLES } = require('../../../../packages/auth/src/roles/roles');
 const { authorizeApiRequest } = require('../../../../packages/auth/src/guards/api-guard');
+const { buildNotFoundError, ensureAuthorized, handleRouteError } = require('./error-helpers');
 
 function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
   return async function handleParentRoutes({ request, response, url, session }) {
     if (url.pathname === '/api/v1/parents' && request.method === 'GET') {
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+      const authError = ensureAuthorized(auth);
+      if (authError) {
+        sendApiError(response, authError);
         return true;
       }
 
@@ -17,8 +19,9 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
 
     if (url.pathname === '/api/v1/parents' && request.method === 'POST') {
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+      const authError = ensureAuthorized(auth);
+      if (authError) {
+        sendApiError(response, authError);
         return true;
       }
 
@@ -29,7 +32,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
         auditWriter.writeEntityEvent(session, 'parent.create', 'parent', parent.id);
         sendApiSuccess(response, parent, 201);
       } catch (error) {
-        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+        handleRouteError(sendApiError, response, error, { status: 422, code: 'VALIDATION_ERROR', message: 'Validation failed' });
       }
       return true;
     }
@@ -39,15 +42,16 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
       const parentId = parentByIdMatch[1];
       if (request.method === 'GET') {
         const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        const authError = ensureAuthorized(auth);
+        if (authError) {
+          sendApiError(response, authError);
           return true;
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
         const parent = parentService.getParentWithLinks(tenantId, parentId);
         if (!parent) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
+          sendApiError(response, buildNotFoundError('Parent not found'));
           return true;
         }
         sendApiSuccess(response, parent);
@@ -56,8 +60,9 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
 
       if (request.method === 'PUT') {
         const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        const authError = ensureAuthorized(auth);
+        if (authError) {
+          sendApiError(response, authError);
           return true;
         }
 
@@ -66,27 +71,28 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
           const tenantId = buildTenantScope(session, payload);
           const updated = parentService.updateParent(tenantId, parentId, payload);
           if (!updated) {
-            sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
+            sendApiError(response, buildNotFoundError('Parent not found'));
             return true;
           }
           auditWriter.writeEntityEvent(session, 'parent.update', 'parent', updated.id);
           sendApiSuccess(response, updated);
         } catch (error) {
-          sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+          handleRouteError(sendApiError, response, error, { status: 422, code: 'VALIDATION_ERROR', message: 'Validation failed' });
         }
         return true;
       }
 
       if (request.method === 'DELETE') {
         const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-        if (!auth.ok) {
-          sendApiError(response, auth.status, auth.error.code, auth.error.message);
+        const authError = ensureAuthorized(auth);
+        if (authError) {
+          sendApiError(response, authError);
           return true;
         }
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
         const archived = parentService.archiveParent(tenantId, parentId);
         if (!archived) {
-          sendApiError(response, 404, 'NOT_FOUND', 'Parent not found');
+          sendApiError(response, buildNotFoundError('Parent not found'));
           return true;
         }
         auditWriter.writeEntityEvent(session, 'parent.archive', 'parent', archived.id);
@@ -98,8 +104,9 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
     const parentLinksMatch = url.pathname.match(/^\/api\/v1\/parents\/([^/]+)\/links$/);
     if (parentLinksMatch && request.method === 'POST') {
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+      const authError = ensureAuthorized(auth);
+      if (authError) {
+        sendApiError(response, authError);
         return true;
       }
 
@@ -110,7 +117,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
 
         sendApiSuccess(response, links, 201);
       } catch (error) {
-        sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
+        handleRouteError(sendApiError, response, error, { status: 422, code: 'VALIDATION_ERROR', message: 'Validation failed' });
       }
       return true;
     }
@@ -118,15 +125,16 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
     const studentParentsMatch = url.pathname.match(/^\/api\/v1\/students\/([^/]+)\/parents$/);
     if (studentParentsMatch && request.method === 'GET') {
       const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN] });
-      if (!auth.ok) {
-        sendApiError(response, auth.status, auth.error.code, auth.error.message);
+      const authError = ensureAuthorized(auth);
+      if (authError) {
+        sendApiError(response, authError);
         return true;
       }
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
       const links = parentService.listParentsForStudent(tenantId, studentParentsMatch[1]);
       if (!links) {
-        sendApiError(response, 404, 'NOT_FOUND', 'Student not found');
+        sendApiError(response, buildNotFoundError('Student not found'));
         return true;
       }
 

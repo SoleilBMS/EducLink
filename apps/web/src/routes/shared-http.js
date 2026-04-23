@@ -1,5 +1,7 @@
 const crypto = require('node:crypto');
 
+const { buildValidationError, toApiErrorPayload } = require('../modules/error-utils');
+
 function readBody(request) {
   return new Promise((resolve) => {
     let body = '';
@@ -50,7 +52,7 @@ function parseCookies(cookieHeader) {
     }, {});
 }
 
-async function parseJsonBody(request, buildValidationError) {
+async function parseJsonBody(request, validationErrorBuilder = buildValidationError) {
   const rawBody = await readBody(request);
   if (!rawBody) {
     return {};
@@ -59,7 +61,7 @@ async function parseJsonBody(request, buildValidationError) {
   try {
     return JSON.parse(rawBody);
   } catch {
-    throw buildValidationError('Request body must be valid JSON');
+    throw validationErrorBuilder('Request body must be valid JSON');
   }
 }
 
@@ -68,16 +70,27 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
-function sendApiSuccess(response, data, statusCode = 200) {
+function sendApiSuccess(response, data, statusCode = 200, meta = {}) {
   sendJson(response, statusCode, {
+    success: true,
     data,
-    meta: { request_id: crypto.randomUUID() }
+    meta: { request_id: crypto.randomUUID(), ...meta }
   });
 }
 
-function sendApiError(response, statusCode, code, message) {
-  sendJson(response, statusCode, {
-    error: { code, message },
+function sendApiError(response, statusOrError, code, message, details) {
+  const errorPayload =
+    typeof statusOrError === 'number'
+      ? { status: statusOrError, code, message, details }
+      : toApiErrorPayload(statusOrError);
+
+  sendJson(response, errorPayload.status, {
+    success: false,
+    error: {
+      code: errorPayload.code,
+      message: errorPayload.message,
+      ...(errorPayload.details !== undefined ? { details: errorPayload.details } : {})
+    },
     meta: { request_id: crypto.randomUUID() }
   });
 }
