@@ -35,6 +35,14 @@ async function login(baseUrl, email, password = 'password123') {
   };
 }
 
+async function expectLogin(baseUrl, { email, expectedLocation, password = 'password123' }) {
+  const result = await login(baseUrl, email, password);
+  assert.equal(result.response.status, 302);
+  assert.equal(result.response.headers.get('location'), expectedLocation);
+  assert.ok(result.cookie);
+  return result.cookie;
+}
+
 
 function createLogCollector() {
   const entries = [];
@@ -625,6 +633,188 @@ test('un rôle non autorisé ne peut pas écrire en finance', async () => {
     assert.equal(createResponse.status, 403);
     const payload = await createResponse.json();
     assert.equal(payload.error.code, 'FORBIDDEN');
+  });
+});
+
+test('journey school_admin: dashboard + structure + gestion utilisateurs', async () => {
+  await withServer(async (baseUrl) => {
+    const adminCookie = await expectLogin(baseUrl, {
+      email: 'admin@school-a.test',
+      expectedLocation: '/dashboard/admin'
+    });
+
+    const dashboardResponse = await apiFetch(baseUrl, '/dashboard/admin', { cookie: adminCookie });
+    assert.equal(dashboardResponse.status, 200);
+
+    const classRoomsResponse = await apiFetch(baseUrl, '/api/v1/class-rooms', { cookie: adminCookie });
+    assert.equal(classRoomsResponse.status, 200);
+    const classRoomsPayload = await classRoomsResponse.json();
+    assert.ok(classRoomsPayload.data.some((classRoom) => classRoom.id === 'class-a1'));
+    assert.ok(classRoomsPayload.data.every((classRoom) => classRoom.tenant_id === 'school-a'));
+
+    const subjectsResponse = await apiFetch(baseUrl, '/api/v1/subjects', { cookie: adminCookie });
+    assert.equal(subjectsResponse.status, 200);
+    const subjectsPayload = await subjectsResponse.json();
+    assert.ok(subjectsPayload.data.some((subject) => subject.id === 'subject-a-math'));
+    assert.ok(subjectsPayload.data.every((subject) => subject.tenant_id === 'school-a'));
+
+    const studentCreateResponse = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie: adminCookie,
+      method: 'POST',
+      body: {
+        firstName: 'Journey',
+        lastName: 'Student',
+        admissionNumber: 'A-940',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-09-12'
+      }
+    });
+    assert.equal(studentCreateResponse.status, 201);
+
+    const teacherListResponse = await apiFetch(baseUrl, '/api/v1/teachers', { cookie: adminCookie });
+    assert.equal(teacherListResponse.status, 200);
+    const teacherListPayload = await teacherListResponse.json();
+    assert.ok(teacherListPayload.data.every((teacher) => teacher.tenant_id === 'school-a'));
+
+    const parentListResponse = await apiFetch(baseUrl, '/api/v1/parents', { cookie: adminCookie });
+    assert.equal(parentListResponse.status, 200);
+    const parentListPayload = await parentListResponse.json();
+    assert.ok(parentListPayload.data.every((parent) => parent.tenant_id === 'school-a'));
+
+    const crossTenantClassRooms = await apiFetch(baseUrl, '/api/v1/class-rooms?tenantId=school-b', { cookie: adminCookie });
+    assert.equal(crossTenantClassRooms.status, 200);
+    const crossTenantClassRoomsPayload = await crossTenantClassRooms.json();
+    assert.ok(crossTenantClassRoomsPayload.data.every((classRoom) => classRoom.tenant_id === 'school-a'));
+  });
+});
+
+test('journey teacher: classes en scope + attendance + grading + contrôles permissions', async () => {
+  await withServer(async (baseUrl) => {
+    const teacherCookie = await expectLogin(baseUrl, {
+      email: 'teacher@school-a.test',
+      expectedLocation: '/dashboard/teacher'
+    });
+
+    const dashboardResponse = await apiFetch(baseUrl, '/dashboard/teacher', { cookie: teacherCookie });
+    assert.equal(dashboardResponse.status, 200);
+    const dashboardHtml = await dashboardResponse.text();
+    assert.match(dashboardHtml, /6ème A/);
+
+    const attendanceResponse = await apiFetch(baseUrl, '/api/v1/attendance', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        date: '2026-04-22',
+        records: [
+          { studentId: 'student-a1', status: 'present' },
+          { studentId: 'student-a3', status: 'late' }
+        ]
+      }
+    });
+    assert.equal(attendanceResponse.status, 201);
+
+    const forbiddenAttendanceResponse = await apiFetch(baseUrl, '/api/v1/attendance', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a2',
+        date: '2026-04-22',
+        records: [{ studentId: 'student-a2', status: 'present' }]
+      }
+    });
+    assert.equal(forbiddenAttendanceResponse.status, 403);
+
+    const createAssessmentResponse = await apiFetch(baseUrl, '/api/v1/assessments', {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        subjectId: 'subject-a-math',
+        title: 'Journey assessment',
+        date: '2026-04-22',
+        coefficient: 1
+      }
+    });
+    assert.equal(createAssessmentResponse.status, 201);
+    const createdAssessment = await createAssessmentResponse.json();
+
+    const saveGradesResponse = await apiFetch(baseUrl, `/api/v1/assessments/${createdAssessment.data.id}/grades`, {
+      cookie: teacherCookie,
+      method: 'POST',
+      body: {
+        entries: [
+          { studentId: 'student-a1', score: 16, remark: 'Bon travail' },
+          { studentId: 'student-a3', score: 14, remark: 'Peut mieux faire' }
+        ]
+      }
+    });
+    assert.equal(saveGradesResponse.status, 201);
+
+    const gradesResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: teacherCookie });
+    assert.equal(gradesResponse.status, 200);
+    const gradesPayload = await gradesResponse.json();
+    assert.ok(gradesPayload.data.every((entry) => entry.teacherId === 'teacher-a1'));
+  });
+});
+
+test('journey parent: enfants liés + notes + attendance/tenant guardrails + inbox', async () => {
+  await withServer(async (baseUrl) => {
+    const parentCookie = await expectLogin(baseUrl, {
+      email: 'parent2@school-a.test',
+      expectedLocation: '/dashboard/parent'
+    });
+
+    const dashboardResponse = await apiFetch(baseUrl, '/dashboard/parent', { cookie: parentCookie });
+    assert.equal(dashboardResponse.status, 200);
+
+    const parentGradesResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: parentCookie });
+    assert.equal(parentGradesResponse.status, 200);
+    const parentGradesPayload = await parentGradesResponse.json();
+    assert.ok(parentGradesPayload.data.length >= 1);
+    assert.ok(parentGradesPayload.data.every((entry) => ['student-a2', 'student-a4'].includes(entry.studentId)));
+
+    const forbiddenAttendanceRead = await apiFetch(baseUrl, '/api/v1/attendance?date=2026-04-20', { cookie: parentCookie });
+    assert.equal(forbiddenAttendanceRead.status, 403);
+
+    const inboxResponse = await apiFetch(baseUrl, '/api/v1/inbox', { cookie: parentCookie });
+    assert.equal(inboxResponse.status, 200);
+    const inboxPayload = await inboxResponse.json();
+    assert.ok(inboxPayload.data.threads.some((thread) => thread.id === 'thread-demo-parent-followup'));
+  });
+});
+
+test('journey student: accès limité à ses propres données', async () => {
+  await withServer(async (baseUrl) => {
+    const studentCookie = await expectLogin(baseUrl, {
+      email: 'student@school-a.test',
+      expectedLocation: '/dashboard/student'
+    });
+
+    const dashboardResponse = await apiFetch(baseUrl, '/dashboard/student', { cookie: studentCookie });
+    assert.equal(dashboardResponse.status, 200);
+
+    const gradesResponse = await apiFetch(baseUrl, '/api/v1/grades', { cookie: studentCookie });
+    assert.equal(gradesResponse.status, 200);
+    const gradesPayload = await gradesResponse.json();
+    assert.ok(gradesPayload.data.length >= 1);
+    assert.ok(gradesPayload.data.every((entry) => entry.studentId === 'student-a1'));
+
+    const homeworksResponse = await apiFetch(baseUrl, '/api/v1/homeworks', { cookie: studentCookie });
+    assert.equal(homeworksResponse.status, 200);
+    const homeworksPayload = await homeworksResponse.json();
+    assert.ok(homeworksPayload.data.every((item) => item.classRoomId === 'class-a1'));
+
+    const teacherOnlyEndpoint = await apiFetch(baseUrl, '/api/v1/attendance', {
+      cookie: studentCookie,
+      method: 'POST',
+      body: {
+        classRoomId: 'class-a1',
+        date: '2026-04-21',
+        records: [{ studentId: 'student-a1', status: 'present' }]
+      }
+    });
+    assert.equal(teacherOnlyEndpoint.status, 403);
   });
 });
 
