@@ -2245,17 +2245,22 @@ async function withPostgresPersistence(run) {
 maybePostgresTest('postgres persistence: tenant isolation + parent CRUD API', async () => {
   await withPostgresPersistence(async () => {
     await withServer(async (baseUrl) => {
-      const { cookie } = await login(baseUrl, 'admin@school-a.test');
+      const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+      const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+
       const create = await apiFetch(baseUrl, '/api/v1/parents', {
-        cookie,
+        cookie: adminACookie,
         method: 'POST',
         body: { firstName: 'Nora', lastName: 'Test', email: 'nora@test.local' }
       });
       assert.equal(create.status, 201);
       const created = await create.json();
 
-      const readCrossTenant = await apiFetch(baseUrl, `/api/v1/parents/${created.data.id}?tenantId=school-b`, { cookie });
+      const readCrossTenant = await apiFetch(baseUrl, `/api/v1/parents/${created.data.id}`, { cookie: adminBCookie });
       assert.equal(readCrossTenant.status, 404);
+
+      const linksCrossTenant = await apiFetch(baseUrl, '/api/v1/students/student-a1/parents', { cookie: adminBCookie });
+      assert.equal(linksCrossTenant.status, 404);
     });
   });
 });
