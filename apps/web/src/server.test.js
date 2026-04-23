@@ -1928,3 +1928,47 @@ test('contrat erreur not found unifié', async () => {
     assert.equal(payload.error.message, 'Student not found');
   });
 });
+
+const postgresUrl = process.env.DATABASE_URL;
+const maybePostgresTest = postgresUrl ? test : test.skip;
+
+async function withPostgresPersistence(run) {
+  const prevPersistence = process.env.EDUCLINK_PERSISTENCE;
+  const prevDb = process.env.DATABASE_URL;
+  process.env.EDUCLINK_PERSISTENCE = 'postgres';
+  process.env.DATABASE_URL = postgresUrl;
+  try {
+    await run();
+  } finally {
+    process.env.EDUCLINK_PERSISTENCE = prevPersistence;
+    process.env.DATABASE_URL = prevDb;
+  }
+}
+
+maybePostgresTest('postgres persistence: tenant isolation + parent CRUD API', async () => {
+  await withPostgresPersistence(async () => {
+    await withServer(async (baseUrl) => {
+      const { cookie } = await login(baseUrl, 'admin@school-a.test');
+      const create = await apiFetch(baseUrl, '/api/v1/parents', {
+        cookie,
+        method: 'POST',
+        body: { firstName: 'Nora', lastName: 'Test', email: 'nora@test.local' }
+      });
+      assert.equal(create.status, 201);
+      const created = await create.json();
+
+      const readCrossTenant = await apiFetch(baseUrl, `/api/v1/parents/${created.data.id}?tenantId=school-b`, { cookie });
+      assert.equal(readCrossTenant.status, 404);
+    });
+  });
+});
+
+maybePostgresTest('postgres persistence: role access behavior on teacher endpoints', async () => {
+  await withPostgresPersistence(async () => {
+    await withServer(async (baseUrl) => {
+      const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+      const forbidden = await apiFetch(baseUrl, '/api/v1/teachers', { cookie: teacherCookie });
+      assert.equal(forbidden.status, 403);
+    });
+  });
+});

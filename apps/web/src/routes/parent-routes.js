@@ -13,7 +13,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
       }
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, parentService.listParents(tenantId));
+      sendApiSuccess(response, await parentService.listParents(tenantId));
       return true;
     }
 
@@ -28,7 +28,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        const parent = parentService.createParent(tenantId, payload);
+        const parent = await parentService.createParent(tenantId, payload);
         auditWriter.writeEntityEvent(session, 'parent.create', 'parent', parent.id);
         sendApiSuccess(response, parent, 201);
       } catch (error) {
@@ -49,7 +49,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const parent = parentService.getParentWithLinks(tenantId, parentId);
+        const parent = await parentService.getParentWithLinks(tenantId, parentId);
         if (!parent) {
           sendApiError(response, buildNotFoundError('Parent not found'));
           return true;
@@ -69,7 +69,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
         try {
           const payload = await parseJsonBody(request);
           const tenantId = buildTenantScope(session, payload);
-          const updated = parentService.updateParent(tenantId, parentId, payload);
+          const updated = await parentService.updateParent(tenantId, parentId, payload);
           if (!updated) {
             sendApiError(response, buildNotFoundError('Parent not found'));
             return true;
@@ -90,7 +90,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
           return true;
         }
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = parentService.archiveParent(tenantId, parentId);
+        const archived = await parentService.archiveParent(tenantId, parentId);
         if (!archived) {
           sendApiError(response, buildNotFoundError('Parent not found'));
           return true;
@@ -113,7 +113,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        const links = parentService.upsertParentLinks(tenantId, parentLinksMatch[1], payload);
+        const links = await parentService.upsertParentLinks(tenantId, parentLinksMatch[1], payload);
 
         sendApiSuccess(response, links, 201);
       } catch (error) {
@@ -132,7 +132,7 @@ function createParentRoutes({ parentService, auditWriter, sendApiError, sendApiS
       }
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      const links = parentService.listParentsForStudent(tenantId, studentParentsMatch[1]);
+      const links = await parentService.listParentsForStudent(tenantId, studentParentsMatch[1]);
       if (!links) {
         sendApiError(response, buildNotFoundError('Student not found'));
         return true;

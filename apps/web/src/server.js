@@ -31,6 +31,12 @@ const { getPool, closePool, isPersistenceEnabled } = require('../../../packages/
 const { loadRuntimeEnv } = require('../../../packages/core/src/runtime-env');
 const { PostgresCoreSchoolRepository } = require('./modules/persistence/postgres-core-school-repository');
 const { PostgresStudentRepository } = require('./modules/persistence/postgres-student-repository');
+const { PostgresParentRepository } = require('./modules/persistence/postgres-parent-repository');
+const { PostgresTeacherRepository } = require('./modules/persistence/postgres-teacher-repository');
+const { PostgresAttendanceRepository } = require('./modules/persistence/postgres-attendance-repository');
+const { PostgresGradingRepository } = require('./modules/persistence/postgres-grading-repository');
+const { PostgresMessagingRepository } = require('./modules/persistence/postgres-messaging-repository');
+const { PostgresFinanceRepository } = require('./modules/persistence/postgres-finance-repository');
 const { buildValidationError, buildForbiddenError } = require('./modules/error-utils');
 
 const users = [
@@ -1248,18 +1254,36 @@ function createServer({
     });
   const coreSchoolService = new CoreSchoolService({ coreSchoolStore });
   const studentService = new StudentService({ studentStore, coreSchoolService });
+  const parentService = new ParentService({ parentStore, studentStore, buildValidationError });
+  const teacherService = new TeacherService({ teacherStore });
+  const attendanceService = new AttendanceService({ attendanceStore, requireDateString });
 
   let studentApiService = studentService;
+  let parentApiService = parentService;
+  let teacherApiService = teacherService;
+  let attendanceApiService = attendanceService;
+  let gradingApiStore = gradingStore;
+  let messagingApiStore = messagingStore;
+  let financeApiStore = financeStore;
   if (isPersistenceEnabled()) {
     const pool = getPool();
     const persistentCoreSchool = new PostgresCoreSchoolRepository({ pool });
     const persistentStudentStore = new PostgresStudentRepository({ pool, classRoomRepository: persistentCoreSchool });
+    const persistentParentStore = new PostgresParentRepository({ pool, studentStore: persistentStudentStore });
+    const persistentTeacherStore = new PostgresTeacherRepository({ pool, classRoomStore: persistentCoreSchool });
+    const persistentAttendanceStore = new PostgresAttendanceRepository({ pool, studentStore: persistentStudentStore, teacherStore: persistentTeacherStore, classRoomStore: persistentCoreSchool });
+    const persistentGradingStore = new PostgresGradingRepository({ pool, classRoomStore: persistentCoreSchool, teacherStore: persistentTeacherStore, studentStore: persistentStudentStore, parentStore: persistentParentStore });
+    const persistentMessagingStore = new PostgresMessagingRepository({ pool });
+    const persistentFinanceStore = new PostgresFinanceRepository({ pool, studentStore: persistentStudentStore, parentStore: persistentParentStore });
     const persistentCoreSchoolService = new CoreSchoolService({ coreSchoolStore: persistentCoreSchool });
     studentApiService = new StudentService({ studentStore: persistentStudentStore, coreSchoolService: persistentCoreSchoolService });
+    parentApiService = new ParentService({ parentStore: persistentParentStore, studentStore: persistentStudentStore, buildValidationError });
+    teacherApiService = new TeacherService({ teacherStore: persistentTeacherStore });
+    attendanceApiService = new AttendanceService({ attendanceStore: persistentAttendanceStore, requireDateString });
+    gradingApiStore = persistentGradingStore;
+    messagingApiStore = persistentMessagingStore;
+    financeApiStore = persistentFinanceStore;
   }
-  const parentService = new ParentService({ parentStore, studentStore, buildValidationError });
-  const teacherService = new TeacherService({ teacherStore });
-  const attendanceService = new AttendanceService({ attendanceStore, requireDateString });
 
   logger.info('Application server initialized', {
     persistenceMode: isPersistenceEnabled() ? 'postgres' : 'memory',
@@ -1282,7 +1306,7 @@ function createServer({
       buildTenantScope
     }),
     createParentRoutes({
-      parentService,
+      parentService: parentApiService,
       auditWriter,
       sendApiError,
       sendApiSuccess,
@@ -1290,7 +1314,7 @@ function createServer({
       buildTenantScope
     }),
     createTeacherRoutes({
-      teacherService,
+      teacherService: teacherApiService,
       auditWriter,
       sendApiError,
       sendApiSuccess,
@@ -1298,7 +1322,7 @@ function createServer({
       buildTenantScope
     }),
     createAttendanceRoutes({
-      attendanceService,
+      attendanceService: attendanceApiService,
       sendApiError,
       sendApiSuccess,
       parseJsonBody,
@@ -2381,7 +2405,7 @@ function createServer({
 
       try {
         const payload = await parseJsonBody(request);
-        const announcement = messagingStore.createAnnouncement(session.tenantId, session, payload);
+        const announcement = await messagingApiStore.createAnnouncement(session.tenantId, session, payload);
         sendApiSuccess(response, announcement, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2398,7 +2422,7 @@ function createServer({
         return;
       }
 
-      sendApiSuccess(response, messagingStore.listAnnouncementsForUser(session.tenantId, session));
+      sendApiSuccess(response, await messagingApiStore.listAnnouncementsForUser(session.tenantId, session));
       return;
     }
 
@@ -2411,7 +2435,7 @@ function createServer({
         return;
       }
 
-      sendApiSuccess(response, messagingStore.getInbox(session.tenantId, session));
+      sendApiSuccess(response, await messagingApiStore.getInbox(session.tenantId, session));
       return;
     }
 
@@ -2424,7 +2448,7 @@ function createServer({
 
       try {
         const payload = await parseJsonBody(request);
-        const created = messagingStore.createThread(session.tenantId, session, payload);
+        const created = await messagingApiStore.createThread(session.tenantId, session, payload);
         sendApiSuccess(response, created, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2442,7 +2466,7 @@ function createServer({
         return;
       }
 
-      const thread = messagingStore.getThreadForUser(session.tenantId, messageThreadByIdMatch[1], session.userId);
+      const thread = await messagingApiStore.getThreadForUser(session.tenantId, messageThreadByIdMatch[1], session.userId);
       if (!thread) {
         sendApiError(response, 404, 'NOT_FOUND', 'Thread not found');
         return;
@@ -2469,7 +2493,7 @@ function createServer({
 
       try {
         const payload = await parseJsonBody(request);
-        const message = messagingStore.addMessage(session.tenantId, messageThreadReplyMatch[1], session.userId, payload);
+        const message = await messagingApiStore.addMessage(session.tenantId, messageThreadReplyMatch[1], session.userId, payload);
         if (!message) {
           sendApiError(response, 404, 'NOT_FOUND', 'Thread not found');
           return;
@@ -2590,7 +2614,7 @@ function createServer({
 
       try {
         const payload = await parseJsonBody(request);
-        const created = gradingStore.createAssessment(session.tenantId, {
+        const created = await gradingApiStore.createAssessment(session.tenantId, {
           teacherId: session.userId,
           classRoomId: payload.classRoomId,
           subjectId: payload.subjectId,
@@ -2618,7 +2642,7 @@ function createServer({
       }
 
       if (session.role === ROLES.TEACHER) {
-        sendApiSuccess(response, gradingStore.listAssessmentsForTeacher(session.tenantId, session.userId));
+        sendApiSuccess(response, await gradingApiStore.listAssessmentsForTeacher(session.tenantId, session.userId));
         return;
       }
 
@@ -2639,7 +2663,7 @@ function createServer({
 
       try {
         const payload = await parseJsonBody(request);
-        const saved = gradingStore.upsertGradesForAssessment(session.tenantId, {
+        const saved = await gradingApiStore.upsertGradesForAssessment(session.tenantId, {
           teacherId: session.userId,
           assessmentId: assessmentGradeEntryMatch[1],
           entries: payload.entries
@@ -2664,19 +2688,19 @@ function createServer({
       }
 
       if (session.role === ROLES.TEACHER) {
-        sendApiSuccess(response, gradingStore.listGradesForTeacher(session.tenantId, session.userId));
+        sendApiSuccess(response, await gradingApiStore.listGradesForTeacher(session.tenantId, session.userId));
         return;
       }
       if (session.role === ROLES.PARENT) {
-        sendApiSuccess(response, gradingStore.listGradesForParent(session.tenantId, session.userId));
+        sendApiSuccess(response, await gradingApiStore.listGradesForParent(session.tenantId, session.userId));
         return;
       }
       if (session.role === ROLES.STUDENT) {
-        sendApiSuccess(response, gradingStore.listGradesForStudent(session.tenantId, session.userId));
+        sendApiSuccess(response, await gradingApiStore.listGradesForStudent(session.tenantId, session.userId));
         return;
       }
 
-      sendApiSuccess(response, gradingStore.listGradesForTenant(session.tenantId));
+      sendApiSuccess(response, await gradingApiStore.listGradesForTenant(session.tenantId));
       return;
     }
 
@@ -2750,7 +2774,7 @@ function createServer({
         sendApiError(response, auth.status, auth.error.code, auth.error.message);
         return;
       }
-      sendApiSuccess(response, financeStore.listFeePlans(session.tenantId));
+      sendApiSuccess(response, await financeApiStore.listFeePlans(session.tenantId));
       return;
     }
 
@@ -2762,7 +2786,7 @@ function createServer({
       }
       try {
         const payload = await parseJsonBody(request);
-        const feePlan = financeStore.createFeePlan(session.tenantId, payload);
+        const feePlan = await financeApiStore.createFeePlan(session.tenantId, payload);
         sendApiSuccess(response, feePlan, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2780,11 +2804,11 @@ function createServer({
       }
 
       if (session.role === ROLES.PARENT) {
-        sendApiSuccess(response, financeStore.listParentFinance(session.tenantId, session.userId));
+        sendApiSuccess(response, await financeApiStore.listParentFinance(session.tenantId, session.userId));
         return;
       }
 
-      sendApiSuccess(response, financeStore.listInvoices(session.tenantId));
+      sendApiSuccess(response, await financeApiStore.listInvoices(session.tenantId));
       return;
     }
 
@@ -2796,7 +2820,7 @@ function createServer({
       }
       try {
         const payload = await parseJsonBody(request);
-        const invoice = financeStore.createInvoice(session.tenantId, payload);
+        const invoice = await financeApiStore.createInvoice(session.tenantId, payload);
         sendApiSuccess(response, invoice, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
@@ -2810,7 +2834,7 @@ function createServer({
         sendApiError(response, auth.status, auth.error.code, auth.error.message);
         return;
       }
-      sendApiSuccess(response, financeStore.listPayments(session.tenantId));
+      sendApiSuccess(response, await financeApiStore.listPayments(session.tenantId));
       return;
     }
 
@@ -2822,7 +2846,7 @@ function createServer({
       }
       try {
         const payload = await parseJsonBody(request);
-        const payment = financeStore.recordPayment(session.tenantId, payload);
+        const payment = await financeApiStore.recordPayment(session.tenantId, payload);
         sendApiSuccess(response, payment, 201);
       } catch (error) {
         sendApiError(response, error.status ?? 422, error.code ?? 'VALIDATION_ERROR', error.message);
