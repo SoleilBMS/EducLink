@@ -128,6 +128,12 @@ Règles d'accès :
 - `director` : lecture seule
 - `super_admin` : accès global avec `tenantId` explicite sur les appels API
 
+## Runtime support (Node.js)
+
+- Runtime minimum: **Node.js 20+** (see `package.json` `engines.node`).
+- CI test matrix: **Node.js 20.x and 22.x**.
+
+
 ## Structure documentaire du repo
 
 - `PRD.md` : Product Requirements Document complet
