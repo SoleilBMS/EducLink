@@ -299,3 +299,15 @@ Scripts de démarrage :
 La configuration runtime est validée au démarrage (port, mode de persistance, format de logs, présence de `DATABASE_URL` en mode postgres).
 
 Voir `docs/deployment.md` pour le guide local/staging/production.
+
+## Démonstration produit (seed data + onboarding)
+
+Un parcours de démonstration enrichi est disponible avec:
+
+- seed data réalistes sur le tenant principal `school-a`
+- comptes de démo multi-rôles (admin, teacher, parent, student, accountant, director)
+- walkthrough intégré dans l'application: `/demo`
+
+Documentation courte:
+
+- `docs/demo-walkthrough.md`
