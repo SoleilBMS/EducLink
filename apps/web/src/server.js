@@ -6,7 +6,7 @@ const { requireAuth } = require('../../../packages/auth/src/guards/require-auth'
 const { ROLES } = require('../../../packages/auth/src/roles/roles');
 const { DEFAULT_SESSION_TTL_MS, SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { CoreSchoolStore } = require('./modules/core-school');
-const { StudentStore, buildValidationError } = require('./modules/student');
+const { StudentStore } = require('./modules/student');
 const { ParentStore } = require('./modules/parent');
 const { TeacherStore } = require('./modules/teacher');
 const { AttendanceStore, ATTENDANCE_STATUSES, requireDateString } = require('./modules/attendance');
@@ -29,6 +29,7 @@ const { AttendanceService } = require('./services/attendance-service');
 const { getPool, closePool, isPersistenceEnabled } = require('../../../packages/database/src/client');
 const { PostgresCoreSchoolRepository } = require('./modules/persistence/postgres-core-school-repository');
 const { PostgresStudentRepository } = require('./modules/persistence/postgres-student-repository');
+const { buildValidationError, buildForbiddenError } = require('./modules/error-utils');
 
 const users = [
   { id: 'super-admin', email: 'superadmin@platform.test', password: 'password123', role: ROLES.SUPER_ADMIN, tenantId: null },
@@ -1115,7 +1116,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
       throw buildValidationError('studentId must reference an active student in tenant scope');
     }
     if (!teacher.classRoomIds.includes(student.classRoomId)) {
-      throw buildValidationError('Teacher is not authorized for this student');
+      throw buildForbiddenError('Teacher is not authorized for this student');
     }
 
     const classRoom = coreSchoolStore.get('classRooms', tenantId, student.classRoomId);
@@ -2477,7 +2478,7 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
         const student = studentStore.get(session.tenantId, payload.studentId, { includeArchived: false });
         const teacher = teacherStore.get(session.tenantId, session.userId, { includeArchived: false });
         if (!student || !teacher || !teacher.classRoomIds.includes(student.classRoomId)) {
-          throw buildValidationError('Teacher is not authorized for this student');
+          throw buildForbiddenError('Teacher is not authorized for this student');
         }
         const saved = {
           id: `report-comment-${randomUUID()}`,

@@ -1787,3 +1787,70 @@ test('génération IA est loggée et provider mockable en test', async () => {
     }
   });
 });
+
+test('contrat succès API inclut success=true, data et meta.request_id', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/students', { cookie });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.success, true);
+    assert.ok(Array.isArray(payload.data));
+    assert.equal(typeof payload.meta?.request_id, 'string');
+    assert.ok(payload.meta.request_id.length > 10);
+  });
+});
+
+test('contrat erreur validation unifié', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: { firstName: 'N', lastName: 'X' }
+    });
+
+    assert.equal(response.status, 422);
+    const payload = await response.json();
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, 'VALIDATION_ERROR');
+    assert.equal(typeof payload.error.message, 'string');
+    assert.equal(typeof payload.meta?.request_id, 'string');
+  });
+});
+
+test('contrat erreur authorisation unifié', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/students', {
+      cookie,
+      method: 'POST',
+      body: {
+        firstName: 'Nope',
+        lastName: 'Denied',
+        admissionNumber: 'A-901',
+        classRoomId: 'class-a1'
+      }
+    });
+
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, 'FORBIDDEN');
+    assert.equal(typeof payload.error.message, 'string');
+  });
+});
+
+test('contrat erreur not found unifié', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await apiFetch(baseUrl, '/api/v1/students/student-missing', { cookie });
+
+    assert.equal(response.status, 404);
+    const payload = await response.json();
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, 'NOT_FOUND');
+    assert.equal(payload.error.message, 'Student not found');
+  });
+});

@@ -1,5 +1,7 @@
 const crypto = require('node:crypto');
 
+const { buildValidationError } = require('./error-utils');
+
 const ENTITY = Object.freeze({
   SCHOOL: 'schools',
   ACADEMIC_YEAR: 'academicYears',
@@ -35,13 +37,6 @@ const entityConfig = Object.freeze({
     validate: validateSubject
   }
 });
-
-function buildValidationError(message) {
-  const error = new Error(message);
-  error.code = 'VALIDATION_ERROR';
-  error.status = 400;
-  return error;
-}
 
 function requireString(value, fieldName) {
   if (typeof value !== 'string' || value.trim().length === 0) {

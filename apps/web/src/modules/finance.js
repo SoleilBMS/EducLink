@@ -1,17 +1,12 @@
 const crypto = require('node:crypto');
 
+const { buildValidationError } = require('./error-utils');
+
 const INVOICE_STATUSES = Object.freeze({
   UNPAID: 'unpaid',
   PARTIALLY_PAID: 'partially_paid',
   PAID: 'paid'
 });
-
-function buildValidationError(message) {
-  const error = new Error(message);
-  error.code = 'VALIDATION_ERROR';
-  error.status = 422;
-  return error;
-}
 
 function requireString(value, fieldName, min = 1, max = 120) {
   if (typeof value !== 'string') {

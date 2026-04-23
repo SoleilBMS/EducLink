@@ -1,13 +1,8 @@
 const crypto = require('node:crypto');
 
-const ATTENDANCE_STATUSES = ['present', 'absent', 'late'];
+const { buildValidationError } = require('./error-utils');
 
-function buildValidationError(message) {
-  const error = new Error(message);
-  error.code = 'VALIDATION_ERROR';
-  error.status = 422;
-  return error;
-}
+const ATTENDANCE_STATUSES = ['present', 'absent', 'late'];
 
 function requireString(value, fieldName, min = 1, max = 120) {
   if (typeof value !== 'string') {

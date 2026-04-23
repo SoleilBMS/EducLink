@@ -1,18 +1,13 @@
 const crypto = require('node:crypto');
 
+const { buildValidationError } = require('./error-utils');
+
 const LINK_RELATIONSHIP = Object.freeze({
   MOTHER: 'mother',
   FATHER: 'father',
   GUARDIAN: 'guardian',
   OTHER: 'other'
 });
-
-function buildValidationError(message) {
-  const error = new Error(message);
-  error.code = 'VALIDATION_ERROR';
-  error.status = 422;
-  return error;
-}
 
 function requireString(value, fieldName, min = 1, max = 120) {
   if (typeof value !== 'string') {
