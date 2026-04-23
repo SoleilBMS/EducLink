@@ -45,6 +45,12 @@ EDUCLINK_PERSISTENCE=postgres DATABASE_URL=postgres://postgres:postgres@localhos
 
 Le workflow CI démarre un service PostgreSQL puis exécute `npm run db:migrate` pour vérifier la stratégie de migration.
 
+## CI (tests PostgreSQL)
+
+- `npm test` reste le périmètre de référence en mode mémoire (fixtures/journeys historiques).
+- `npm run test:postgres` exécute uniquement `apps/web/src/server.postgres.test.js`, qui contient aujourd'hui les scénarios explicitement validés contre PostgreSQL.
+- Les autres tests de parcours web/API continueront d'être migrés vers des fixtures PostgreSQL dédiées avant d'être ajoutés à ce périmètre.
+
 ## Limites assumées
 
 - Persistance Postgres branchée en priorité sur les endpoints API (mode web historique inchangé tant que non migré explicitement).
