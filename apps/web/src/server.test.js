@@ -76,6 +76,19 @@ test('redirection après login vers dashboard adapté au rôle', async () => {
 
 
 
+
+
+test('guide de démonstration est protégé en environnement non fiable', async () => {
+  await withServer(async (baseUrl) => {
+    const guestResponse = await fetch(`${baseUrl}/demo`, { redirect: 'manual' });
+    assert.equal(guestResponse.status, 302);
+    assert.equal(guestResponse.headers.get('location'), '/login');
+
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const authenticatedResponse = await fetch(`${baseUrl}/demo`, { headers: { cookie } });
+    assert.equal(authenticatedResponse.status, 200);
+  }, { runtimeEnv: { nodeEnv: 'production' } });
+});
 test('logger structure les entrées et masque les champs sensibles', () => {
   const entries = [];
   const logger = createLogger({

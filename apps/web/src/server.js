@@ -1174,7 +1174,14 @@ function logAuthEvent(logger, message, session) {
   });
 }
 
-function createServer({ sessionStore = new SessionStore(), seed = createSeedData(), aiConfig = {}, logger = createLogger({ module: 'web.server' }) } = {}) {
+function createServer({
+  sessionStore = new SessionStore(),
+  seed = createSeedData(),
+  aiConfig = {},
+  logger = createLogger({ module: 'web.server' }),
+  runtimeEnv = loadRuntimeEnv(process.env),
+  allowPublicDemoGuide = runtimeEnv.nodeEnv === 'development' || runtimeEnv.nodeEnv === 'test'
+} = {}) {
   const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms, subjects: seed.subjects });
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
   const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
@@ -1365,6 +1372,15 @@ function createServer({ sessionStore = new SessionStore(), seed = createSeedData
     }
 
     if (request.method === 'GET' && url.pathname === '/demo') {
+      if (!allowPublicDemoGuide) {
+        const auth = requireAuth(session);
+        if (!auth.allowed) {
+          response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie() } : {}) });
+          response.end();
+          return;
+        }
+      }
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderDemoGuidePage());
       return;
