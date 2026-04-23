@@ -14,7 +14,7 @@ function createAttendanceRoutes({ attendanceService, sendApiError, sendApiSucces
 
       try {
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const records = attendanceService.listAttendance(tenantId, {
+        const records = await attendanceService.listAttendance(tenantId, {
           date: url.searchParams.get('date') || undefined,
           classRoomId: url.searchParams.get('classRoomId') || undefined
         });
@@ -35,7 +35,7 @@ function createAttendanceRoutes({ attendanceService, sendApiError, sendApiSucces
 
       try {
         const payload = await parseJsonBody(request);
-        const saved = attendanceService.upsertForTeacher(session.tenantId, session.userId, payload);
+        const saved = await attendanceService.upsertForTeacher(session.tenantId, session.userId, payload);
         sendApiSuccess(response, saved, 201);
       } catch (error) {
         if (error.message === 'Teacher is not authorized for this class room') {

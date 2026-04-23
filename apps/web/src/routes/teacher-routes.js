@@ -13,7 +13,7 @@ function createTeacherRoutes({ teacherService, auditWriter, sendApiError, sendAp
       }
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-      sendApiSuccess(response, teacherService.listTeachers(tenantId));
+      sendApiSuccess(response, await teacherService.listTeachers(tenantId));
       return true;
     }
 
@@ -28,7 +28,7 @@ function createTeacherRoutes({ teacherService, auditWriter, sendApiError, sendAp
       try {
         const payload = await parseJsonBody(request);
         const tenantId = buildTenantScope(session, payload);
-        const teacher = teacherService.createTeacher(tenantId, payload);
+        const teacher = await teacherService.createTeacher(tenantId, payload);
         auditWriter.writeEntityEvent(session, 'teacher.create', 'teacher', teacher.id);
         sendApiSuccess(response, teacher, 201);
       } catch (error) {
@@ -49,7 +49,7 @@ function createTeacherRoutes({ teacherService, auditWriter, sendApiError, sendAp
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const teacher = teacherService.getTeacher(tenantId, teacherId);
+        const teacher = await teacherService.getTeacher(tenantId, teacherId);
         if (!teacher) {
           sendApiError(response, buildNotFoundError('Teacher not found'));
           return true;
@@ -69,7 +69,7 @@ function createTeacherRoutes({ teacherService, auditWriter, sendApiError, sendAp
         try {
           const payload = await parseJsonBody(request);
           const tenantId = buildTenantScope(session, payload);
-          const updated = teacherService.updateTeacher(tenantId, teacherId, payload);
+          const updated = await teacherService.updateTeacher(tenantId, teacherId, payload);
           if (!updated) {
             sendApiError(response, buildNotFoundError('Teacher not found'));
             return true;
@@ -91,7 +91,7 @@ function createTeacherRoutes({ teacherService, auditWriter, sendApiError, sendAp
         }
 
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
-        const archived = teacherService.archiveTeacher(tenantId, teacherId);
+        const archived = await teacherService.archiveTeacher(tenantId, teacherId);
         if (!archived) {
           sendApiError(response, buildNotFoundError('Teacher not found'));
           return true;
