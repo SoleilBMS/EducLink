@@ -55,6 +55,10 @@ function validateRuntimeEnv(env = process.env) {
     errors.push('DATABASE_URL is required when EDUCLINK_PERSISTENCE=postgres');
   }
 
+  if ((nodeEnv === 'staging' || nodeEnv === 'production') && persistenceMode !== 'postgres') {
+    errors.push(`EDUCLINK_PERSISTENCE=postgres is required when NODE_ENV=${nodeEnv}`);
+  }
+
   return {
     ok: errors.length === 0,
     errors,

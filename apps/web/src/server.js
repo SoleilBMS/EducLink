@@ -27,7 +27,7 @@ const { StudentService } = require('./services/student-service');
 const { ParentService } = require('./services/parent-service');
 const { TeacherService } = require('./services/teacher-service');
 const { AttendanceService } = require('./services/attendance-service');
-const { getPool, closePool, isPersistenceEnabled } = require('../../../packages/database/src/client');
+const { getPool, closePool } = require('../../../packages/database/src/client');
 const { loadRuntimeEnv } = require('../../../packages/core/src/runtime-env');
 const { PostgresCoreSchoolRepository } = require('./modules/persistence/postgres-core-school-repository');
 const { PostgresStudentRepository } = require('./modules/persistence/postgres-student-repository');
@@ -1321,7 +1321,7 @@ function createServer({
   let gradingApiStore = gradingStore;
   let messagingApiStore = messagingStore;
   let financeApiStore = financeStore;
-  if (isPersistenceEnabled()) {
+  if (runtimeEnv.persistenceMode === 'postgres') {
     const pool = getPool();
     const persistentCoreSchool = new PostgresCoreSchoolRepository({ pool });
     const persistentStudentStore = new PostgresStudentRepository({ pool, classRoomRepository: persistentCoreSchool });
@@ -1343,13 +1343,13 @@ function createServer({
 
   logger.info('Application server initialized', {
     nodeEnv: runtimeEnv.nodeEnv,
-    persistenceMode: isPersistenceEnabled() ? 'postgres' : 'memory',
+    persistenceMode: runtimeEnv.persistenceMode,
     aiDefaultProvider: aiProviderRegistry.defaultProvider,
     logFormat: process.env.LOG_FORMAT || (runtimeEnv.nodeEnv === 'production' ? 'json' : 'pretty'),
     logLevel: process.env.LOG_LEVEL || 'info'
   });
 
-  if (isPersistenceEnabled()) {
+  if (runtimeEnv.persistenceMode === 'postgres') {
     logger.info('Postgres persistence enabled for student API');
   }
 
@@ -2984,43 +2984,44 @@ module.exports = {
   parseCookies
 };
 
-if (require.main === module) {
-  try {
-    const runtimeConfig = loadRuntimeEnv(process.env);
-    const startupLogger = createLogger({ module: 'web.startup' });
-    const server = createServer({ runtimeEnv: runtimeConfig, logger: startupLogger.child({}, 'web.server') });
+async function startServer() {
+  const runtimeConfig = loadRuntimeEnv(process.env);
+  const startupLogger = createLogger({ module: 'web.startup' });
+  const server = createServer({ runtimeEnv: runtimeConfig, logger: startupLogger.child({}, 'web.server') });
 
-    if (runtimeConfig.persistenceMode === 'postgres') {
-      const pool = getPool();
-      pool
-        .query('SELECT 1')
-        .then(() => {
-          startupLogger.info('Database connectivity check passed', { persistenceMode: runtimeConfig.persistenceMode });
-        })
-        .catch((error) => {
-          startupLogger.error('Database connectivity check failed', {
-            persistenceMode: runtimeConfig.persistenceMode,
-            error: serializeError(error)
-          });
-        });
-    }
-
-    server.listen(runtimeConfig.port, () => {
-      startupLogger.info('EducLink web app running', {
-        url: `http://localhost:${runtimeConfig.port}`,
-        nodeEnv: runtimeConfig.nodeEnv,
-        persistenceMode: runtimeConfig.persistenceMode
+  if (runtimeConfig.persistenceMode === 'postgres') {
+    const pool = getPool();
+    try {
+      await pool.query('SELECT 1');
+      startupLogger.info('Database connectivity check passed', { persistenceMode: runtimeConfig.persistenceMode });
+    } catch (error) {
+      startupLogger.error('Database connectivity check failed', {
+        persistenceMode: runtimeConfig.persistenceMode,
+        error: serializeError(error)
       });
-    });
+      throw new Error('Startup aborted: postgres connectivity check failed');
+    }
+  }
 
-    process.on('SIGTERM', async () => {
-      startupLogger.info('SIGTERM received, shutting down web server');
-      await closePool();
-      server.close();
+  server.listen(runtimeConfig.port, () => {
+    startupLogger.info('EducLink web app running', {
+      url: `http://localhost:${runtimeConfig.port}`,
+      nodeEnv: runtimeConfig.nodeEnv,
+      persistenceMode: runtimeConfig.persistenceMode
     });
-  } catch (error) {
+  });
+
+  process.on('SIGTERM', async () => {
+    startupLogger.info('SIGTERM received, shutting down web server');
+    await closePool();
+    server.close();
+  });
+}
+
+if (require.main === module) {
+  startServer().catch((error) => {
     const startupLogger = createLogger({ module: 'web.startup' });
     startupLogger.error('Server startup failed', { error: serializeError(error) });
     process.exitCode = 1;
-  }
+  });
 }

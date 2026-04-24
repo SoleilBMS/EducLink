@@ -133,7 +133,7 @@ Role switch rule during demo:
 
 ## Known limitations (current state)
 
-- The project still includes legacy in-memory mode (`EDUCLINK_PERSISTENCE=memory`), even though pilot workflows should use PostgreSQL.
+- The project still includes in-memory mode (`EDUCLINK_PERSISTENCE=memory`) for tests and local development only; staging/pilot flows must run with PostgreSQL.
 - Director dashboard is intentionally limited; some operational actions remain admin/teacher-owned.
 - AI report comments are draft-assist only and require explicit teacher validation before saving.
 - Migration rollback is manual (forward-only migration flow).

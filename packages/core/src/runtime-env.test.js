@@ -26,6 +26,16 @@ test('validateRuntimeEnv rejette les valeurs invalides', () => {
   assert.equal(result.errors.length, 4);
 });
 
+test('validateRuntimeEnv rejette memory en staging/production', () => {
+  const stagingResult = validateRuntimeEnv({ NODE_ENV: 'staging', EDUCLINK_PERSISTENCE: 'memory' });
+  assert.equal(stagingResult.ok, false);
+  assert.match(stagingResult.errors.join(' '), /EDUCLINK_PERSISTENCE=postgres is required when NODE_ENV=staging/);
+
+  const productionResult = validateRuntimeEnv({ NODE_ENV: 'production', EDUCLINK_PERSISTENCE: 'memory' });
+  assert.equal(productionResult.ok, false);
+  assert.match(productionResult.errors.join(' '), /EDUCLINK_PERSISTENCE=postgres is required when NODE_ENV=production/);
+});
+
 test('loadRuntimeEnv retourne une config normalisée', () => {
   const config = loadRuntimeEnv({ NODE_ENV: 'staging', PORT: '4100', EDUCLINK_PERSISTENCE: 'postgres', DATABASE_URL: 'postgres://example' });
   assert.equal(config.nodeEnv, 'staging');

@@ -281,14 +281,16 @@ Faire d’EducLink la référence du digital scolaire privé en Algérie puis en
 
 Une couche de persistance durable est maintenant disponible en mode transition.
 
-- Mode défaut: `EDUCLINK_PERSISTENCE=memory` (comportement MVP actuel).
-- Mode DB: `EDUCLINK_PERSISTENCE=postgres` + `DATABASE_URL`.
+- Mode local/dev: `EDUCLINK_PERSISTENCE=memory` (explicite, utile pour tests et itération rapide).
+- Mode staging/production: `EDUCLINK_PERSISTENCE=postgres` + `DATABASE_URL` (obligatoire).
 - Migrations SQL versionnées: `packages/database/migrations`.
 - Commandes:
   - `npm run db:migrate`
   - `npm run db:seed`
 
-Voir `docs/persistence.md` pour le setup local complet, la stratégie tenant, et la coexistence mémoire/DB.
+Le runtime échoue au démarrage si la configuration de persistance est invalide (pas de fallback silencieux vers mémoire).
+
+Voir `docs/persistence.md` pour le setup local complet, la stratégie tenant et les règles memory/postgres.
 
 
 ## Configuration d'environnement & déploiement

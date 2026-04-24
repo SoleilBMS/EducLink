@@ -8,7 +8,7 @@ Cette note prépare un déploiement réaliste d'EducLink sans imposer un provide
 | --- | --- | --- | --- |
 | `NODE_ENV` | oui | `development`, `staging`, `production`, `test` | Mode runtime global (format logs par défaut, conventions d'exécution). |
 | `PORT` | oui | `3000` | Port HTTP de l'app Node. |
-| `EDUCLINK_PERSISTENCE` | oui | `memory`, `postgres` | Choix du backend de persistance. |
+| `EDUCLINK_PERSISTENCE` | oui | `memory`, `postgres` | Choix du backend de persistance (`postgres` obligatoire en staging/production). |
 | `DATABASE_URL` | conditionnel | `postgres://user:pass@host:5432/educlink` | Requis uniquement si `EDUCLINK_PERSISTENCE=postgres`. |
 | `LOG_LEVEL` | optionnel | `info`, `warn`, `error`, `debug` | Niveau de logs. |
 | `LOG_FORMAT` | optionnel | `pretty`, `json` | Format de logs (`json` recommandé hors dev). |
@@ -26,6 +26,8 @@ La config runtime est validée au lancement :
 - `NODE_ENV`, `EDUCLINK_PERSISTENCE` et `LOG_FORMAT` sont contrôlés.
 - `PORT` doit être un entier valide (1..65535).
 - `DATABASE_URL` est obligatoire en mode `postgres`.
+- `NODE_ENV=staging|production` impose `EDUCLINK_PERSISTENCE=postgres`.
+- En mode `postgres`, la connectivité DB est testée au démarrage et l'app échoue immédiatement en cas d'échec.
 
 Si une variable critique est invalide/manquante, l'app échoue immédiatement avec un message explicite (`Invalid runtime configuration`).
 
