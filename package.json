@@ -15,7 +15,7 @@
     "db:seed": "node packages/database/src/seed.js",
     "start": "node apps/web/src/server.js",
     "start:dev": "NODE_ENV=development node apps/web/src/server.js",
-    "start:staging": "NODE_ENV=staging EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
+    "start:staging": "node scripts/start-staging.js",
     "start:prod": "NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
     "test:e2e:smoke": "node --test apps/web/src/e2e.smoke.test.js",
     "test:postgres": "node --test apps/web/src/server.postgres.test.js",

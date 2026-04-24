@@ -299,10 +299,11 @@ Scripts de démarrage :
 
 - `npm run start`
 - `npm run start:dev`
-- `npm run start:staging`
+- `npm run start:staging` (migrate auto + seed optionnel via `STAGING_RUN_SEED=true`)
 - `npm run start:prod`
 
 La configuration runtime est validée au démarrage (port, mode de persistance, format de logs, présence de `DATABASE_URL` en mode postgres).
+Un endpoint de santé `GET /healthz` est disponible pour vérifier l'état du service (et la connectivité DB en mode postgres).
 
 Voir `docs/deployment.md` pour le guide local/staging/production.
 
