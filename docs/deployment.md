@@ -45,23 +45,61 @@ EDUCLINK_PERSISTENCE=postgres DATABASE_URL=postgres://postgres:postgres@localhos
 EDUCLINK_PERSISTENCE=postgres npm run start:dev
 ```
 
-## 4) Configuration staging
+## 4) Déploiement staging (répétable)
 
-1. Copier `.env.staging.example` et injecter les vraies valeurs (secrets via secret manager CI/CD).
-2. Vérifier `EDUCLINK_PERSISTENCE=postgres` et `LOG_FORMAT=json`.
-3. Lancer les migrations avant démarrage applicatif.
-4. Démarrer l'app avec `npm run start:staging`.
+Le script `scripts/deploy.sh` formalise la séquence de déploiement :
 
-Séquence recommandée :
+1. validation des variables critiques (`NODE_ENV`, `PORT`, `EDUCLINK_PERSISTENCE`, `DATABASE_URL`),
+2. `npm ci`,
+3. `npm run db:migrate`,
+4. `npm run db:seed` uniquement si `--seed`,
+5. affiche la commande de démarrage ou démarre avec `--start`.
+
+Exemple (préparation sans démarrage) :
 
 ```bash
-npm ci
-# start:staging force les defaults runtime staging, lance db:migrate,
-# puis lance db:seed uniquement si STAGING_RUN_SEED=true.
-npm run start:staging
+cp .env.staging.example .env.staging
+set -a
+source .env.staging
+set +a
+npm run deploy -- staging
 ```
 
-### Vérification de santé staging
+Exemple (avec seed explicite + démarrage) :
+
+```bash
+npm run deploy -- staging --seed --start
+```
+
+> `start:staging` reste disponible. Il exécute migration + seed conditionnel via `STAGING_RUN_SEED=true` puis démarre l'app.
+
+## 5) Déploiement production-like
+
+Exemple (préparation sans démarrage) :
+
+```bash
+cp .env.production.example .env.production
+set -a
+source .env.production
+set +a
+npm run deploy -- production
+```
+
+Exemple (avec démarrage) :
+
+```bash
+npm run deploy -- production --start
+```
+
+Exemple (seed exceptionnel et explicite) :
+
+```bash
+npm run deploy -- production --seed
+```
+
+## 6) Santé, rollback et recovery (simple)
+
+### Vérification de santé
 
 Un endpoint léger `/healthz` est exposé:
 
@@ -74,14 +112,13 @@ Exemple:
 curl -i http://localhost:3000/healthz
 ```
 
-## 5) Configuration production
+### Rollback/recovery minimal
 
-1. Copier `.env.production.example` (sans committer les secrets).
-2. Forcer `NODE_ENV=production`, `EDUCLINK_PERSISTENCE=postgres`, `LOG_FORMAT=json`.
-3. Exécuter `npm run db:migrate` avant le switch de trafic.
-4. Démarrer avec `npm run start:prod`.
+- En cas d'échec de migration pendant `deploy.sh`, le script s'arrête immédiatement (`set -euo pipefail`) avant démarrage de l'app.
+- Revenir à la version applicative précédente et relancer `npm run deploy -- <env>` après correction DB/config.
+- Les migrations SQL étant versionnées dans `packages/database/migrations`, la stratégie de rollback DB doit rester manuelle et explicitement validée par l'équipe avant exécution.
 
-## 6) CI et déploiements futurs
+## 7) CI et déploiements futurs
 
 - La CI existante continue de fonctionner : `DATABASE_URL` est déjà injecté dans le workflow.
 - Les validations de config sont compatibles CI (`NODE_ENV=test` autorisé).
