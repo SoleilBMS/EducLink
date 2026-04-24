@@ -10,10 +10,11 @@ npm run start
 ```
 
 Puis ouvrir:
-- `http://localhost:3000/demo` (guide intégré)
+- `http://localhost:3000/demo` (guide intégré avec liens directs)
 - `http://localhost:3000/login`
 
 > Mot de passe unique pour tous les comptes de démonstration: `password123`.
+> Changement de rôle pendant la démo: **Logout** puis connexion avec un autre compte.
 
 ## Comptes de démo (tenant principal: `school-a`)
 
@@ -29,6 +30,8 @@ Puis ouvrir:
 | Accountant | `accountant@school-a.test` | `/dashboard/accountant` |
 
 ## Scénario démo recommandé (15-20 min)
+
+Le guide `/demo` propose désormais les liens à cliquer dans l'ordre, pour éviter les allers-retours manuels et les routes erronées.
 
 1. **Admin**
    - Ouvrir le dashboard admin pour vérifier les métriques principales.
@@ -50,8 +53,15 @@ Puis ouvrir:
    - Vérifier la cohérence parent/enfants et les statuts de facturation.
 
 5. **Student / Accountant**
-   - Student: ouvrir devoirs + notes.
-   - Accountant: ouvrir finance depuis dashboard accountant.
+   - Student: ouvrir devoirs + notes (si le flux student est inclus dans la présentation).
+   - Accountant: ouvrir finance depuis dashboard accountant (optionnel si le timing est serré).
+
+## Points de fiabilité ajoutés
+
+- Le guide `/demo` liste les comptes + routes d'entrée par rôle.
+- Le guide `/demo` explicite la règle de changement de rôle.
+- Chaque dashboard affiche un rappel vers `/demo` et la consigne de switch de rôle.
+- Les étapes incluent des liens directs vers les pages critiques du walkthrough.
 
 ## Couverture des seed data
 
