@@ -1342,8 +1342,11 @@ function createServer({
   }
 
   logger.info('Application server initialized', {
+    nodeEnv: runtimeEnv.nodeEnv,
     persistenceMode: isPersistenceEnabled() ? 'postgres' : 'memory',
-    aiDefaultProvider: aiProviderRegistry.defaultProvider
+    aiDefaultProvider: aiProviderRegistry.defaultProvider,
+    logFormat: process.env.LOG_FORMAT || (runtimeEnv.nodeEnv === 'production' ? 'json' : 'pretty'),
+    logLevel: process.env.LOG_LEVEL || 'info'
   });
 
   if (isPersistenceEnabled()) {
@@ -1434,6 +1437,7 @@ function createServer({
       },
       'web.http'
     );
+    response.locals = { requestId, requestLogger };
 
     requestLogger.info('HTTP request received');
     response.on('finish', () => {
@@ -2983,21 +2987,40 @@ module.exports = {
 if (require.main === module) {
   try {
     const runtimeConfig = loadRuntimeEnv(process.env);
-    const server = createServer();
+    const startupLogger = createLogger({ module: 'web.startup' });
+    const server = createServer({ runtimeEnv: runtimeConfig, logger: startupLogger.child({}, 'web.server') });
+
+    if (runtimeConfig.persistenceMode === 'postgres') {
+      const pool = getPool();
+      pool
+        .query('SELECT 1')
+        .then(() => {
+          startupLogger.info('Database connectivity check passed', { persistenceMode: runtimeConfig.persistenceMode });
+        })
+        .catch((error) => {
+          startupLogger.error('Database connectivity check failed', {
+            persistenceMode: runtimeConfig.persistenceMode,
+            error: serializeError(error)
+          });
+        });
+    }
+
     server.listen(runtimeConfig.port, () => {
-      // eslint-disable-next-line no-console
-      console.log(`EducLink web app running on http://localhost:${runtimeConfig.port}`);
-      // eslint-disable-next-line no-console
-      console.log(`Runtime mode: ${runtimeConfig.nodeEnv} | persistence: ${runtimeConfig.persistenceMode}`);
+      startupLogger.info('EducLink web app running', {
+        url: `http://localhost:${runtimeConfig.port}`,
+        nodeEnv: runtimeConfig.nodeEnv,
+        persistenceMode: runtimeConfig.persistenceMode
+      });
     });
 
     process.on('SIGTERM', async () => {
+      startupLogger.info('SIGTERM received, shutting down web server');
       await closePool();
       server.close();
     });
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(error.message);
+    const startupLogger = createLogger({ module: 'web.startup' });
+    startupLogger.error('Server startup failed', { error: serializeError(error) });
     process.exitCode = 1;
   }
 }
