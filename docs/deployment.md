@@ -12,6 +12,7 @@ Cette note prépare un déploiement réaliste d'EducLink sans imposer un provide
 | `DATABASE_URL` | conditionnel | `postgres://user:pass@host:5432/educlink` | Requis uniquement si `EDUCLINK_PERSISTENCE=postgres`. |
 | `LOG_LEVEL` | optionnel | `info`, `warn`, `error`, `debug` | Niveau de logs. |
 | `LOG_FORMAT` | optionnel | `pretty`, `json` | Format de logs (`json` recommandé hors dev). |
+| `STAGING_RUN_SEED` | optionnel (staging) | `true`, `false` | Si `true`, `npm run start:staging` lance aussi `npm run db:seed` après migration. |
 | `NEXT_PUBLIC_APP_URL` | recommandé | `https://app.educlink.example` | URL publique front/admin pour les environnements déployés. |
 | `API_URL` | recommandé | `https://api.educlink.example` | URL publique API pour clients externes/intégrations. |
 | `DEFAULT_TENANT_SLUG` | optionnel | `demo-school` | Tenant par défaut pour certains flux de démonstration. |
@@ -55,8 +56,22 @@ Séquence recommandée :
 
 ```bash
 npm ci
-npm run db:migrate
+# start:staging force les defaults runtime staging, lance db:migrate,
+# puis lance db:seed uniquement si STAGING_RUN_SEED=true.
 npm run start:staging
+```
+
+### Vérification de santé staging
+
+Un endpoint léger `/healthz` est exposé:
+
+- `200` + `{"status":"ok", ...}` si le service est prêt.
+- `503` + `{"status":"degraded", ...}` si la DB PostgreSQL n'est pas joignable.
+
+Exemple:
+
+```bash
+curl -i http://localhost:3000/healthz
 ```
 
 ## 5) Configuration production

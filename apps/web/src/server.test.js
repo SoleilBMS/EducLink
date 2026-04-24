@@ -169,6 +169,16 @@ test('server ajoute un request id et loggue fin de requête', async () => {
   assert.ok(entries.some((entry) => entry.requestId === 'req-123' && entry.message === 'HTTP request received'));
   assert.ok(entries.some((entry) => entry.requestId === 'req-123' && entry.message === 'HTTP request completed'));
 });
+
+test('healthcheck retourne ok en mode mémoire', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/healthz`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.persistence.mode, 'memory');
+  });
+});
 test('login applique des attributs cookie de session sécurisés', async () => {
   await withServer(async (baseUrl) => {
     const adminLogin = await login(baseUrl, 'admin@school-a.test');

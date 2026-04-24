@@ -1219,6 +1219,23 @@ function logAuthEvent(logger, message, session) {
   });
 }
 
+async function checkHealth(runtimeEnv) {
+  if (runtimeEnv.persistenceMode !== 'postgres') {
+    return { status: 'ok', persistence: { mode: 'memory' } };
+  }
+
+  try {
+    const pool = getPool();
+    await pool.query('SELECT 1');
+    return { status: 'ok', persistence: { mode: 'postgres', database: 'up' } };
+  } catch (error) {
+    return {
+      status: 'degraded',
+      persistence: { mode: 'postgres', database: 'down', reason: String(error.message || 'Database check failed') }
+    };
+  }
+}
+
 function createServer({
   sessionStore = new SessionStore(),
   seed = createSeedData(),
@@ -1427,6 +1444,18 @@ function createServer({
         durationMs
       });
     });
+
+    if (request.method === 'GET' && url.pathname === '/healthz') {
+      const health = await checkHealth(runtimeEnv);
+      const statusCode = health.status === 'ok' ? 200 : 503;
+      sendJson(response, statusCode, {
+        status: health.status,
+        nodeEnv: runtimeEnv.nodeEnv,
+        uptimeSec: Math.floor(process.uptime()),
+        persistence: health.persistence
+      });
+      return;
+    }
 
     if (request.method === 'GET' && url.pathname === '/login') {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
