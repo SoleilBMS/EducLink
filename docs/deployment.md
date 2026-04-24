@@ -123,3 +123,31 @@ curl -i http://localhost:3000/healthz
 - La CI existante continue de fonctionner : `DATABASE_URL` est déjà injecté dans le workflow.
 - Les validations de config sont compatibles CI (`NODE_ENV=test` autorisé).
 - Cette base reste neutre vis-à-vis de l'hébergeur (VM, container, PaaS) et peut être branchée à un déploiement automatisé plus tard.
+
+
+## 8) Pilot handover quick path (non-core contributor)
+
+For pilot usage, the minimum reliable path is:
+
+```bash
+cp .env.staging.example .env.staging
+set -a
+source .env.staging
+set +a
+docker compose -f docker-compose.db.yml up -d
+npm ci
+npm run deploy -- staging --seed --start
+```
+
+Then validate:
+
+```bash
+curl -i http://localhost:${PORT:-3000}/healthz
+```
+
+Next documents to use in order:
+
+1. `docs/pilot-usage.md`
+2. `docs/demo-walkthrough.md`
+3. `docs/user-roles-guide.md`
+4. `docs/pilot-validation-checklist.md`

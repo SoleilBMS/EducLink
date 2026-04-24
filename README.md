@@ -140,6 +140,10 @@ Règles d'accès :
 - `ARCHITECTURE.md` : architecture technique et logique
 - `TASKS.md` : backlog global et plan d’exécution
 - `docs/` : documentation métier, UX, API, data model
+- `docs/pilot-usage.md` : guide pratique de configuration + lancement staging pilot
+- `docs/demo-walkthrough.md` : déroulé de démonstration 15–20 min
+- `docs/user-roles-guide.md` : périmètre de chaque rôle en pilot
+- `docs/pilot-validation-checklist.md` : checklist de validation manuelle pilot
 - `apps/` : applications frontend / backend
 - `packages/` : packages partagés
 - `infra/` : infrastructure et déploiement
