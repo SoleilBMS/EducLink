@@ -85,27 +85,50 @@ function sendJson(response, statusCode, payload) {
 }
 
 function sendApiSuccess(response, data, statusCode = 200, meta = {}) {
+  const requestId = response.locals?.requestId ?? crypto.randomUUID();
   sendJson(response, statusCode, {
     success: true,
     data,
-    meta: { request_id: crypto.randomUUID(), ...meta }
+    meta: { request_id: requestId, ...meta }
   });
 }
 
 function sendApiError(response, statusOrError, code, message, details) {
+  const requestId = response.locals?.requestId ?? crypto.randomUUID();
+  const requestLogger = response.locals?.requestLogger;
   const errorPayload =
     typeof statusOrError === 'number'
       ? toApiErrorPayload({ status: statusOrError, code, message, details })
       : toApiErrorPayload(statusOrError);
+  const publicMessage = errorPayload.status >= 500 ? 'Internal server error' : errorPayload.message;
+
+  if (requestLogger) {
+    if (errorPayload.status >= 500) {
+      requestLogger.error('API request failed', {
+        statusCode: errorPayload.status,
+        errorCode: errorPayload.code
+      });
+    } else if (errorPayload.status === 401) {
+      requestLogger.warn('Authentication required or failed', {
+        statusCode: errorPayload.status,
+        errorCode: errorPayload.code
+      });
+    } else if (errorPayload.status === 403) {
+      requestLogger.warn('Authorization denied', {
+        statusCode: errorPayload.status,
+        errorCode: errorPayload.code
+      });
+    }
+  }
 
   sendJson(response, errorPayload.status, {
     success: false,
     error: {
       code: errorPayload.code,
-      message: errorPayload.message,
+      message: publicMessage,
       ...(errorPayload.details !== undefined ? { details: errorPayload.details } : {})
     },
-    meta: { request_id: crypto.randomUUID() }
+    meta: { request_id: requestId }
   });
 }
 

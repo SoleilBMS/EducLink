@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createServer, parseCookies } = require('./server');
+const { sendApiError } = require('./routes/shared-http');
 const { SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore } = require('./modules/ai');
 const { createLogger } = require('./observability/logger');
@@ -168,6 +169,43 @@ test('server ajoute un request id et loggue fin de requête', async () => {
 
   assert.ok(entries.some((entry) => entry.requestId === 'req-123' && entry.message === 'HTTP request received'));
   assert.ok(entries.some((entry) => entry.requestId === 'req-123' && entry.message === 'HTTP request completed'));
+});
+
+test('API retourne le request_id corrélé et loggue les erreurs auth API', async () => {
+  const { logger, entries } = createLogCollector();
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/students`, {
+      headers: { 'x-request-id': 'req-api-401' }
+    });
+
+    assert.equal(response.status, 401);
+    const payload = await response.json();
+    assert.equal(payload.meta.request_id, 'req-api-401');
+  }, { logger });
+
+  assert.ok(entries.some((entry) => entry.requestId === 'req-api-401' && entry.message === 'Authentication required or failed'));
+});
+
+test('sendApiError masque les messages internes pour les erreurs 500', async () => {
+  const chunks = [];
+  const response = {
+    locals: { requestId: 'req-500' },
+    writeHead(statusCode, headers) {
+      this.statusCode = statusCode;
+      this.headers = headers;
+    },
+    end(chunk) {
+      chunks.push(chunk);
+    }
+  };
+
+  sendApiError(response, 500, 'INTERNAL_ERROR', 'Detailed SQL stack trace');
+
+  const payload = JSON.parse(chunks.join(''));
+  assert.equal(response.statusCode, 500);
+  assert.equal(payload.error.message, 'Internal server error');
+  assert.equal(payload.meta.request_id, 'req-500');
 });
 
 test('healthcheck retourne ok en mode mémoire', async () => {

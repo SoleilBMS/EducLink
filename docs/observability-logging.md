@@ -25,10 +25,16 @@ Le niveau est pilotable via `LOG_LEVEL`.
 - Entrée/sortie des requêtes HTTP (`web.http`) avec :
   - corrélation par `x-request-id` (propagé si présent, généré sinon)
   - `statusCode` + `durationMs` en fin de requête
+  - `meta.request_id` aligné avec le `x-request-id` de la requête côté API
 - Auth :
   - `Authentication failed`
   - `Authentication succeeded`
   - `Logout succeeded`
+  - `Authentication required or failed` (API protégées sans session valide)
+  - `Authorization denied` (accès interdit API)
+- Startup/runtime :
+  - log structuré de démarrage avec `nodeEnv`, `persistenceMode`, `logFormat`, `logLevel`
+  - check de connectivité PostgreSQL au démarrage (succès/échec)
 - IA :
   - succès de génération de brouillon
   - échec de génération avec contexte d’erreur
@@ -43,6 +49,7 @@ Le logger applique une sanitation de contexte :
 - masquage automatique des clés sensibles (`password`, `token`, `authorization`, `cookie`, `secret`, `apiKey`)
 - exclusion des valeurs `undefined` et fonctions
 - pas de dump des payloads complets de requêtes
+- réponses API `5xx` sanitizées côté client (`Internal server error`) avec détails internes conservés uniquement dans les logs serveur
 
 ## Limites actuelles
 
