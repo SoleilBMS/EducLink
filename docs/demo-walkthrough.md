@@ -1,79 +1,90 @@
-# Demo walkthrough (issue #52)
+# Demo walkthrough (15–20 min, pilot-ready)
 
-Ce guide décrit le parcours recommandé pour une démonstration rapide d'EducLink avec les seed data enrichies.
+This walkthrough is designed for staging/pilot demos with seeded PostgreSQL data.
 
-## Démarrage
+## Setup before demo
 
-```bash
-npm install
-npm run start
-```
+1. Ensure DB is migrated and seeded.
+2. Start app in staging mode.
+3. Open `/demo` and `/login`.
 
-Puis ouvrir:
-- `http://localhost:3000/demo` (guide intégré avec liens directs)
-- `http://localhost:3000/login`
+All seeded demo users use password: `password123`.
 
-> Mot de passe unique pour tous les comptes de démonstration: `password123`.
-> Changement de rôle pendant la démo: **Logout** puis connexion avec un autre compte.
+Role switch rule: logout, then login with the next role.
 
-## Comptes de démo (tenant principal: `school-a`)
+## Demo accounts (`school-a`)
 
-| Rôle | Email | Espace principal |
+| Role | Email | Landing dashboard |
 |---|---|---|
 | Admin | `admin@school-a.test` | `/dashboard/admin` |
 | Director | `director@school-a.test` | `/dashboard/director` |
 | Teacher | `teacher@school-a.test` | `/dashboard/teacher` |
-| Teacher (secondaire) | `teacher2@school-a.test` | `/dashboard/teacher` |
+| Teacher (secondary) | `teacher2@school-a.test` | `/dashboard/teacher` |
 | Parent | `parent@school-a.test` | `/dashboard/parent` |
-| Parent (secondaire) | `parent2@school-a.test` | `/dashboard/parent` |
+| Parent (secondary) | `parent2@school-a.test` | `/dashboard/parent` |
 | Student | `student@school-a.test` | `/dashboard/student` |
 | Accountant | `accountant@school-a.test` | `/dashboard/accountant` |
 
-## Scénario démo recommandé (15-20 min)
+## Suggested timeline
 
-Le guide `/demo` propose désormais les liens à cliquer dans l'ordre, pour éviter les allers-retours manuels et les routes erronées.
+### 0:00–2:00 — Login + orientation
 
-1. **Admin**
-   - Ouvrir le dashboard admin pour vérifier les métriques principales.
-   - Parcourir élèves / responsables / enseignants.
-   - Ouvrir finance (plans de frais, factures, paiements pré-remplis).
-   - Ouvrir attendance admin pour visualiser les présences déjà saisies.
+- Show `/login` and `/demo`.
+- Explain role switching and tenant-scoped behavior.
 
-2. **Teacher**
-   - Ouvrir attendance et charger une classe.
-   - Vérifier les lesson logs/devoirs existants puis publier un nouvel élément.
-   - Vérifier les évaluations existantes puis saisir/mettre à jour des notes.
+### 2:00–7:00 — Admin journey
 
-3. **Teacher + IA**
-   - Ouvrir `/teacher/report-comments`.
-   - Générer un brouillon d'appréciation pour un élève puis l'éditer/valider.
+Login as admin:
 
-4. **Parent**
-   - Ouvrir devoirs, notes, inbox, puis finance.
-   - Vérifier la cohérence parent/enfants et les statuts de facturation.
+- `/dashboard/admin` (high-level overview)
+- Student/parent/teacher list pages
+- `/admin/finance` (existing fee plans, invoices, payments)
+- `/admin/attendance` (existing attendance records)
+- `/inbox` (messages + announcements)
 
-5. **Student / Accountant**
-   - Student: ouvrir devoirs + notes (si le flux student est inclus dans la présentation).
-   - Accountant: ouvrir finance depuis dashboard accountant (optionnel si le timing est serré).
+### 7:00–12:00 — Teacher journey
 
-## Points de fiabilité ajoutés
+Login as teacher:
 
-- Le guide `/demo` liste les comptes + routes d'entrée par rôle.
-- Le guide `/demo` explicite la règle de changement de rôle.
-- Chaque dashboard affiche un rappel vers `/demo` et la consigne de switch de rôle.
-- Les étapes incluent des liens directs vers les pages critiques du walkthrough.
+- `/dashboard/teacher`
+- `/teacher/attendance` (mark attendance for assigned class)
+- `/teacher/lesson-homework` (show existing content, optionally add item)
+- `/teacher/grades` (show assessments/grades, optionally edit)
+- `/teacher/report-comments` (generate draft comment, then validate/save)
 
-## Couverture des seed data
+### 12:00–16:00 — Parent journey
 
-Le tenant `school-a` couvre désormais:
-- structure de classes + matières
-- enseignants avec affectations classes/matières
-- élèves + liens parent/enfant cohérents
-- attendance
-- cahier de texte + devoirs
-- évaluations + notes
-- annonces + threads/messages
-- finance (plans, factures, paiements)
-- audit logs de base
+Login as parent:
 
-Le tenant `school-b` reste léger pour conserver un jeu de données de contraste multi-tenant.
+- `/dashboard/parent`
+- `/parent/homeworks`
+- `/parent/grades`
+- `/parent/finance`
+- `/inbox`
+
+### 16:00–18:00 — Student and accountant (optional but recommended)
+
+Login as student:
+
+- `/dashboard/student`
+- `/student/homeworks`
+- `/student/grades`
+
+Login as accountant:
+
+- `/dashboard/accountant`
+- `/admin/finance`
+
+### 18:00–20:00 — Wrap-up and limitations
+
+Explicitly call out:
+
+- director/accountant journeys are currently lighter;
+- this pilot demo uses seeded data, not a full onboarding flow;
+- AI comment generation is assistive and requires human validation.
+
+## Demo reliability notes
+
+- `/demo` is the canonical in-app guide if presenter loses the flow.
+- Keep one browser profile/session to avoid cross-session confusion.
+- If data was modified heavily in a previous run, reseed before demo.
