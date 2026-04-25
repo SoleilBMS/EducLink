@@ -14,9 +14,9 @@
     "db:migrate": "node packages/database/src/migrate.js",
     "db:seed": "node packages/database/src/seed.js",
     "start": "node apps/web/src/server.js",
-    "start:dev": "NODE_ENV=development node apps/web/src/server.js",
+    "start:dev": "cross-env NODE_ENV=development node apps/web/src/server.js",
     "start:staging": "node scripts/start-staging.js",
-    "start:prod": "NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
+    "start:prod": "cross-env NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
     "test:e2e:smoke": "node --test apps/web/src/e2e.smoke.test.js",
     "test:postgres": "node --test apps/web/src/server.postgres.test.js",
     "test:smoke": "npm run test:e2e:smoke",
@@ -27,5 +27,8 @@
   },
   "dependencies": {
     "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }
