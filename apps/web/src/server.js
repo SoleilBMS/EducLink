@@ -370,10 +370,139 @@ function clearSessionCookie() {
   return 'sessionId=; HttpOnly; Max-Age=0; Path=/; SameSite=Lax';
 }
 
+const DESIGN_SYSTEM_CSS = `
+:root {
+  --el-color-primary-blue: #2563eb;
+  --el-color-dark-blue: #1e3a8a;
+  --el-color-primary-green: #22c55e;
+  --el-color-primary-purple: #7c3aed;
+  --el-color-soft-green: #4ade80;
+  --el-color-soft-purple: #a78bfa;
+  --el-color-bg: #f9fafb;
+  --el-color-surface: #ffffff;
+  --el-color-text: #111827;
+  --el-color-text-secondary: #687280;
+  --el-color-border: #e5e7eb;
+  --el-color-danger: #dc2626;
+  --el-gradient-brand: linear-gradient(95deg, #22c55e 0%, #2563eb 52%, #7c3aed 100%);
+  --el-radius-sm: 6px;
+  --el-radius-md: 10px;
+  --el-radius-lg: 14px;
+  --el-shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.06);
+  --el-shadow-md: 0 10px 18px rgba(17, 24, 39, 0.08);
+  --el-space-1: 0.25rem;
+  --el-space-2: 0.5rem;
+  --el-space-3: 0.75rem;
+  --el-space-4: 1rem;
+  --el-space-5: 1.25rem;
+  --el-space-6: 1.5rem;
+  --el-space-8: 2rem;
+  --el-text-xs: 0.75rem;
+  --el-text-sm: 0.875rem;
+  --el-text-base: 1rem;
+  --el-text-lg: 1.125rem;
+  --el-text-xl: 1.25rem;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: var(--el-space-6);
+  font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: var(--el-text-base);
+  line-height: 1.5;
+  color: var(--el-color-text);
+  background-color: var(--el-color-bg);
+}
+
+h1, h2, h3 { margin: 0 0 var(--el-space-3); line-height: 1.25; color: var(--el-color-dark-blue); }
+p, ul, ol { margin: 0 0 var(--el-space-4); }
+a { color: var(--el-color-primary-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { padding: 0 var(--el-space-1); border-radius: var(--el-radius-sm); background-color: #eff6ff; }
+
+form { margin: 0; }
+label { display: inline-flex; flex-direction: column; gap: var(--el-space-1); margin-bottom: var(--el-space-3); font-size: var(--el-text-sm); color: var(--el-color-text-secondary); }
+input, textarea, select {
+  min-width: 16rem;
+  max-width: 100%;
+  padding: var(--el-space-2) var(--el-space-3);
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-md);
+  background-color: var(--el-color-surface);
+  color: var(--el-color-text);
+}
+
+button {
+  border: 1px solid transparent;
+  border-radius: var(--el-radius-md);
+  padding: var(--el-space-2) var(--el-space-4);
+  font-weight: 600;
+  background: var(--el-gradient-brand);
+  color: var(--el-color-surface);
+  box-shadow: var(--el-shadow-sm);
+  cursor: pointer;
+}
+
+button:hover { filter: brightness(1.03); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid var(--el-color-primary-blue);
+  outline-offset: 2px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--el-space-4);
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-md);
+  overflow: hidden;
+  background-color: var(--el-color-surface);
+}
+
+th, td {
+  border: 1px solid var(--el-color-border);
+  padding: var(--el-space-2) var(--el-space-3);
+  text-align: left;
+  vertical-align: top;
+}
+
+th { font-size: var(--el-text-sm); background-color: #eef2ff; color: var(--el-color-dark-blue); }
+
+.el-shell {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--el-space-6);
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-lg);
+  box-shadow: var(--el-shadow-md);
+  background: var(--el-color-surface);
+}
+
+.el-badge {
+  display: inline-block;
+  padding: 0.125rem var(--el-space-2);
+  border-radius: 999px;
+  font-size: var(--el-text-xs);
+  color: var(--el-color-dark-blue);
+  background-color: #dbeafe;
+}
+
+.el-error {
+  color: var(--el-color-danger);
+  font-weight: 600;
+}
+`;
+
+function renderPageHead(title) {
+  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/assets/design-system.css">`;
+}
+
 function renderLoginPage(errorMessage = '') {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EducLink - Login</title></head><body>
-    <h1>Connexion EducLink</h1>
-    ${errorMessage ? `<p style="color:red">${errorMessage}</p>` : ''}
+  return `<!doctype html><html lang="fr"><head>${renderPageHead('EducLink - Login')}</head><body><main class="el-shell">
+    <h1>Connexion EducLink <span class="el-badge">V3 Foundations</span></h1>
+    ${errorMessage ? `<p class="el-error">${errorMessage}</p>` : ''}
     <p><strong>Démo pilot-ready:</strong> utilisez les comptes seedés ci-dessous (mot de passe unique: <code>password123</code>).</p>
     <ul>
       <li>Admin: <code>admin@school-a.test</code></li>
@@ -386,11 +515,11 @@ function renderLoginPage(errorMessage = '') {
       <label>Mot de passe <input type="password" name="password" required /></label><br/>
       <button type="submit">Se connecter</button>
     </form>
-  </body></html>`;
+  </main></body></html>`;
 }
 
 function renderDemoGuidePage() {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Guide de démonstration EducLink</title></head><body>
+  return `<!doctype html><html lang="fr"><head>${renderPageHead('Guide de démonstration EducLink')}</head><body><main class="el-shell">
     <h1>Guide de démonstration EducLink</h1>
     <p>Objectif: dérouler une démo complète et stable en <strong>15-20 minutes</strong>, sans connaissance cachée.</p>
     <p>Tenant principal recommandé: <strong>school-a</strong> (jeu de données réaliste préchargé).</p>
@@ -478,7 +607,7 @@ function renderDemoGuidePage() {
     </ul>
 
     <p><a href="/login">Aller à la connexion</a></p>
-  </body></html>`;
+  </main></body></html>`;
 }
 
 function getDashboardPathForRole(role) {
@@ -495,14 +624,14 @@ function getDashboardPathForRole(role) {
 }
 
 function renderDashboardLayout(title, session, body) {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${title}</title></head><body>
+  return `<!doctype html><html lang="fr"><head>${renderPageHead(title)}</head><body><main class="el-shell">
     <h1>${title}</h1>
-    <p>role: ${session.role}</p>
-    <p>tenantId: ${session.tenantId}</p>
+    <p><span class="el-badge">role: ${session.role}</span></p>
+    <p><span class="el-badge">tenantId: ${session.tenantId}</span></p>
     <p><a href="/demo">Guide démo</a> · Pour changer de rôle: Logout puis reconnectez-vous sur <a href="/login">/login</a>.</p>
     ${body}
     <form method="POST" action="/logout"><button type="submit">Logout</button></form>
-  </body></html>`;
+  </main></body></html>`;
 }
 
 function renderAdminDashboard(session, metrics) {
@@ -1481,6 +1610,12 @@ function createServer({
         durationMs
       });
     });
+
+    if (request.method === 'GET' && url.pathname === '/assets/design-system.css') {
+      response.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=3600' });
+      response.end(DESIGN_SYSTEM_CSS);
+      return;
+    }
 
     if (request.method === 'GET' && url.pathname === '/healthz') {
       const health = await checkHealth(runtimeEnv);
