@@ -659,6 +659,37 @@ th { font-size: var(--el-text-sm); background-color: #eef2ff; color: var(--el-co
   font-style: italic;
 }
 
+.el-page-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--el-space-3);
+}
+
+.el-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--el-space-3);
+  align-items: end;
+}
+
+.el-toolbar label {
+  margin: 0;
+}
+
+.el-status {
+  display: inline-block;
+  padding: 0.125rem var(--el-space-2);
+  border-radius: 999px;
+  font-size: var(--el-text-xs);
+  font-weight: 600;
+}
+
+.el-status.is-success { background: #dcfce7; color: #166534; }
+.el-status.is-warning { background: #fef3c7; color: #92400e; }
+.el-status.is-danger { background: #fee2e2; color: #991b1b; }
+.el-status.is-info { background: #dbeafe; color: #1e3a8a; }
+
 @media (max-width: 920px) {
   .el-app-shell {
     flex-direction: column;
@@ -923,6 +954,16 @@ function summarizeFinance(invoices, payments) {
   };
 }
 
+function formatCurrency(amount) {
+  return `${Number(amount || 0).toFixed(2)} €`;
+}
+
+function renderStatusBadge(value, mapper = {}) {
+  const normalized = String(value || '').toLowerCase();
+  const tone = mapper[normalized] ?? 'is-info';
+  return `<span class="el-status ${tone}">${escapeHtml(String(value || '-'))}</span>`;
+}
+
 function toDashboardTimestampLabel(rawTimestamp) {
   if (!rawTimestamp) {
     return 'date inconnue';
@@ -1138,32 +1179,41 @@ function renderTeacherAttendancePage(session, { teacher, classRooms, selectedCla
     })
     .join('');
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teacher Attendance</title></head><body>
-    <h1>Appel enseignant</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
-    <form method="GET" action="/teacher/attendance">
-      <label>Date <input type="date" name="date" value="${selectedDate}" required /></label>
-      <label>Classe
-        <select name="classRoomId" required>
-          ${options}
-        </select>
-      </label>
-      <button type="submit">Charger</button>
-    </form>
-    ${
-      selectedClassRoomId
-        ? `<h2>Liste des élèves</h2>
-    <form method="POST" action="/teacher/attendance">
+  return renderDashboardLayout(
+    'Appel enseignant',
+    session,
+    `<section class="el-card">
+      <div class="el-page-intro">
+        <div>
+          <h2>Prise de présence</h2>
+          <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
+        </div>
+        <span class="el-badge">Classe assignée uniquement</span>
+      </div>
+      <form class="el-toolbar" method="GET" action="/teacher/attendance">
+        <label>Date <input type="date" name="date" value="${selectedDate}" required /></label>
+        <label>Classe
+          <select name="classRoomId" required>
+            ${options}
+          </select>
+        </label>
+        <button type="submit">Charger</button>
+      </form>
+    </section>
+    <section class="el-card">
+      <h2>Liste des élèves</h2>
+      ${
+        selectedClassRoomId
+          ? `<form method="POST" action="/teacher/attendance">
       <input type="hidden" name="date" value="${selectedDate}" />
       <input type="hidden" name="classRoomId" value="${selectedClassRoomId}" />
-      <table border="1"><thead><tr><th>Nom</th><th>Matricule</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>Nom</th><th>Matricule</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>
       <button type="submit">Sauvegarder l'appel</button>
     </form>`
-        : '<p>Sélectionnez une classe autorisée pour commencer.</p>'
-    }
-    <p><a href="/dashboard/teacher">Retour dashboard</a></p>
-  </body></html>`;
+          : '<p class="el-empty-state">Sélectionnez une classe autorisée pour commencer.</p>'
+      }
+    </section>`
+  );
 }
 
 function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoomId, records, studentsById, teachersById }) {
@@ -1183,25 +1233,35 @@ function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoo
         <td>${record.date}</td>
         <td>${record.classRoomId}</td>
         <td>${student ? `${student.firstName} ${student.lastName}` : record.studentId}</td>
-        <td>${record.status}</td>
+        <td>${renderStatusBadge(record.status, { present: 'is-success', late: 'is-warning', absent: 'is-danger' })}</td>
         <td>${teacher ? `${teacher.firstName} ${teacher.lastName}` : record.teacherId}</td>
       </tr>`;
     })
     .join('');
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Admin Attendance</title></head><body>
-    <h1>Présences du jour</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <form method="GET" action="/admin/attendance">
-      <label>Date <input type="date" name="date" value="${date}" required /></label>
-      <label>Classe
-        <select name="classRoomId">${options}</select>
-      </label>
-      <button type="submit">Filtrer</button>
-    </form>
-    <table border="1"><thead><tr><th>Date</th><th>Classe</th><th>Élève</th><th>Statut</th><th>Saisi par</th></tr></thead><tbody>${rows}</tbody></table>
-    <p><a href="/dashboard/admin">Retour dashboard</a></p>
-  </body></html>`;
+  const summary = summarizeAttendance(records);
+  return renderDashboardLayout(
+    'Présences du jour',
+    session,
+    `<section class="el-card">
+      <div class="el-metric-grid">
+        ${renderMetricCard('Total', summary.total)}
+        ${renderMetricCard('Présents', summary.present)}
+        ${renderMetricCard('Retards', summary.late)}
+        ${renderMetricCard('Absents', summary.absent)}
+      </div>
+      <form class="el-toolbar" method="GET" action="/admin/attendance">
+        <label>Date <input type="date" name="date" value="${date}" required /></label>
+        <label>Classe
+          <select name="classRoomId">${options}</select>
+        </label>
+        <button type="submit">Filtrer</button>
+      </form>
+    </section>
+    <section class="el-card">
+      <table><thead><tr><th>Date</th><th>Classe</th><th>Élève</th><th>Statut</th><th>Saisi par</th></tr></thead><tbody>${rows || '<tr><td colspan="5">Aucune présence enregistrée pour ce filtre.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
 function renderParentDashboard(session, dashboard) {
@@ -1316,15 +1376,18 @@ function renderInboxPage(session, inbox) {
     .map((thread) => `<li><a href="/inbox/threads/${thread.id}">${thread.subject}</a> — ${thread.messageCount} message(s)</li>`)
     .join('');
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Inbox</title></head><body>
-    <h1>Inbox interne</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <h2>Annonces</h2>
-    <ul>${announcementRows || '<li>Aucune annonce</li>'}</ul>
-    <h2>Threads</h2>
-    <ul>${threadRows || '<li>Aucun thread</li>'}</ul>
-    <p><a href="/dashboard">Retour dashboard</a></p>
-  </body></html>`;
+  return renderDashboardLayout(
+    'Inbox interne',
+    session,
+    `<section class="el-card">
+      <h2>Annonces</h2>
+      <ul>${announcementRows || '<li class="el-empty-state">Aucune annonce.</li>'}</ul>
+    </section>
+    <section class="el-card">
+      <h2>Threads</h2>
+      <ul>${threadRows || '<li class="el-empty-state">Aucun thread.</li>'}</ul>
+    </section>`
+  );
 }
 
 function renderThreadPage(session, thread) {
@@ -1332,17 +1395,21 @@ function renderThreadPage(session, thread) {
     .map((message) => `<li><strong>${message.senderId}</strong> (${message.created_at}): ${message.body}</li>`)
     .join('');
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Thread</title></head><body>
-    <h1>Thread: ${thread.subject}</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <p>Participants: ${thread.participantIds.join(', ')}</p>
-    <ul>${rows || '<li>Aucun message</li>'}</ul>
-    <form method="POST" action="/inbox/threads/${thread.id}/reply">
-      <label>Réponse <textarea name="body" required></textarea></label><br/>
-      <button type="submit">Envoyer</button>
-    </form>
-    <p><a href="/inbox">Retour inbox</a></p>
-  </body></html>`;
+  return renderDashboardLayout(
+    `Thread: ${thread.subject}`,
+    session,
+    `<section class="el-card">
+      <p>Participants: ${thread.participantIds.join(', ')}</p>
+      <ul>${rows || '<li class="el-empty-state">Aucun message.</li>'}</ul>
+    </section>
+    <section class="el-card">
+      <form method="POST" action="/inbox/threads/${thread.id}/reply">
+        <label>Réponse <textarea name="body" required></textarea></label><br/>
+        <button type="submit">Envoyer</button>
+      </form>
+      <p><a href="/inbox">Retour inbox</a></p>
+    </section>`
+  );
 }
 
 function renderAdminAnnouncementsPage(session, announcements) {
@@ -1350,9 +1417,10 @@ function renderAdminAnnouncementsPage(session, announcements) {
     .map((item) => `<li><strong>${item.title}</strong> (${item.visibility}) - ${item.created_at}<br/>${item.body}</li>`)
     .join('');
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Announcements</title></head><body>
-    <h1>Publication d'annonces</h1>
-    <p>Tenant: ${session.tenantId}</p>
+  return renderDashboardLayout(
+    'Publication d’annonces',
+    session,
+    `<section class="el-card">
     <form method="POST" action="/admin/announcements">
       <label>Titre <input name="title" required /></label><br/>
       <label>Message <textarea name="body" required></textarea></label><br/>
@@ -1365,10 +1433,12 @@ function renderAdminAnnouncementsPage(session, announcements) {
       <label>Rôles (csv si visibility=roles) <input name="roles" /></label><br/>
       <button type="submit">Publier</button>
     </form>
+    </section>
+    <section class="el-card">
     <h2>Annonces existantes</h2>
     <ul>${rows || '<li>Aucune annonce</li>'}</ul>
-    <p><a href="/dashboard/admin">Retour dashboard</a></p>
-  </body></html>`;
+    </section>`
+  );
 }
 
 function renderTeacherLessonHomeworkPage(session, { teacher, classRooms, subjects, lessonLogs, homeworks }) {
@@ -1471,9 +1541,10 @@ function renderTeacherGradesPage(session, { teacher, classRooms, subjects, asses
     )
     .join('');
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teacher Grades</title></head><body>
-    <h1>Évaluations & notes</h1>
-    <p>Tenant: ${session.tenantId}</p>
+  return renderDashboardLayout(
+    'Évaluations & notes',
+    session,
+    `<section class="el-card">
     <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
     <h2>Créer une évaluation</h2>
     <form method="POST" action="/teacher/assessments">
@@ -1484,6 +1555,8 @@ function renderTeacherGradesPage(session, { teacher, classRooms, subjects, asses
       <label>Coefficient <input type="number" min="0.1" max="20" step="0.1" name="coefficient" value="1" required /></label><br/>
       <button type="submit">Créer l'évaluation</button>
     </form>
+    </section>
+    <section class="el-card">
     <h2>Saisie des notes</h2>
     <form method="GET" action="/teacher/grades">
       <label>Évaluation <select name="assessmentId">${assessmentOptions}</select></label>
@@ -1493,30 +1566,33 @@ function renderTeacherGradesPage(session, { teacher, classRooms, subjects, asses
       selectedAssessmentId
         ? `<form method="POST" action="/teacher/grades">
       <input type="hidden" name="assessmentId" value="${selectedAssessmentId}" />
-      <table border="1"><thead><tr><th>Élève</th><th>Matricule</th><th>Note /20</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>Élève</th><th>Matricule</th><th>Note /20</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
       <button type="submit">Enregistrer les notes</button>
     </form>`
-        : '<p>Sélectionnez une évaluation pour saisir des notes.</p>'
+        : '<p class="el-empty-state">Sélectionnez une évaluation pour saisir des notes.</p>'
     }
+    </section>
+    <section class="el-card">
     <h2>Mes évaluations</h2>
-    <table border="1"><thead><tr><th>Date</th><th>Titre</th><th>Classe</th><th>Matière</th><th>Coeff</th></tr></thead><tbody>${assessmentRows}</tbody></table>
-    <p><a href="/dashboard/teacher">Retour dashboard</a></p>
-  </body></html>`;
+    <table><thead><tr><th>Date</th><th>Titre</th><th>Classe</th><th>Matière</th><th>Coeff</th></tr></thead><tbody>${assessmentRows || '<tr><td colspan="5">Aucune évaluation créée.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
 function renderParentGradesPage(session, grades) {
   const rows = grades
     .map(
       (entry) =>
-        `<tr><td>${entry.date}</td><td>${entry.student?.firstName ?? ''} ${entry.student?.lastName ?? ''}</td><td>${entry.assessment?.subjectId ?? '-'}</td><td>${entry.assessment?.title ?? '-'}</td><td>${entry.score}</td><td>${entry.assessment?.coefficient ?? '-'}</td><td>${entry.remark || '-'}</td></tr>`
+        `<tr><td>${entry.date}</td><td>${entry.student?.firstName ?? ''} ${entry.student?.lastName ?? ''}</td><td>${entry.assessment?.subjectId ?? '-'}</td><td>${entry.assessment?.title ?? '-'}</td><td>${renderStatusBadge(`${entry.score}/20`, { '': 'is-info' })}</td><td>${entry.assessment?.coefficient ?? '-'}</td><td>${entry.remark || '-'}</td></tr>`
     )
     .join('');
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parent Grades</title></head><body>
-    <h1>Notes de mes enfants</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <table border="1"><thead><tr><th>Date</th><th>Élève</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Coeff</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
-    <p><a href="/dashboard/parent">Retour dashboard</a></p>
-  </body></html>`;
+  return renderDashboardLayout(
+    'Notes de mes enfants',
+    session,
+    `<section class="el-card">
+      <table><thead><tr><th>Date</th><th>Élève</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Coeff</th><th>Remarque</th></tr></thead><tbody>${rows || '<tr><td colspan="7">Aucune note disponible.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
 function renderParentAttendancePage(session, records, studentById) {
@@ -1539,15 +1615,17 @@ function renderStudentGradesPage(session, student, grades) {
   const rows = grades
     .map(
       (entry) =>
-        `<tr><td>${entry.date}</td><td>${entry.assessment?.subjectId ?? '-'}</td><td>${entry.assessment?.title ?? '-'}</td><td>${entry.score}</td><td>${entry.assessment?.coefficient ?? '-'}</td><td>${entry.remark || '-'}</td></tr>`
+        `<tr><td>${entry.date}</td><td>${entry.assessment?.subjectId ?? '-'}</td><td>${entry.assessment?.title ?? '-'}</td><td>${renderStatusBadge(`${entry.score}/20`, { '': 'is-info' })}</td><td>${entry.assessment?.coefficient ?? '-'}</td><td>${entry.remark || '-'}</td></tr>`
     )
     .join('');
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Student Grades</title></head><body>
-    <h1>Mes notes</h1>
-    <p>Étudiant: ${student ? `${student.firstName} ${student.lastName}` : '-'}</p>
-    <table border="1"><thead><tr><th>Date</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Coeff</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
-    <p><a href="/dashboard/student">Retour dashboard</a></p>
-  </body></html>`;
+  return renderDashboardLayout(
+    'Mes notes',
+    session,
+    `<section class="el-card">
+      <p>Étudiant: ${student ? `${student.firstName} ${student.lastName}` : '-'}</p>
+      <table><thead><tr><th>Date</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Coeff</th><th>Remarque</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Aucune note disponible.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
 function renderAdminFinancePage(session, { students, feePlans, invoices, payments }) {
@@ -1556,22 +1634,30 @@ function renderAdminFinancePage(session, { students, feePlans, invoices, payment
     .concat(feePlans.map((plan) => `<option value="${plan.id}">${plan.name} - ${plan.amountDue}</option>`))
     .join('');
   const feePlanRows = feePlans
-    .map((plan) => `<tr><td>${plan.name}</td><td>${plan.amountDue}</td><td>${plan.dueDate}</td><td>${plan.description || '-'}</td></tr>`)
+    .map((plan) => `<tr><td>${plan.name}</td><td>${formatCurrency(plan.amountDue)}</td><td>${plan.dueDate}</td><td>${plan.description || '-'}</td></tr>`)
     .join('');
   const invoiceRows = invoices
     .map(
       (invoice) =>
-        `<tr><td>${invoice.studentId}</td><td>${invoice.amountDue}</td><td>${invoice.totalPaid}</td><td>${invoice.remainingBalance}</td><td>${invoice.status}</td><td>${invoice.dueDate}</td></tr>`
+        `<tr><td>${invoice.studentId}</td><td>${formatCurrency(invoice.amountDue)}</td><td>${formatCurrency(invoice.totalPaid)}</td><td>${formatCurrency(invoice.remainingBalance)}</td><td>${renderStatusBadge(invoice.status, { paid: 'is-success', partial: 'is-warning', unpaid: 'is-danger' })}</td><td>${invoice.dueDate}</td></tr>`
     )
     .join('');
   const paymentRows = payments
-    .map((payment) => `<tr><td>${payment.invoiceId}</td><td>${payment.studentId}</td><td>${payment.amountPaid}</td><td>${payment.paidAt}</td><td>${payment.method}</td></tr>`)
+    .map((payment) => `<tr><td>${payment.invoiceId}</td><td>${payment.studentId}</td><td>${formatCurrency(payment.amountPaid)}</td><td>${payment.paidAt}</td><td>${payment.method}</td></tr>`)
     .join('');
-
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Finance Admin</title></head><body>
-    <h1>Finance - Frais / Factures / Paiements</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <h2>Nouveau plan de frais</h2>
+  const financeSummary = summarizeFinance(invoices, payments);
+  return renderDashboardLayout(
+    'Finance - Frais / Factures / Paiements',
+    session,
+    `<section class="el-card">
+    <div class="el-metric-grid">
+      ${renderMetricCard('Factures', financeSummary.invoiceCount)}
+      ${renderMetricCard('Montant dû', formatCurrency(financeSummary.totalDue))}
+      ${renderMetricCard('Montant payé', formatCurrency(financeSummary.totalPaid))}
+      ${renderMetricCard('Reste', formatCurrency(financeSummary.remainingBalance))}
+    </div>
+    </section>
+    <section class="el-card"><h2>Nouveau plan de frais</h2>
     <form method="POST" action="/admin/finance/fee-plans">
       <label>Nom <input name="name" required /></label><br/>
       <label>Montant <input name="amountDue" type="number" step="0.01" min="0" required /></label><br/>
@@ -1579,7 +1665,7 @@ function renderAdminFinancePage(session, { students, feePlans, invoices, payment
       <label>Description <textarea name="description"></textarea></label><br/>
       <button type="submit">Créer plan de frais</button>
     </form>
-    <h2>Nouvelle facture</h2>
+    </section><section class="el-card"><h2>Nouvelle facture</h2>
     <form method="POST" action="/admin/finance/invoices">
       <label>Élève <select name="studentId" required>${studentOptions}</select></label><br/>
       <label>Plan de frais <select name="feePlanId">${feePlanOptions}</select></label><br/>
@@ -1588,7 +1674,7 @@ function renderAdminFinancePage(session, { students, feePlans, invoices, payment
       <label>Description <textarea name="description"></textarea></label><br/>
       <button type="submit">Créer facture</button>
     </form>
-    <h2>Nouveau paiement</h2>
+    </section><section class="el-card"><h2>Nouveau paiement</h2>
     <form method="POST" action="/admin/finance/payments">
       <label>Facture <input name="invoiceId" required /></label><br/>
       <label>Montant payé <input name="amountPaid" type="number" step="0.01" min="0.01" required /></label><br/>
@@ -1597,29 +1683,30 @@ function renderAdminFinancePage(session, { students, feePlans, invoices, payment
       <label>Note <textarea name="note"></textarea></label><br/>
       <button type="submit">Enregistrer paiement</button>
     </form>
-    <h2>Plans de frais</h2>
-    <table border="1"><thead><tr><th>Nom</th><th>Montant</th><th>Échéance</th><th>Description</th></tr></thead><tbody>${feePlanRows}</tbody></table>
+    </section><section class="el-card"><h2>Plans de frais</h2>
+    <table><thead><tr><th>Nom</th><th>Montant</th><th>Échéance</th><th>Description</th></tr></thead><tbody>${feePlanRows || '<tr><td colspan="4">Aucun plan de frais.</td></tr>'}</tbody></table>
     <h2>Factures</h2>
-    <table border="1"><thead><tr><th>Élève</th><th>Montant</th><th>Payé</th><th>Reste</th><th>Statut</th><th>Échéance</th></tr></thead><tbody>${invoiceRows}</tbody></table>
+    <table><thead><tr><th>Élève</th><th>Montant</th><th>Payé</th><th>Reste</th><th>Statut</th><th>Échéance</th></tr></thead><tbody>${invoiceRows || '<tr><td colspan="6">Aucune facture.</td></tr>'}</tbody></table>
     <h2>Paiements</h2>
-    <table border="1"><thead><tr><th>Facture</th><th>Élève</th><th>Montant</th><th>Date</th><th>Méthode</th></tr></thead><tbody>${paymentRows}</tbody></table>
-    <p><a href="/dashboard">Retour dashboard</a></p>
-  </body></html>`;
+    <table><thead><tr><th>Facture</th><th>Élève</th><th>Montant</th><th>Date</th><th>Méthode</th></tr></thead><tbody>${paymentRows || '<tr><td colspan="5">Aucun paiement.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
 function renderParentFinancePage(session, invoices) {
   const rows = invoices
     .map(
       (invoice) =>
-        `<tr><td>${invoice.studentId}</td><td>${invoice.amountDue}</td><td>${invoice.totalPaid}</td><td>${invoice.remainingBalance}</td><td>${invoice.status}</td><td>${invoice.dueDate}</td></tr>`
+        `<tr><td>${invoice.studentId}</td><td>${formatCurrency(invoice.amountDue)}</td><td>${formatCurrency(invoice.totalPaid)}</td><td>${formatCurrency(invoice.remainingBalance)}</td><td>${renderStatusBadge(invoice.status, { paid: 'is-success', partial: 'is-warning', unpaid: 'is-danger' })}</td><td>${invoice.dueDate}</td></tr>`
     )
     .join('');
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parent Finance</title></head><body>
-    <h1>Statut financier de mes enfants</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <table border="1"><thead><tr><th>Élève</th><th>Montant</th><th>Payé</th><th>Reste</th><th>Statut</th><th>Échéance</th></tr></thead><tbody>${rows}</tbody></table>
-    <p><a href="/dashboard/parent">Retour dashboard</a></p>
-  </body></html>`;
+  return renderDashboardLayout(
+    'Statut financier de mes enfants',
+    session,
+    `<section class="el-card">
+      <table><thead><tr><th>Élève</th><th>Montant</th><th>Payé</th><th>Reste</th><th>Statut</th><th>Échéance</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Aucune facture disponible.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
 function renderAccountantDashboard(session, dashboard) {
@@ -1653,35 +1740,43 @@ function renderStudentsPage(session, classRooms, students, selectedClassRoomId =
       (student) => `<tr>
         <td><a href="/admin/students/${student.id}">${student.firstName} ${student.lastName}</a></td>
         <td>${student.admissionNumber}</td>
-        <td>${student.classRoomId}</td>
+        <td><span class="el-badge">${student.classRoomId}</span></td>
       </tr>`
     )
     .join('');
-
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Students</title></head><body>
-    <h1>Gestion des élèves</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <form method="GET" action="/admin/students">
+  return renderDashboardLayout(
+    'Gestion des élèves',
+    session,
+    `<section class="el-card">
+    <div class="el-page-intro">
+      <h2>Liste des élèves</h2>
+      <span class="el-badge">${students.length} élève(s)</span>
+    </div>
+    <form class="el-toolbar" method="GET" action="/admin/students">
       <label>Filtre classe
         <select name="classRoomId">${options}</select>
       </label>
       <button type="submit">Filtrer</button>
     </form>
-    <table border="1"><thead><tr><th>Nom</th><th>Matricule</th><th>Classe</th></tr></thead><tbody>${rows}</tbody></table>
-  </body></html>`;
+    <table><thead><tr><th>Nom</th><th>Matricule</th><th>Classe</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Aucun élève trouvé.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
-function renderStudentProfile(student) {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Student profile</title></head><body>
-    <h1>Fiche élève</h1>
-    <p>id: ${student.id}</p>
-    <p>Nom: ${student.firstName} ${student.lastName}</p>
-    <p>Matricule: ${student.admissionNumber}</p>
-    <p>Classe: ${student.classRoomId}</p>
-    <p>Date de naissance: ${student.dateOfBirth || '-'}</p>
-    <p>Archivé: ${student.archived_at ? 'oui' : 'non'}</p>
-    <p><a href="/admin/students">Retour</a></p>
-  </body></html>`;
+function renderStudentProfile(session, student) {
+  return renderDashboardLayout(
+    'Fiche élève',
+    session,
+    `<section class="el-card">
+      <h2>${student.firstName} ${student.lastName}</h2>
+      <p><strong>Matricule:</strong> ${student.admissionNumber}</p>
+      <p><strong>Classe:</strong> <span class="el-badge">${student.classRoomId}</span></p>
+      <p><strong>Date de naissance:</strong> ${student.dateOfBirth || '-'}</p>
+      <p><strong>Statut:</strong> ${renderStatusBadge(student.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</p>
+      <p><strong>ID:</strong> ${student.id}</p>
+      <p><a href="/admin/students">Retour à la liste</a></p>
+    </section>`
+  );
 }
 
 function renderParentsPage(session, parents) {
@@ -1764,17 +1859,16 @@ function renderTeachersPage(session, teachers) {
       (teacher) => `<tr>
         <td><a href="/admin/teachers/${teacher.id}">${teacher.firstName} ${teacher.lastName}</a></td>
         <td>${teacher.email || '-'}</td>
-        <td>${teacher.classRoomIds.length}</td>
-        <td>${teacher.subjectIds.length}</td>
-        <td>${teacher.archived_at ? 'oui' : 'non'}</td>
+        <td><span class="el-badge">${teacher.classRoomIds.length}</span></td>
+        <td><span class="el-badge">${teacher.subjectIds.length}</span></td>
+        <td>${renderStatusBadge(teacher.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</td>
       </tr>`
     )
     .join('');
-
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teachers</title></head><body>
-    <h1>Gestion des enseignants</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <h2>Créer un enseignant</h2>
+  return renderDashboardLayout(
+    'Gestion des enseignants',
+    session,
+    `<section class="el-card"><h2>Créer un enseignant</h2>
     <form method="POST" action="/admin/teachers">
       <label>Prénom <input name="firstName" required /></label><br/>
       <label>Nom <input name="lastName" required /></label><br/>
@@ -1783,13 +1877,14 @@ function renderTeachersPage(session, teachers) {
       <label>Notes <textarea name="notes"></textarea></label><br/>
       <button type="submit">Créer</button>
     </form>
+    </section><section class="el-card">
     <h2>Liste</h2>
-    <table border="1"><thead><tr><th>Nom</th><th>Email</th><th># Classes</th><th># Matières</th><th>Archivé</th></tr></thead><tbody>${rows}</tbody></table>
-    <p><a href="/dashboard">Retour dashboard</a></p>
-  </body></html>`;
+    <table><thead><tr><th>Nom</th><th>Email</th><th># Classes</th><th># Matières</th><th>Statut</th></tr></thead><tbody>${rows || '<tr><td colspan="5">Aucun enseignant.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
-function renderTeacherProfile(teacher, classRooms, subjects) {
+function renderTeacherProfile(session, teacher, classRooms, subjects) {
   const classRoomCheckboxes = classRooms
     .map(
       (classRoom) =>
@@ -1805,11 +1900,14 @@ function renderTeacherProfile(teacher, classRooms, subjects) {
   const classNames = teacher.classRoomIds.map((classRoomId) => classRooms.find((item) => item.id === classRoomId)?.name || classRoomId).join(', ') || '-';
   const subjectNames = teacher.subjectIds.map((subjectId) => subjects.find((item) => item.id === subjectId)?.name || subjectId).join(', ') || '-';
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Teacher profile</title></head><body>
-    <h1>Fiche enseignant</h1>
-    <p>id: ${teacher.id}</p>
-    <p>Tenant: ${teacher.tenant_id}</p>
-    <h2>Informations</h2>
+  return renderDashboardLayout(
+    'Fiche enseignant',
+    session,
+    `<section class="el-card">
+    <h2>${teacher.firstName} ${teacher.lastName}</h2>
+    <p><strong>ID:</strong> ${teacher.id}</p>
+    <p><strong>Statut:</strong> ${renderStatusBadge(teacher.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</p>
+    <h3>Informations</h3>
     <form method="POST" action="/admin/teachers/${teacher.id}/update">
       <label>Prénom <input name="firstName" value="${teacher.firstName}" required /></label><br/>
       <label>Nom <input name="lastName" value="${teacher.lastName}" required /></label><br/>
@@ -1823,11 +1921,14 @@ function renderTeacherProfile(teacher, classRooms, subjects) {
       <button type="submit">Enregistrer</button>
     </form>
     <form method="POST" action="/admin/teachers/${teacher.id}/archive"><button type="submit">Archiver</button></form>
+    </section>
+    <section class="el-card">
     <h2>Affectations existantes</h2>
-    <p>Classes: ${classNames}</p>
-    <p>Matières: ${subjectNames}</p>
+    <p><strong>Classes:</strong> ${classNames}</p>
+    <p><strong>Matières:</strong> ${subjectNames}</p>
     <p><a href="/admin/teachers">Retour</a></p>
-  </body></html>`;
+    </section>`
+  );
 }
 
 function buildTenantScope(session, params) {
@@ -2893,7 +2994,7 @@ function createServer({
       }
 
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderStudentProfile(student));
+      response.end(renderStudentProfile(auth.context, student));
       return;
     }
 
@@ -3019,7 +3120,7 @@ function createServer({
       const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
       const subjects = coreSchoolStore.list('subjects', auth.context.tenantId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderTeacherProfile(teacher, classRooms, subjects));
+      response.end(renderTeacherProfile(auth.context, teacher, classRooms, subjects));
       return;
     }
 
