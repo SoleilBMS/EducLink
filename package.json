@@ -18,7 +18,7 @@
     "start:staging": "node scripts/start-staging.js",
     "start:prod": "cross-env NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
     "test:e2e:smoke": "node --test apps/web/src/e2e.smoke.test.js",
-    "test:postgres": "node --test apps/web/src/server.postgres.test.js",
+    "test:postgres": "cross-env NODE_ENV=test EDUCLINK_PERSISTENCE=postgres node --test apps/web/src/server.postgres.test.js",
     "test:smoke": "npm run test:e2e:smoke",
     "deploy": "bash scripts/deploy.sh"
   },
