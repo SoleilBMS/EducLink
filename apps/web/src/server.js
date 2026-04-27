@@ -690,6 +690,98 @@ th { font-size: var(--el-text-sm); background-color: #eef2ff; color: var(--el-co
 .el-status.is-danger { background: #fee2e2; color: #991b1b; }
 .el-status.is-info { background: #dbeafe; color: #1e3a8a; }
 
+.el-landing {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--el-space-6);
+  display: grid;
+  gap: var(--el-space-5);
+}
+
+.el-landing-hero {
+  padding: var(--el-space-8);
+  border-radius: var(--el-radius-lg);
+  border: 1px solid var(--el-color-border);
+  background:
+    radial-gradient(circle at top right, rgba(124, 58, 237, 0.12), transparent 38%),
+    radial-gradient(circle at bottom left, rgba(34, 197, 94, 0.14), transparent 40%),
+    var(--el-color-surface);
+  box-shadow: var(--el-shadow-md);
+}
+
+.el-landing-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--el-space-2);
+  font-weight: 700;
+  color: var(--el-color-dark-blue);
+}
+
+.el-landing-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--el-gradient-brand);
+}
+
+.el-landing h1 {
+  margin-top: var(--el-space-3);
+  font-size: 2.2rem;
+}
+
+.el-landing-slogan {
+  font-size: var(--el-text-lg);
+  color: var(--el-color-text-secondary);
+}
+
+.el-landing-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--el-space-3);
+}
+
+.el-button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--el-space-2) var(--el-space-4);
+  border-radius: var(--el-radius-md);
+  border: 1px solid var(--el-color-border);
+  color: var(--el-color-dark-blue);
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.el-button-secondary:hover {
+  text-decoration: none;
+  background: #eef2ff;
+}
+
+.el-landing-grid {
+  display: grid;
+  gap: var(--el-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.el-landing-card {
+  padding: var(--el-space-4);
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-md);
+  background: var(--el-color-surface);
+  box-shadow: var(--el-shadow-sm);
+}
+
+.el-landing-card h3 {
+  margin-bottom: var(--el-space-2);
+}
+
+.el-landing-note {
+  border-left: 4px solid var(--el-color-primary-blue);
+  padding: var(--el-space-4);
+  border-radius: var(--el-radius-sm);
+  background: #eff6ff;
+}
+
 @media (max-width: 920px) {
   .el-app-shell {
     flex-direction: column;
@@ -732,6 +824,72 @@ function renderLoginPage(errorMessage = '') {
       <button type="submit">Se connecter</button>
     </form>
   </main></body></html>`;
+}
+
+function renderLandingPage() {
+  const productSections = [
+    { title: 'Gestion administrative', description: 'Admissions, classes, enseignants, dossiers élèves et suivi des opérations quotidiennes sur une base unifiée.' },
+    { title: 'Suivi pédagogique', description: 'Notes, assiduité, devoirs, évaluations et visibilité continue pour accompagner la réussite des élèves.' },
+    { title: 'Communication école-parents', description: 'Annonces, messagerie et partage d’informations structurées entre l’établissement et les familles.' },
+    { title: 'Finance & paiements', description: 'Frais, factures, paiements et suivi des soldes avec une vue claire pour l’administration et les parents.' },
+    { title: 'IA intégrée', description: 'Fonctions IA orientées productivité pédagogique et administrative, pensées pour un déploiement progressif.' }
+  ];
+
+  const audience = ['Direction', 'Administration', 'Enseignants', 'Parents', 'Élèves'];
+  const benefits = [
+    'Centraliser la gestion de l’école sur une seule plateforme.',
+    'Gagner du temps sur les opérations administratives et le suivi.',
+    'Améliorer le pilotage pédagogique avec des données structurées.',
+    'Fluidifier la communication école-parents au quotidien.',
+    'Préparer l’école au digital et à l’IA avec un cadre maîtrisé.'
+  ];
+
+  return `<!doctype html><html lang="fr"><head>${renderPageHead('EducLink - L’école connectée, intelligente et simplifiée')}</head><body>
+    <main class="el-landing">
+      <section class="el-landing-hero">
+        <p class="el-landing-brand"><span class="el-landing-logo" aria-hidden="true"></span>EducLink</p>
+        <h1>L’école connectée, intelligente et simplifiée</h1>
+        <p class="el-landing-slogan">La solution SaaS pensée pour les établissements privés: gestion scolaire, communication et IA dans une expérience moderne, rassurante et orientée pilotage.</p>
+        <p><strong>Positionnement:</strong> EducLink se situe entre les usages de Pronote, TouteMonAnnée et des assistants IA, adapté aux besoins des écoles privées en Algérie et en Afrique francophone.</p>
+        <div class="el-landing-cta">
+          <a href="/demo"><button type="button">Voir la démo</button></a>
+          <a class="el-button-secondary" href="/login">Se connecter</a>
+        </div>
+      </section>
+
+      <section class="el-card">
+        <h2>Produit</h2>
+        <div class="el-landing-grid">
+          ${productSections.map((section) => `<article class="el-landing-card"><h3>${section.title}</h3><p>${section.description}</p></article>`).join('')}
+        </div>
+      </section>
+
+      <section class="el-card">
+        <h2>Pour qui ?</h2>
+        <div class="el-landing-grid">
+          ${audience.map((profile) => `<article class="el-landing-card"><h3>${profile}</h3><p>Expérience dédiée et workflows adaptés au rôle dans l’établissement.</p></article>`).join('')}
+        </div>
+      </section>
+
+      <section class="el-card">
+        <h2>Bénéfices clés</h2>
+        <ul>
+          ${benefits.map((benefit) => `<li>${benefit}</li>`).join('')}
+        </ul>
+      </section>
+
+      <section class="el-card">
+        <h2>Démo commerciale</h2>
+        <p>Vous pouvez explorer un parcours démonstration de bout en bout pour valider l’adéquation métier avec votre établissement.</p>
+        <p>Des comptes de démo sont disponibles pour la direction, l’administration, les enseignants, les parents, les élèves et la finance.</p>
+        <p><a href="/demo">Accéder à la page /demo</a></p>
+      </section>
+
+      <section class="el-landing-note">
+        <p><strong>Note de transparence:</strong> cette version est pilot/demo-ready. Certaines fonctionnalités restent en évolution avant une mise en production généralisée.</p>
+      </section>
+    </main>
+  </body></html>`;
 }
 
 function renderDemoGuidePage() {
@@ -2203,6 +2361,12 @@ function createServer({
         uptimeSec: Math.floor(process.uptime()),
         persistence: health.persistence
       });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderLandingPage());
       return;
     }
 
