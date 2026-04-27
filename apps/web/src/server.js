@@ -621,6 +621,44 @@ th { font-size: var(--el-text-sm); background-color: #eef2ff; color: var(--el-co
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 
+.el-metric {
+  padding: var(--el-space-3);
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-md);
+  background: #f8fafc;
+}
+
+.el-metric-label {
+  margin: 0;
+  color: var(--el-color-text-secondary);
+  font-size: var(--el-text-sm);
+}
+
+.el-metric-value {
+  margin: var(--el-space-1) 0 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--el-color-dark-blue);
+}
+
+.el-split-grid {
+  display: grid;
+  gap: var(--el-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.el-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--el-space-2);
+}
+
+.el-empty-state {
+  margin: 0;
+  color: var(--el-color-text-secondary);
+  font-style: italic;
+}
+
 @media (max-width: 920px) {
   .el-app-shell {
     flex-direction: column;
@@ -860,50 +898,141 @@ function renderDashboardLayout(title, session, body) {
   </div></body></html>`;
 }
 
-function renderAdminDashboard(session, metrics) {
+function summarizeAttendance(records) {
+  const summary = { total: records.length, present: 0, late: 0, absent: 0 };
+  for (const record of records) {
+    if (record.status === 'present') {
+      summary.present += 1;
+    } else if (record.status === 'late') {
+      summary.late += 1;
+    } else if (record.status === 'absent') {
+      summary.absent += 1;
+    }
+  }
+  return summary;
+}
+
+function summarizeFinance(invoices, payments) {
+  const totalDue = invoices.reduce((sum, invoice) => sum + Number(invoice.amountDue || 0), 0);
+  const totalPaid = payments.reduce((sum, payment) => sum + Number(payment.amountPaid || 0), 0);
+  return {
+    invoiceCount: invoices.length,
+    totalDue: Number(totalDue.toFixed(2)),
+    totalPaid: Number(totalPaid.toFixed(2)),
+    remainingBalance: Number(Math.max(0, totalDue - totalPaid).toFixed(2))
+  };
+}
+
+function toDashboardTimestampLabel(rawTimestamp) {
+  if (!rawTimestamp) {
+    return 'date inconnue';
+  }
+  const date = new Date(rawTimestamp);
+  if (Number.isNaN(date.getTime())) {
+    return rawTimestamp;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function buildRecentActivity(logs, tenantId, limit = 5) {
+  return logs
+    .filter((entry) => (entry.tenantId ?? entry.tenant_id) === tenantId)
+    .sort((a, b) => String(b.timestamp ?? b.created_at ?? '').localeCompare(String(a.timestamp ?? a.created_at ?? '')))
+    .slice(0, limit)
+    .map((entry) => ({
+      action: entry.action ?? entry.eventType ?? 'event',
+      actorRole: entry.actorRole ?? entry.actor_role ?? 'system',
+      targetId: entry.targetId ?? entry.entityId ?? null,
+      timestampLabel: toDashboardTimestampLabel(entry.timestamp ?? entry.created_at)
+    }));
+}
+
+function renderMetricCard(label, value) {
+  return `<div class="el-metric"><p class="el-metric-label">${label}</p><p class="el-metric-value">${value}</p></div>`;
+}
+
+function renderAdminDashboard(session, dashboard) {
+  const attendance = dashboard.attendanceSummary;
+  const finance = dashboard.financeSummary;
+  const recentActivityItems = dashboard.recentActivity.length
+    ? `<ul>${dashboard.recentActivity
+        .map(
+          (entry) =>
+            `<li><strong>${entry.action}</strong> · ${entry.actorRole} · ${entry.timestampLabel}${entry.targetId ? ` · ${entry.targetId}` : ''}</li>`
+        )
+        .join('')}</ul>`
+    : '<p class="el-empty-state">Aucune activité récente.</p>';
+
   return renderDashboardLayout(
     'Dashboard Admin',
     session,
     `<section class="el-card">
       <h2>Synthèse établissement</h2>
       <div class="el-metric-grid">
-        <div><strong>${metrics.classRoomsCount}</strong><br/><span>Classes actives</span></div>
-        <div><strong>${metrics.studentsCount}</strong><br/><span>Élèves actifs</span></div>
-        <div><strong>${metrics.parentsCount}</strong><br/><span>Responsables actifs</span></div>
-        <div><strong>${metrics.teachersCount}</strong><br/><span>Enseignants actifs</span></div>
+        ${renderMetricCard('Classes actives', dashboard.metrics.classRoomsCount)}
+        ${renderMetricCard('Élèves actifs', dashboard.metrics.studentsCount)}
+        ${renderMetricCard('Responsables actifs', dashboard.metrics.parentsCount)}
+        ${renderMetricCard('Enseignants actifs', dashboard.metrics.teachersCount)}
       </div>
-      <ul>
-        <li>Classes actives: ${metrics.classRoomsCount}</li>
-        <li>Élèves actifs: ${metrics.studentsCount}</li>
-        <li>Responsables actifs: ${metrics.parentsCount}</li>
-        <li>Enseignants actifs: ${metrics.teachersCount}</li>
-      </ul>
     </section>
     <section class="el-card">
-      <h2>Raccourcis</h2>
-      <p><a href="/admin/students">Gérer les élèves</a> · <a href="/admin/parents">Gérer les responsables</a> · <a href="/admin/teachers">Gérer les enseignants</a></p>
-      <p><a href="/admin/finance">Suivi finance</a> · <a href="/admin/attendance">Consulter les présences</a> · <a href="/admin/announcements">Publier une annonce</a></p>
-      <p><a href="/inbox">Ouvrir l'inbox</a></p>
+      <h2>Attendance summary</h2>
+      <div class="el-metric-grid">
+        ${renderMetricCard('Présences enregistrées', attendance.total)}
+        ${renderMetricCard('Présents', attendance.present)}
+        ${renderMetricCard('En retard', attendance.late)}
+        ${renderMetricCard('Absents', attendance.absent)}
+      </div>
+    </section>
+    <section class="el-card">
+      <h2>Finance summary</h2>
+      ${
+        finance.invoiceCount === 0
+          ? '<p class="el-empty-state">Aucune donnée finance disponible.</p>'
+          : `<div class="el-metric-grid">
+              ${renderMetricCard('Factures', finance.invoiceCount)}
+              ${renderMetricCard('Montant dû', `${finance.totalDue} €`)}
+              ${renderMetricCard('Montant payé', `${finance.totalPaid} €`)}
+              ${renderMetricCard('Reste à encaisser', `${finance.remainingBalance} €`)}
+            </div>`
+      }
+    </section>
+    <section class="el-card">
+      <h2>Activité récente</h2>
+      ${recentActivityItems}
+    </section>
+    <section class="el-card">
+      <h2>Quick actions</h2>
+      <div class="el-quick-actions">
+        <a href="/admin/students">Manage students</a>
+        <a href="/admin/teachers">Manage teachers</a>
+        <a href="/admin/attendance">View attendance</a>
+        <a href="/admin/finance">View finance</a>
+        <a href="/demo">Open demo guide</a>
+      </div>
     </section>`
   );
 }
 
-function renderDirectorDashboard(session, metrics) {
+function renderDirectorDashboard(session, dashboard) {
   return renderDashboardLayout(
     'Dashboard Director',
     session,
-    `<h2>Pilotage synthétique</h2>
-    <ul>
-      <li>Effectif élèves: ${metrics.studentsCount}</li>
-      <li>Classes ouvertes: ${metrics.classRoomsCount}</li>
-      <li>Enseignants actifs: ${metrics.teachersCount}</li>
-    </ul>
-    <p><a href="/admin/students">Voir les élèves</a></p>
-    <p>Suivi attendance/grading: disponible prochainement.</p>`
+    `<section class="el-card">
+      <h2>Pilotage synthétique</h2>
+      <div class="el-metric-grid">
+        ${renderMetricCard('Effectif élèves', dashboard.metrics.studentsCount)}
+        ${renderMetricCard('Classes ouvertes', dashboard.metrics.classRoomsCount)}
+        ${renderMetricCard('Enseignants actifs', dashboard.metrics.teachersCount)}
+      </div>
+      <p><a href="/admin/students">Voir les élèves</a></p>
+      <p>Suivi attendance/grading: disponible prochainement.</p>
+    </section>`
   );
 }
 
-function renderTeacherDashboard(session, teacher, classRooms, subjects) {
+function renderTeacherDashboard(session, dashboard) {
+  const { teacher, classRooms, subjects } = dashboard;
   const classNames = classRooms.map((classRoom) => classRoom.name).join(', ') || 'Aucune classe assignée';
   const subjectNames = subjects.map((subject) => subject.name).join(', ') || 'Aucune matière assignée';
 
@@ -912,14 +1041,31 @@ function renderTeacherDashboard(session, teacher, classRooms, subjects) {
     session,
     `<section class="el-card">
       <h2>Vue enseignant</h2>
+      <div class="el-metric-grid">
+        ${renderMetricCard('Assigned classes', classRooms.length)}
+        ${renderMetricCard('Students in scope', dashboard.studentsInScope)}
+        ${renderMetricCard('Attendance to record', dashboard.attendanceToRecord)}
+        ${renderMetricCard('Recent grades', dashboard.recentGrades.length)}
+      </div>
       <p>Classes assignées: ${classNames}</p>
       <p>Matières assignées: ${subjectNames}</p>
       <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>
     </section>
     <section class="el-card">
-      <h2>Raccourcis métier</h2>
-      <p><a href="/admin/students">Mes classes</a> · <a href="/teacher/attendance">Faire l'appel</a> · <a href="/teacher/lesson-homework">Cahier de texte & devoirs</a></p>
-      <p><a href="/teacher/grades">Évaluations & notes</a> · <a href="/teacher/report-comments">Appréciations IA (brouillon)</a> · <a href="/inbox">Ouvrir l'inbox</a></p>
+      <h2>Recent assessments</h2>
+      ${
+        dashboard.recentGrades.length
+          ? `<ul>${dashboard.recentGrades.map((entry) => `<li>${entry.assessmentTitle} · ${entry.studentName} · ${entry.score}/20</li>`).join('')}</ul>`
+          : '<p class="el-empty-state">Aucune note récente à afficher.</p>'
+      }
+    </section>
+    <section class="el-card">
+      <h2>Quick actions</h2>
+      <div class="el-quick-actions">
+        <a href="/teacher/attendance">Record attendance</a>
+        <a href="/teacher/grades">Add grade/comment</a>
+        <a href="/admin/students">View class students</a>
+      </div>
     </section>`
   );
 }
@@ -1058,7 +1204,8 @@ function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoo
   </body></html>`;
 }
 
-function renderParentDashboard(session, children) {
+function renderParentDashboard(session, dashboard) {
+  const { children } = dashboard;
   const list = children.length
     ? `<ul>${children.map((student) => `<li>${student.firstName} ${student.lastName} (${student.classRoomId})</li>`).join('')}</ul>`
     : '<p>Aucun enfant lié pour le moment.</p>';
@@ -1068,25 +1215,90 @@ function renderParentDashboard(session, children) {
     session,
     `<section class="el-card">
       <h2>Mes enfants</h2>
+      <div class="el-metric-grid">
+        ${renderMetricCard('Linked children', children.length)}
+        ${renderMetricCard('Latest grades', dashboard.latestGrades.length)}
+        ${renderMetricCard('Attendance records', dashboard.attendanceSummary.total)}
+        ${renderMetricCard('Messages & annonces', dashboard.messagesCount)}
+      </div>
       ${list}
     </section>
     <section class="el-card">
-      <h2>Informations utiles</h2>
-      <p><a href="/parent/homeworks">Consulter les devoirs</a> · <a href="/parent/grades">Consulter les notes</a> · <a href="/parent/finance">Consulter le statut financier</a></p>
-      <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a> · <a href="/inbox">Ouvrir l'inbox</a></p>
+      <h2>Latest grades</h2>
+      ${
+        dashboard.latestGrades.length
+          ? `<ul>${dashboard.latestGrades.map((entry) => `<li>${entry.studentName} · ${entry.assessmentTitle} · ${entry.score}/20</li>`).join('')}</ul>`
+          : '<p class="el-empty-state">Aucune note disponible pour le moment.</p>'
+      }
+    </section>
+    <section class="el-card">
+      <h2>Attendance summary</h2>
+      ${
+        dashboard.attendanceSummary.total
+          ? `<p>Présents: ${dashboard.attendanceSummary.present} · Retards: ${dashboard.attendanceSummary.late} · Absents: ${dashboard.attendanceSummary.absent}</p>`
+          : '<p class="el-empty-state">Aucune donnée de présence disponible.</p>'
+      }
+    </section>
+    <section class="el-card">
+      <h2>Messages / annonces</h2>
+      ${
+        dashboard.latestAnnouncements.length
+          ? `<ul>${dashboard.latestAnnouncements.map((item) => `<li>${item.title}</li>`).join('')}</ul>`
+          : '<p class="el-empty-state">Aucun message ou annonce disponible.</p>'
+      }
+    </section>
+    <section class="el-card">
+      <h2>Quick actions</h2>
+      <div class="el-quick-actions">
+        <a href="/admin/students">View child profile</a>
+        <a href="/parent/grades">View grades</a>
+        <a href="/parent/attendance">View attendance</a>
+        <a href="/inbox">Open messages</a>
+      </div>
     </section>`
   );
 }
 
-function renderStudentDashboard(session, student) {
+function renderStudentDashboard(session, dashboard) {
+  const { student } = dashboard;
   return renderDashboardLayout(
     'Dashboard Student',
     session,
     `<section class="el-card">
       <h2>Mon espace</h2>
+      <div class="el-metric-grid">
+        ${renderMetricCard('My class', student?.classRoomId ?? '-')}
+        ${renderMetricCard('Latest grades', dashboard.latestGrades.length)}
+        ${renderMetricCard('Attendance records', dashboard.attendanceSummary.total)}
+        ${renderMetricCard('Homework & announcements', dashboard.homeworkCount + dashboard.announcementCount)}
+      </div>
       <p>Nom: ${student ? `${student.firstName} ${student.lastName}` : 'Profil étudiant non trouvé'}</p>
       <p>Classe: ${student?.classRoomId ?? '-'}</p>
       <p>Matricule: ${student?.admissionNumber ?? '-'}</p>
+    </section>
+    <section class="el-card">
+      <h2>Latest grades</h2>
+      ${
+        dashboard.latestGrades.length
+          ? `<ul>${dashboard.latestGrades.map((entry) => `<li>${entry.assessmentTitle} · ${entry.score}/20</li>`).join('')}</ul>`
+          : '<p class="el-empty-state">Aucune note disponible.</p>'
+      }
+    </section>
+    <section class="el-card">
+      <h2>Attendance summary</h2>
+      ${
+        dashboard.attendanceSummary.total
+          ? `<p>Présents: ${dashboard.attendanceSummary.present} · Retards: ${dashboard.attendanceSummary.late} · Absents: ${dashboard.attendanceSummary.absent}</p>`
+          : '<p class="el-empty-state">Aucune donnée de présence disponible.</p>'
+      }
+    </section>
+    <section class="el-card">
+      <h2>Homework / announcements</h2>
+      ${
+        dashboard.latestHomeworks.length
+          ? `<ul>${dashboard.latestHomeworks.map((entry) => `<li>${entry.title} (échéance ${entry.dueDate})</li>`).join('')}</ul>`
+          : '<p class="el-empty-state">Aucun devoir ou message disponible.</p>'
+      }
     </section>
     <section class="el-card">
       <h2>Mes accès rapides</h2>
@@ -1307,6 +1519,22 @@ function renderParentGradesPage(session, grades) {
   </body></html>`;
 }
 
+function renderParentAttendancePage(session, records, studentById) {
+  const rows = records
+    .map((record) => {
+      const student = studentById.get(record.studentId);
+      return `<tr><td>${record.date}</td><td>${student ? `${student.firstName} ${student.lastName}` : record.studentId}</td><td>${record.classRoomId}</td><td>${record.status}</td></tr>`;
+    })
+    .join('');
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parent Attendance</title></head><body>
+    <h1>Présences de mes enfants</h1>
+    <p>Tenant: ${session.tenantId}</p>
+    <table border="1"><thead><tr><th>Date</th><th>Élève</th><th>Classe</th><th>Statut</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Aucune donnée de présence disponible.</td></tr>'}</tbody></table>
+    <p><a href="/dashboard/parent">Retour dashboard</a></p>
+  </body></html>`;
+}
+
 function renderStudentGradesPage(session, student, grades) {
   const rows = grades
     .map(
@@ -1394,12 +1622,24 @@ function renderParentFinancePage(session, invoices) {
   </body></html>`;
 }
 
-function renderAccountantDashboard(session) {
+function renderAccountantDashboard(session, dashboard) {
   return renderDashboardLayout(
     'Dashboard Accountant',
     session,
-    `<h2>Finance</h2>
-    <p><a href="/admin/finance">Accéder aux frais, factures et paiements</a></p>`
+    `<section class="el-card">
+      <h2>Finance</h2>
+      ${
+        dashboard.financeSummary.invoiceCount
+          ? `<div class="el-metric-grid">
+              ${renderMetricCard('Factures', dashboard.financeSummary.invoiceCount)}
+              ${renderMetricCard('Montant dû', `${dashboard.financeSummary.totalDue} €`)}
+              ${renderMetricCard('Montant payé', `${dashboard.financeSummary.totalPaid} €`)}
+              ${renderMetricCard('Reste à encaisser', `${dashboard.financeSummary.remainingBalance} €`)}
+            </div>`
+          : '<p class="el-empty-state">Aucune donnée finance disponible.</p>'
+      }
+      <p><a href="/admin/finance">Accéder aux frais, factures et paiements</a></p>
+    </section>`
   );
 }
 
@@ -1964,26 +2204,83 @@ function createServer({
         parentsCount: parentStore.list(tenantId).length,
         teachersCount: teacherStore.list(tenantId).length
       };
+      const tenantAttendanceRecords = attendanceStore.list(tenantId);
+      const tenantInvoices = financeStore.listInvoices(tenantId);
+      const tenantPayments = financeStore.listPayments(tenantId);
+      const dashboardBase = {
+        metrics,
+        attendanceSummary: summarizeAttendance(tenantAttendanceRecords),
+        financeSummary: summarizeFinance(tenantInvoices, tenantPayments),
+        recentActivity: buildRecentActivity(auditLogStore.logs, tenantId, 6)
+      };
 
       let html = '';
       if (auth.context.role === ROLES.SCHOOL_ADMIN) {
-        html = renderAdminDashboard(auth.context, metrics);
+        html = renderAdminDashboard(auth.context, dashboardBase);
       } else if (auth.context.role === ROLES.DIRECTOR) {
-        html = renderDirectorDashboard(auth.context, metrics);
+        html = renderDirectorDashboard(auth.context, dashboardBase);
       } else if (auth.context.role === ROLES.TEACHER) {
         const teacher = teacherStore.get(tenantId, auth.context.userId, { includeArchived: false });
         const classRooms = teacher ? teacher.classRoomIds.map((id) => coreSchoolStore.get('classRooms', tenantId, id)).filter(Boolean) : [];
         const subjects = teacher ? teacher.subjectIds.map((id) => coreSchoolStore.get('subjects', tenantId, id)).filter(Boolean) : [];
-        html = renderTeacherDashboard(auth.context, teacher, classRooms, subjects);
+        const studentScope = teacher
+          ? studentStore
+              .list(tenantId)
+              .filter((student) => teacher.classRoomIds.includes(student.classRoomId))
+          : [];
+        const grades = gradingStore.listGradesForTeacher(tenantId, auth.context.userId);
+        const studentsById = new Map(studentStore.list(tenantId, { includeArchived: true }).map((student) => [student.id, student]));
+        html = renderTeacherDashboard(auth.context, {
+          teacher,
+          classRooms,
+          subjects,
+          studentsInScope: studentScope.length,
+          attendanceToRecord: studentScope.length,
+          recentGrades: grades.slice(0, 5).map((entry) => ({
+            studentName: studentsById.has(entry.studentId)
+              ? `${studentsById.get(entry.studentId).firstName} ${studentsById.get(entry.studentId).lastName}`
+              : entry.studentId,
+            assessmentTitle: entry.assessment?.title ?? 'Évaluation',
+            score: entry.score
+          }))
+        });
       } else if (auth.context.role === ROLES.PARENT) {
         const links = parentStore.listLinksByParent(tenantId, auth.context.userId);
         const children = links.map((link) => studentStore.get(tenantId, link.studentId, { includeArchived: false })).filter(Boolean);
-        html = renderParentDashboard(auth.context, children);
+        const childIds = new Set(children.map((child) => child.id));
+        const studentById = new Map(children.map((student) => [student.id, student]));
+        const grades = gradingStore.listGradesForParent(tenantId, auth.context.userId).slice(0, 5);
+        const attendance = tenantAttendanceRecords.filter((record) => childIds.has(record.studentId));
+        const inbox = messagingStore.getInbox(tenantId, auth.context);
+        html = renderParentDashboard(auth.context, {
+          children,
+          latestGrades: grades.map((entry) => ({
+            studentName: studentById.has(entry.studentId)
+              ? `${studentById.get(entry.studentId).firstName} ${studentById.get(entry.studentId).lastName}`
+              : entry.studentId,
+            assessmentTitle: entry.assessment?.title ?? 'Évaluation',
+            score: entry.score
+          })),
+          attendanceSummary: summarizeAttendance(attendance),
+          latestAnnouncements: inbox.announcements.slice(0, 3),
+          messagesCount: inbox.announcements.length + inbox.threads.length
+        });
       } else if (auth.context.role === ROLES.STUDENT) {
         const student = studentStore.get(tenantId, auth.context.userId, { includeArchived: false });
-        html = renderStudentDashboard(auth.context, student);
+        const grades = gradingStore.listGradesForStudent(tenantId, auth.context.userId).slice(0, 5);
+        const attendance = tenantAttendanceRecords.filter((record) => record.studentId === auth.context.userId);
+        const homeworks = lessonHomeworkStore.listHomeworksForStudent(tenantId, auth.context.userId).slice(0, 4);
+        const inbox = messagingStore.getInbox(tenantId, auth.context);
+        html = renderStudentDashboard(auth.context, {
+          student,
+          latestGrades: grades.map((entry) => ({ assessmentTitle: entry.assessment?.title ?? 'Évaluation', score: entry.score })),
+          attendanceSummary: summarizeAttendance(attendance),
+          latestHomeworks: homeworks,
+          homeworkCount: homeworks.length,
+          announcementCount: inbox.announcements.length
+        });
       } else if (auth.context.role === ROLES.ACCOUNTANT) {
-        html = renderAccountantDashboard(auth.context);
+        html = renderAccountantDashboard(auth.context, dashboardBase);
       }
 
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -2400,6 +2697,30 @@ function createServer({
       const grades = gradingStore.listGradesForParent(auth.context.tenantId, auth.context.userId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderParentGradesPage(auth.context, grades));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/parent/attendance') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.PARENT) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const linkedStudents = parentStore
+        .listLinksByParent(auth.context.tenantId, auth.context.userId)
+        .map((link) => studentStore.get(auth.context.tenantId, link.studentId, { includeArchived: false }))
+        .filter(Boolean);
+      const linkedStudentIds = new Set(linkedStudents.map((student) => student.id));
+      const records = attendanceStore
+        .list(auth.context.tenantId)
+        .filter((record) => linkedStudentIds.has(record.studentId))
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+      const studentById = new Map(linkedStudents.map((student) => [student.id, student]));
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentAttendancePage(auth.context, records, studentById));
       return;
     }
 
