@@ -105,6 +105,20 @@ Example:
 curl -i https://<your-staging-domain>/healthz
 ```
 
+## 6.1) Critical networking checks (Railway "Application failed to respond")
+
+If Railway shows **"Application failed to respond"**, verify these points first:
+
+1. The app must listen on `HOST=0.0.0.0`.
+2. The app must listen on the Railway-injected `PORT` (not a fixed port).
+3. If a domain target port is configured, it must match the app listening port.
+
+For EducLink, `apps/web/src/server.js` starts with `runtimeEnv.host` and `runtimeEnv.port` where:
+- `runtimeEnv.port` is read from `process.env.PORT` (default `3000` only when `PORT` is absent),
+- `runtimeEnv.host` defaults to `0.0.0.0` in `production` / `staging`.
+
+If a Railway domain had an old/manual target port value, remove it (or set it to the active app port) and redeploy.
+
 ## 7) Recommended first deploy sequence
 
 1. Push branch to GitHub (or merge to staging branch).
