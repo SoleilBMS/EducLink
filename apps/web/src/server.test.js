@@ -309,8 +309,13 @@ test('le contenu du dashboard diffère selon le rôle', async () => {
     const studentHtml = await studentResponse.text();
     assert.match(adminHtml, /Dashboard Admin/);
     assert.match(adminHtml, /Synthèse établissement/);
+    assert.match(adminHtml, /Attendance summary/);
+    assert.match(adminHtml, /Finance summary/);
+    assert.match(adminHtml, /Quick actions/);
     assert.match(studentHtml, /Dashboard Student/);
     assert.match(studentHtml, /Mon espace/);
+    assert.match(studentHtml, /Latest grades/);
+    assert.match(studentHtml, /Attendance summary/);
   });
 });
 
@@ -330,10 +335,37 @@ test('dashboard admin respecte l’isolation tenant sur les métriques', async (
 
     assert.equal(response.status, 200);
     const html = await response.text();
-    assert.match(html, /Classes actives: 1/);
-    assert.match(html, /Élèves actifs: 1/);
-    assert.match(html, /Responsables actifs: 0/);
-    assert.match(html, /Enseignants actifs: 0/);
+    assert.match(html, /Classes actives/);
+    assert.match(html, />1<\/p>/);
+    assert.match(html, /Élèves actifs/);
+    assert.doesNotMatch(html, /student-a1/);
+    assert.doesNotMatch(html, /invoice-a1-tuition/);
+  });
+});
+
+test('dashboards affichent des métriques métier par rôle sans fuite cross-scope', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: teacherCookie } = await login(baseUrl, 'teacher@school-a.test');
+    const { cookie: parentCookie } = await login(baseUrl, 'parent2@school-a.test');
+
+    const teacherResponse = await apiFetch(baseUrl, '/dashboard/teacher', { cookie: teacherCookie });
+    const parentResponse = await apiFetch(baseUrl, '/dashboard/parent', { cookie: parentCookie });
+
+    assert.equal(teacherResponse.status, 200);
+    assert.equal(parentResponse.status, 200);
+
+    const teacherHtml = await teacherResponse.text();
+    const parentHtml = await parentResponse.text();
+
+    assert.match(teacherHtml, /Assigned classes/);
+    assert.match(teacherHtml, /Students in scope/);
+    assert.match(teacherHtml, /Recent assessments/);
+    assert.doesNotMatch(teacherHtml, /student-a2/);
+
+    assert.match(parentHtml, /Linked children/);
+    assert.match(parentHtml, /Messages \/ annonces/);
+    assert.match(parentHtml, /View attendance/);
+    assert.doesNotMatch(parentHtml, /Aya Nadir/);
   });
 });
 
@@ -851,6 +883,12 @@ test('journey parent: enfants liés + notes + attendance/tenant guardrails + inb
 
     const forbiddenAttendanceRead = await apiFetch(baseUrl, '/api/v1/attendance?date=2026-04-20', { cookie: parentCookie });
     assert.equal(forbiddenAttendanceRead.status, 403);
+
+    const parentAttendancePageResponse = await apiFetch(baseUrl, '/parent/attendance', { cookie: parentCookie });
+    assert.equal(parentAttendancePageResponse.status, 200);
+    const parentAttendanceHtml = await parentAttendancePageResponse.text();
+    assert.match(parentAttendanceHtml, /Salim Brahim/);
+    assert.doesNotMatch(parentAttendanceHtml, /Aya Nadir/);
 
     const inboxResponse = await apiFetch(baseUrl, '/api/v1/inbox', { cookie: parentCookie });
     assert.equal(inboxResponse.status, 200);
