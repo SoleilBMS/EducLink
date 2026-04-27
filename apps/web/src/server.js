@@ -408,7 +408,7 @@ const DESIGN_SYSTEM_CSS = `
 
 body {
   margin: 0;
-  padding: var(--el-space-6);
+  padding: 0;
   font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: var(--el-text-base);
   line-height: 1.5;
@@ -474,6 +474,8 @@ th { font-size: var(--el-text-sm); background-color: #eef2ff; color: var(--el-co
   max-width: 1080px;
   margin: 0 auto;
   padding: var(--el-space-6);
+  margin-top: var(--el-space-6);
+  margin-bottom: var(--el-space-6);
   border: 1px solid var(--el-color-border);
   border-radius: var(--el-radius-lg);
   box-shadow: var(--el-shadow-md);
@@ -492,6 +494,151 @@ th { font-size: var(--el-text-sm); background-color: #eef2ff; color: var(--el-co
 .el-error {
   color: var(--el-color-danger);
   font-weight: 600;
+}
+
+.el-app-shell {
+  min-height: 100vh;
+  display: flex;
+}
+
+.el-sidebar {
+  width: 260px;
+  border-right: 1px solid var(--el-color-border);
+  background: var(--el-color-surface);
+  padding: var(--el-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-space-5);
+}
+
+.el-sidebar-brand {
+  padding: var(--el-space-4);
+  border-radius: var(--el-radius-md);
+  background: #f8fafc;
+  box-shadow: var(--el-shadow-sm);
+}
+
+.el-brand-title {
+  margin: 0 0 var(--el-space-1);
+  font-weight: 700;
+  color: var(--el-color-dark-blue);
+}
+
+.el-brand-subtitle {
+  margin: 0;
+  font-size: var(--el-text-xs);
+  color: var(--el-color-text-secondary);
+}
+
+.el-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-space-1);
+}
+
+.el-nav-link {
+  display: block;
+  padding: var(--el-space-2) var(--el-space-3);
+  border-radius: var(--el-radius-md);
+  font-weight: 500;
+  color: var(--el-color-text-secondary);
+}
+
+.el-nav-link:hover {
+  text-decoration: none;
+  background: #eef2ff;
+  color: var(--el-color-dark-blue);
+}
+
+.el-nav-link.is-active {
+  background: #dbeafe;
+  color: var(--el-color-dark-blue);
+}
+
+.el-sidebar-gradient {
+  margin-top: auto;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--el-gradient-brand);
+}
+
+.el-app-main {
+  flex: 1;
+  padding: var(--el-space-6);
+}
+
+.el-app-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--el-space-4);
+  padding: var(--el-space-4);
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-lg);
+  background: var(--el-color-surface);
+  box-shadow: var(--el-shadow-sm);
+}
+
+.el-header-school {
+  margin: 0;
+  font-size: var(--el-text-sm);
+  color: var(--el-color-text-secondary);
+}
+
+.el-header-title {
+  margin: var(--el-space-1) 0 0;
+}
+
+.el-user-box {
+  text-align: right;
+}
+
+.el-user-name, .el-user-email {
+  margin: 0;
+  font-size: var(--el-text-sm);
+}
+
+.el-user-email {
+  color: var(--el-color-text-secondary);
+}
+
+.el-dashboard-content {
+  margin-top: var(--el-space-5);
+  display: grid;
+  gap: var(--el-space-4);
+}
+
+.el-card {
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-lg);
+  background: var(--el-color-surface);
+  box-shadow: var(--el-shadow-sm);
+  padding: var(--el-space-4);
+}
+
+.el-metric-grid {
+  display: grid;
+  gap: var(--el-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+@media (max-width: 920px) {
+  .el-app-shell {
+    flex-direction: column;
+  }
+
+  .el-sidebar {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--el-color-border);
+  }
+
+  .el-app-header {
+    flex-direction: column;
+  }
+
+  .el-user-box {
+    text-align: left;
+  }
 }
 `;
 
@@ -623,36 +770,121 @@ function getDashboardPathForRole(role) {
   return roleToPath[role] ?? '/dashboard';
 }
 
+function getRoleLabel(role) {
+  const labels = {
+    [ROLES.SCHOOL_ADMIN]: 'School Admin',
+    [ROLES.DIRECTOR]: 'Director',
+    [ROLES.TEACHER]: 'Teacher',
+    [ROLES.PARENT]: 'Parent',
+    [ROLES.STUDENT]: 'Student',
+    [ROLES.ACCOUNTANT]: 'Finance',
+    [ROLES.SUPER_ADMIN]: 'Super Admin'
+  };
+
+  return labels[role] ?? role;
+}
+
+function getTenantLabel(tenantId) {
+  if (!tenantId) {
+    return 'Plateforme EducLink';
+  }
+
+  const tenantNames = {
+    'school-a': 'École School A',
+    'school-b': 'École School B'
+  };
+
+  return tenantNames[tenantId] ?? tenantId;
+}
+
+function getSessionIdentity(session) {
+  const matchedUser = users.find((user) => user.id === session.userId);
+  return {
+    displayName: matchedUser?.id ?? session.userId,
+    email: matchedUser?.email ?? `${session.userId}@educ.link`,
+    roleLabel: getRoleLabel(session.role),
+    tenantLabel: getTenantLabel(session.tenantId)
+  };
+}
+
+function buildDashboardNavigation(session, currentPath = '') {
+  const navItems = [
+    { label: 'Dashboard', href: getDashboardPathForRole(session.role), roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.ACCOUNTANT] },
+    { label: 'Élèves', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT] },
+    { label: 'Enseignants', href: '/admin/teachers', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
+    { label: 'Classes', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
+    { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
+    { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
+    { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
+    { label: 'Finance', href: session.role === ROLES.PARENT ? '/parent/finance' : '/admin/finance', roles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT, ROLES.PARENT] },
+    { label: 'Démo', href: '/demo', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.ACCOUNTANT] }
+  ];
+
+  return navItems
+    .filter((item) => item.roles.includes(session.role))
+    .map((item) => `<a class="el-nav-link ${currentPath === item.href ? 'is-active' : ''}" href="${item.href}">${item.label}</a>`)
+    .join('');
+}
+
 function renderDashboardLayout(title, session, body) {
-  return `<!doctype html><html lang="fr"><head>${renderPageHead(title)}</head><body><main class="el-shell">
-    <h1>${title}</h1>
-    <p><span class="el-badge">role: ${session.role}</span></p>
-    <p><span class="el-badge">tenantId: ${session.tenantId}</span></p>
-    <p><a href="/demo">Guide démo</a> · Pour changer de rôle: Logout puis reconnectez-vous sur <a href="/login">/login</a>.</p>
-    ${body}
-    <form method="POST" action="/logout"><button type="submit">Logout</button></form>
-  </main></body></html>`;
+  const identity = getSessionIdentity(session);
+  const currentPath = getDashboardPathForRole(session.role);
+  const navigation = buildDashboardNavigation(session, currentPath);
+
+  return `<!doctype html><html lang="fr"><head>${renderPageHead(title)}</head><body><div class="el-app-shell">
+    <aside class="el-sidebar">
+      <div class="el-sidebar-brand">
+        <p class="el-brand-title">🎓 EducLink</p>
+        <p class="el-brand-subtitle">L’école connectée, intelligente et simplifiée</p>
+      </div>
+      <nav class="el-sidebar-nav">${navigation}</nav>
+      <div class="el-sidebar-gradient"></div>
+    </aside>
+    <div class="el-app-main">
+      <header class="el-app-header">
+        <div>
+          <p class="el-header-school">${identity.tenantLabel}</p>
+          <h1 class="el-header-title">${title}</h1>
+        </div>
+        <div class="el-user-box">
+          <p class="el-user-name">${identity.displayName}</p>
+          <p class="el-user-email">${identity.email}</p>
+          <p><span class="el-badge">${identity.roleLabel}</span></p>
+          <form method="POST" action="/logout"><button type="submit">Logout</button></form>
+        </div>
+      </header>
+      <main class="el-dashboard-content">
+        ${body}
+      </main>
+    </div>
+  </div></body></html>`;
 }
 
 function renderAdminDashboard(session, metrics) {
   return renderDashboardLayout(
     'Dashboard Admin',
     session,
-    `<h2>Synthèse établissement</h2>
-    <ul>
-      <li>Classes actives: ${metrics.classRoomsCount}</li>
-      <li>Élèves actifs: ${metrics.studentsCount}</li>
-      <li>Responsables actifs: ${metrics.parentsCount}</li>
-      <li>Enseignants actifs: ${metrics.teachersCount}</li>
-    </ul>
-    <h2>Raccourcis</h2>
-    <p><a href="/admin/students">Gérer les élèves</a></p>
-    <p><a href="/admin/parents">Gérer les responsables</a></p>
-    <p><a href="/admin/teachers">Gérer les enseignants</a></p>
-    <p><a href="/admin/finance">Suivi finance</a></p>
-    <p><a href="/admin/attendance">Consulter les présences</a></p>
-    <p><a href="/admin/announcements">Publier une annonce</a></p>
-    <p><a href="/inbox">Ouvrir l'inbox</a></p>`
+    `<section class="el-card">
+      <h2>Synthèse établissement</h2>
+      <div class="el-metric-grid">
+        <div><strong>${metrics.classRoomsCount}</strong><br/><span>Classes actives</span></div>
+        <div><strong>${metrics.studentsCount}</strong><br/><span>Élèves actifs</span></div>
+        <div><strong>${metrics.parentsCount}</strong><br/><span>Responsables actifs</span></div>
+        <div><strong>${metrics.teachersCount}</strong><br/><span>Enseignants actifs</span></div>
+      </div>
+      <ul>
+        <li>Classes actives: ${metrics.classRoomsCount}</li>
+        <li>Élèves actifs: ${metrics.studentsCount}</li>
+        <li>Responsables actifs: ${metrics.parentsCount}</li>
+        <li>Enseignants actifs: ${metrics.teachersCount}</li>
+      </ul>
+    </section>
+    <section class="el-card">
+      <h2>Raccourcis</h2>
+      <p><a href="/admin/students">Gérer les élèves</a> · <a href="/admin/parents">Gérer les responsables</a> · <a href="/admin/teachers">Gérer les enseignants</a></p>
+      <p><a href="/admin/finance">Suivi finance</a> · <a href="/admin/attendance">Consulter les présences</a> · <a href="/admin/announcements">Publier une annonce</a></p>
+      <p><a href="/inbox">Ouvrir l'inbox</a></p>
+    </section>`
   );
 }
 
@@ -678,17 +910,17 @@ function renderTeacherDashboard(session, teacher, classRooms, subjects) {
   return renderDashboardLayout(
     'Dashboard Teacher',
     session,
-    `<h2>Vue enseignant</h2>
-    <p>Classes assignées: ${classNames}</p>
-    <p>Matières assignées: ${subjectNames}</p>
-    <h2>Raccourcis métier</h2>
-    <p><a href="/admin/students">Mes classes</a></p>
-    <p><a href="/teacher/attendance">Faire l'appel</a></p>
-    <p><a href="/teacher/lesson-homework">Cahier de texte & devoirs</a></p>
-    <p><a href="/teacher/grades">Évaluations & notes</a></p>
-    <p><a href="/teacher/report-comments">Appréciations IA (brouillon)</a></p>
-    <p><a href="/inbox">Ouvrir l'inbox</a></p>
-    <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>`
+    `<section class="el-card">
+      <h2>Vue enseignant</h2>
+      <p>Classes assignées: ${classNames}</p>
+      <p>Matières assignées: ${subjectNames}</p>
+      <p>${teacher ? `Profil: ${teacher.firstName} ${teacher.lastName}` : 'Profil enseignant en cours de liaison.'}</p>
+    </section>
+    <section class="el-card">
+      <h2>Raccourcis métier</h2>
+      <p><a href="/admin/students">Mes classes</a> · <a href="/teacher/attendance">Faire l'appel</a> · <a href="/teacher/lesson-homework">Cahier de texte & devoirs</a></p>
+      <p><a href="/teacher/grades">Évaluations & notes</a> · <a href="/teacher/report-comments">Appréciations IA (brouillon)</a> · <a href="/inbox">Ouvrir l'inbox</a></p>
+    </section>`
   );
 }
 
@@ -834,14 +1066,15 @@ function renderParentDashboard(session, children) {
   return renderDashboardLayout(
     'Dashboard Parent',
     session,
-    `<h2>Mes enfants</h2>
-    ${list}
-    <h2>Informations utiles</h2>
-    <p><a href="/parent/homeworks">Consulter les devoirs</a></p>
-    <p><a href="/parent/grades">Consulter les notes</a></p>
-    <p><a href="/parent/finance">Consulter le statut financier</a></p>
-    <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a></p>
-    <p><a href="/inbox">Ouvrir l'inbox</a></p>`
+    `<section class="el-card">
+      <h2>Mes enfants</h2>
+      ${list}
+    </section>
+    <section class="el-card">
+      <h2>Informations utiles</h2>
+      <p><a href="/parent/homeworks">Consulter les devoirs</a> · <a href="/parent/grades">Consulter les notes</a> · <a href="/parent/finance">Consulter le statut financier</a></p>
+      <p><a href="/admin/students">Annuaire élèves (lecture selon permissions)</a> · <a href="/inbox">Ouvrir l'inbox</a></p>
+    </section>`
   );
 }
 
@@ -849,13 +1082,16 @@ function renderStudentDashboard(session, student) {
   return renderDashboardLayout(
     'Dashboard Student',
     session,
-    `<h2>Mon espace</h2>
-    <p>Nom: ${student ? `${student.firstName} ${student.lastName}` : 'Profil étudiant non trouvé'}</p>
-    <p>Classe: ${student?.classRoomId ?? '-'}</p>
-    <p>Matricule: ${student?.admissionNumber ?? '-'}</p>
-    <p><a href="/student/homeworks">Mes devoirs</a></p>
-    <p><a href="/student/grades">Mes notes</a></p>
-    <p><a href="/inbox">Ouvrir l'inbox</a></p>`
+    `<section class="el-card">
+      <h2>Mon espace</h2>
+      <p>Nom: ${student ? `${student.firstName} ${student.lastName}` : 'Profil étudiant non trouvé'}</p>
+      <p>Classe: ${student?.classRoomId ?? '-'}</p>
+      <p>Matricule: ${student?.admissionNumber ?? '-'}</p>
+    </section>
+    <section class="el-card">
+      <h2>Mes accès rapides</h2>
+      <p><a href="/student/homeworks">Mes devoirs</a> · <a href="/student/grades">Mes notes</a> · <a href="/inbox">Ouvrir l'inbox</a></p>
+    </section>`
   );
 }
 
