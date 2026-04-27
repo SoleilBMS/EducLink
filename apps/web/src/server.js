@@ -2352,7 +2352,7 @@ function createServer({
       return;
     }
 
-    if (request.method === 'GET' && url.pathname === '/healthz') {
+    if (request.method === 'GET' && (url.pathname === '/health' || url.pathname === '/api/health' || url.pathname === '/healthz')) {
       const health = await checkHealth(runtimeEnv);
       const statusCode = health.status === 'ok' ? 200 : 503;
       sendJson(response, statusCode, {
