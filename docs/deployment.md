@@ -126,6 +126,9 @@ curl -i http://localhost:3000/healthz
 - Les validations de config sont compatibles CI (`NODE_ENV=test` autorisé).
 - Cette base reste neutre vis-à-vis de l'hébergeur (VM, container, PaaS) et peut être branchée à un déploiement automatisé plus tard.
 
+## Railway (public staging)
+
+For a step-by-step Railway staging setup, see `docs/deployment-railway.md`.
 
 ## 8) Pilot handover quick path (non-core contributor)
 
