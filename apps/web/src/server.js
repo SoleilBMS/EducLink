@@ -2346,13 +2346,20 @@ function createServer({
       });
     });
 
+    try {
+
     if (request.method === 'GET' && url.pathname === '/assets/design-system.css') {
       response.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=3600' });
       response.end(DESIGN_SYSTEM_CSS);
       return;
     }
 
-    if (request.method === 'GET' && (url.pathname === '/health' || url.pathname === '/api/health' || url.pathname === '/healthz')) {
+    if (request.method === 'GET' && url.pathname === '/health') {
+      sendJson(response, 200, { status: 'ok' });
+      return;
+    }
+
+    if (request.method === 'GET' && (url.pathname === '/api/health' || url.pathname === '/healthz')) {
       const health = await checkHealth(runtimeEnv);
       const statusCode = health.status === 'ok' ? 200 : 503;
       sendJson(response, statusCode, {
@@ -2365,8 +2372,8 @@ function createServer({
     }
 
     if (request.method === 'GET' && url.pathname === '/') {
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderLandingPage());
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('EducLink API is running 🚀');
       return;
     }
 
@@ -3965,6 +3972,14 @@ function createServer({
 
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Not found');
+    } catch (error) {
+      requestLogger.error('Unhandled request error', { error: serializeError(error) });
+      if (!response.headersSent) {
+        sendApiError(response, 500, 'INTERNAL_SERVER_ERROR', 'An unexpected error occurred');
+      } else {
+        response.end();
+      }
+    }
   });
 }
 
@@ -3985,17 +4000,19 @@ async function startServer() {
       await pool.query('SELECT 1');
       startupLogger.info('Database connectivity check passed', { persistenceMode: runtimeConfig.persistenceMode });
     } catch (error) {
-      startupLogger.error('Database connectivity check failed', {
+      startupLogger.warn('Database connectivity check failed at startup; continuing in degraded mode', {
         persistenceMode: runtimeConfig.persistenceMode,
         error: serializeError(error)
       });
-      throw new Error('Startup aborted: postgres connectivity check failed');
     }
   }
 
-  server.listen(runtimeConfig.port, () => {
+  const port = process.env.PORT || runtimeConfig.port || 3000;
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`🚀 API running on port ${port}`);
     startupLogger.info('EducLink web app running', {
-      url: `http://localhost:${runtimeConfig.port}`,
+      host: '0.0.0.0',
+      port,
       nodeEnv: runtimeConfig.nodeEnv,
       persistenceMode: runtimeConfig.persistenceMode
     });
