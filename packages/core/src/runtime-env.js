@@ -24,6 +24,18 @@ function parsePort(rawValue) {
   return parsed;
 }
 
+function parseHost(rawValue, nodeEnv) {
+  if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
+    return rawValue.trim();
+  }
+
+  if (nodeEnv === 'production' || nodeEnv === 'staging') {
+    return '0.0.0.0';
+  }
+
+  return '127.0.0.1';
+}
+
 function validateRuntimeEnv(env = process.env) {
   const errors = [];
 
@@ -51,6 +63,7 @@ function validateRuntimeEnv(env = process.env) {
   }
 
   const databaseUrl = env.DATABASE_URL ?? '';
+  const host = parseHost(env.HOST, nodeEnv);
   if (persistenceMode === 'postgres' && isBlank(databaseUrl)) {
     errors.push('DATABASE_URL is required when EDUCLINK_PERSISTENCE=postgres');
   }
@@ -64,6 +77,7 @@ function validateRuntimeEnv(env = process.env) {
     errors,
     config: {
       nodeEnv,
+      host,
       port,
       persistenceMode,
       databaseUrl,
@@ -85,5 +99,6 @@ function loadRuntimeEnv(env = process.env) {
 module.exports = {
   validateRuntimeEnv,
   loadRuntimeEnv,
-  parsePort
+  parsePort,
+  parseHost
 };

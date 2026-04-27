@@ -3986,7 +3986,8 @@ function createServer({
 module.exports = {
   createServer,
   createSeedData,
-  parseCookies
+  parseCookies,
+  startServer
 };
 
 async function startServer() {
@@ -4007,11 +4008,12 @@ async function startServer() {
     }
   }
 
-  const port = process.env.PORT || runtimeConfig.port || 3000;
-  server.listen(port, '0.0.0.0', () => {
-    console.log(`🚀 API running on port ${port}`);
+  const host = runtimeConfig.host;
+  const port = runtimeConfig.port;
+  server.listen(port, host, () => {
+    console.log(`🚀 API running on http://${host}:${port}`);
     startupLogger.info('EducLink web app running', {
-      host: '0.0.0.0',
+      host,
       port,
       nodeEnv: runtimeConfig.nodeEnv,
       persistenceMode: runtimeConfig.persistenceMode

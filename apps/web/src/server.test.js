@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createServer, parseCookies } = require('./server');
+const { createServer, parseCookies, startServer } = require('./server');
 const { sendApiError } = require('./routes/shared-http');
 const { SessionStore } = require('../../../packages/auth/src/session/session-store');
 const { PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore } = require('./modules/ai');
@@ -216,6 +216,75 @@ test('healthcheck retourne ok en mode mémoire', async () => {
     assert.equal(payload.status, 'ok');
     assert.equal(payload.persistence.mode, 'memory');
   });
+});
+
+test('health endpoint /health répond 200', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/health`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.status, 'ok');
+  });
+});
+
+test('root endpoint / répond 200', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /EducLink/);
+  });
+});
+
+test('startServer écoute sur HOST/PORT résolus depuis l’environnement', async () => {
+  const previousEnv = {
+    NODE_ENV: process.env.NODE_ENV,
+    EDUCLINK_PERSISTENCE: process.env.EDUCLINK_PERSISTENCE,
+    DATABASE_URL: process.env.DATABASE_URL,
+    PORT: process.env.PORT,
+    HOST: process.env.HOST
+  };
+  process.env.NODE_ENV = 'development';
+  process.env.EDUCLINK_PERSISTENCE = 'memory';
+  delete process.env.DATABASE_URL;
+  process.env.PORT = '4567';
+  process.env.HOST = '0.0.0.0';
+
+  const originalListen = require('node:http').Server.prototype.listen;
+  const originalOn = process.on;
+  let listenArgs = null;
+
+  require('node:http').Server.prototype.listen = function patchedListen(...args) {
+    listenArgs = args;
+    const callback = args.find((arg) => typeof arg === 'function');
+    if (callback) {
+      callback();
+    }
+    return this;
+  };
+
+  process.on = function patchedOn(event, handler) {
+    if (event === 'SIGTERM') {
+      return this;
+    }
+    return originalOn.call(this, event, handler);
+  };
+
+  try {
+    await startServer();
+    assert.equal(listenArgs[0], 4567);
+    assert.equal(listenArgs[1], '0.0.0.0');
+  } finally {
+    require('node:http').Server.prototype.listen = originalListen;
+    process.on = originalOn;
+    for (const key of Object.keys(previousEnv)) {
+      if (previousEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previousEnv[key];
+      }
+    }
+  }
 });
 test('login applique des attributs cookie de session sécurisés', async () => {
   await withServer(async (baseUrl) => {
