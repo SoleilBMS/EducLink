@@ -2353,6 +2353,7 @@ function createServer({
   const domainRouteHandlers = [
     createStudentRoutes({
       studentService: studentApiService,
+      teacherStore,
       auditWriter,
       sendApiError,
       sendApiSuccess,
@@ -2377,6 +2378,7 @@ function createServer({
     }),
     createAttendanceRoutes({
       attendanceService: attendanceApiService,
+      teacherStore,
       sendApiError,
       sendApiSuccess,
       parseJsonBody,
@@ -2526,6 +2528,30 @@ function createServer({
       sessionStore.destroy(rawSessionId);
       response.writeHead(302, { location: '/login', 'set-cookie': clearSessionCookie() });
       response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/v1/teachers/me') {
+      if (!session) {
+        sendApiError(response, 401, 'unauthenticated', 'Aucune session active');
+        return;
+      }
+      if (session.role !== ROLES.TEACHER) {
+        sendApiError(response, 403, 'forbidden', 'Endpoint réservé aux enseignants');
+        return;
+      }
+      const teacher = teacherStore.get(session.tenantId, session.userId, { includeArchived: false });
+      if (!teacher) {
+        sendApiError(response, 404, 'teacher_not_found', 'Profil enseignant introuvable');
+        return;
+      }
+      const classRooms = teacher.classRoomIds
+        .map((id) => coreSchoolStore.get('classRooms', session.tenantId, id))
+        .filter(Boolean);
+      const subjects = teacher.subjectIds
+        .map((id) => coreSchoolStore.get('subjects', session.tenantId, id))
+        .filter(Boolean);
+      sendApiSuccess(response, { ...teacher, classRooms, subjects });
       return;
     }
 
