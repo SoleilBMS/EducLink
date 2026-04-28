@@ -1,4 +1,5 @@
 import { Header } from '@/components/shell/Header';
+import { getCurrentUser, tenantLabel } from '@/lib/auth';
 
 const METRICS = [
   { label: 'Élèves inscrits', value: '342', delta: '+12 ce mois' },
@@ -26,15 +27,17 @@ const ALERT_STYLES: Record<string, string> = {
   danger: 'bg-red-50 text-red-900 border-red-200'
 };
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const user = await getCurrentUser();
+  if (!user) return null;
   return (
     <>
       <Header
-        schoolLabel="École Pilote · School A"
-        title="Tableau de bord — Direction"
-        userName="Karim Bouaziz"
-        userEmail="admin@school-a.test"
-        roleLabel="School Admin"
+        schoolLabel={tenantLabel(user.tenantId)}
+        title={`Tableau de bord — ${user.roleLabel}`}
+        userName={user.displayName}
+        userEmail={user.email}
+        roleLabel={user.roleLabel}
       />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

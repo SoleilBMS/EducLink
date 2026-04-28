@@ -2529,6 +2529,79 @@ function createServer({
       return;
     }
 
+    if (request.method === 'GET' && url.pathname === '/api/v1/auth/me') {
+      if (!session) {
+        if (hasStaleSessionCookie) {
+          response.setHeader('set-cookie', clearSessionCookie());
+        }
+        sendApiError(response, 401, 'unauthenticated', 'Aucune session active');
+        return;
+      }
+      const user = users.find((candidate) => candidate.id === session.userId);
+      if (!user) {
+        sessionStore.destroy(rawSessionId);
+        response.setHeader('set-cookie', clearSessionCookie());
+        sendApiError(response, 401, 'unauthenticated', 'Utilisateur introuvable');
+        return;
+      }
+      sendApiSuccess(response, {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        tenantId: user.tenantId,
+        sessionId: session.id
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/v1/auth/login') {
+      let credentials;
+      try {
+        credentials = await parseJsonBodyRaw(request);
+      } catch (error) {
+        sendApiError(response, 400, 'invalid_body', 'Body JSON invalide');
+        return;
+      }
+      const email = typeof credentials?.email === 'string' ? credentials.email.trim() : '';
+      const password = typeof credentials?.password === 'string' ? credentials.password : '';
+      if (!email || !password) {
+        sendApiError(response, 400, 'missing_credentials', 'email et password requis');
+        return;
+      }
+      const user = users.find((candidate) => candidate.email === email && candidate.password === password);
+      if (!user) {
+        requestLogger.warn('Authentication failed (JSON)', { actor: email });
+        sendApiError(response, 401, 'invalid_credentials', 'Identifiants invalides');
+        return;
+      }
+      const createdSession = sessionStore.create({ userId: user.id, role: user.role, tenantId: user.tenantId });
+      logAuthEvent(requestLogger, 'Authentication succeeded (JSON)', createdSession);
+      auditWriter.writeAuthEvent(createdSession, 'auth.login.success');
+      if (rawSessionId) {
+        sessionStore.destroy(rawSessionId);
+      }
+      response.setHeader('set-cookie', buildSessionCookie(createdSession.id));
+      sendApiSuccess(response, {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        tenantId: user.tenantId,
+        sessionId: createdSession.id
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/v1/auth/logout') {
+      if (session) {
+        auditWriter.writeAuthEvent(session, 'auth.logout');
+        logAuthEvent(requestLogger, 'Logout succeeded (JSON)', session);
+      }
+      sessionStore.destroy(rawSessionId);
+      response.setHeader('set-cookie', clearSessionCookie());
+      sendApiSuccess(response, { ok: true });
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname === '/dashboard') {
       const auth = requireAuth(session);
       if (!auth.allowed) {

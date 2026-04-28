@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { LogoMark } from '@/components/ui/Logo';
+import { LoginForm } from './LoginForm';
 
 const DEMO_ACCOUNTS = [
   { role: 'Admin', email: 'admin@school-a.test' },
@@ -29,35 +30,7 @@ export default function LoginPage() {
           </code>
         </p>
 
-        <form
-          method="POST"
-          action="/api/v1/auth/login"
-          className="mt-6 grid gap-4"
-        >
-          <label className="grid gap-1.5 text-sm font-medium">
-            Email
-            <input
-              type="email"
-              name="email"
-              required
-              defaultValue="admin@school-a.test"
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-base text-ink shadow-soft transition-all focus:border-brand-blue focus:shadow-[0_0_0_3px_rgba(37,99,235,0.18)] focus:outline-none"
-            />
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Mot de passe
-            <input
-              type="password"
-              name="password"
-              required
-              defaultValue="password123"
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-base text-ink shadow-soft transition-all focus:border-brand-blue focus:shadow-[0_0_0_3px_rgba(37,99,235,0.18)] focus:outline-none"
-            />
-          </label>
-          <button type="submit" className="btn-primary mt-2">
-            Se connecter
-          </button>
-        </form>
+        <LoginForm />
 
         <div className="mt-6 rounded-2xl border border-line bg-surface-alt p-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-ink-muted">

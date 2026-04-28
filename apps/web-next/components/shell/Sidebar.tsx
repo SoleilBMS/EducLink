@@ -2,22 +2,28 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTransition } from 'react';
 import { LogoMark } from '@/components/ui/Logo';
+import { logoutAction } from '@/app/actions/auth';
 
-type NavItem = { href: string; label: string; icon: string };
+type NavItem = { href: string; label: string; icon: string; roles?: readonly string[] };
 
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Tableau de bord', icon: '◇' },
-  { href: '/students', label: 'Élèves', icon: '○' },
-  { href: '/classes', label: 'Classes', icon: '◧' },
+  { href: '/students', label: 'Élèves', icon: '○', roles: ['super_admin', 'school_admin', 'director', 'teacher'] },
+  { href: '/classes', label: 'Classes', icon: '◧', roles: ['super_admin', 'school_admin', 'director', 'teacher'] },
   { href: '/attendance', label: 'Absences', icon: '⊖' },
   { href: '/grades', label: 'Notes', icon: '☆' },
-  { href: '/finance', label: 'Finance', icon: '◈' },
+  { href: '/finance', label: 'Finance', icon: '◈', roles: ['super_admin', 'school_admin', 'accountant', 'parent'] },
   { href: '/messaging', label: 'Messagerie', icon: '✉' }
 ];
 
-export function Sidebar() {
+export function Sidebar({ role }: { role: string }) {
   const pathname = usePathname();
+  const [pending, startTransition] = useTransition();
+
+  const visibleItems = NAV.filter((item) => !item.roles || item.roles.includes(role));
+
   return (
     <aside className="hidden w-64 shrink-0 flex-col gap-5 border-r border-line bg-white px-4 py-5 lg:sticky lg:top-0 lg:flex lg:h-screen">
       <div className="rounded-2xl border border-brand-blue/10 bg-brand-soft p-4">
@@ -33,7 +39,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5">
-        {NAV.map((item) => {
+        {visibleItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
           return (
             <Link
@@ -57,12 +63,15 @@ export function Sidebar() {
 
       <div className="mt-auto flex flex-col gap-3">
         <div className="h-1.5 rounded-full bg-brand-gradient opacity-85" />
-        <Link
-          href="/logout"
-          className="text-center text-xs font-medium text-ink-muted hover:text-brand-blue"
-        >
-          Se déconnecter
-        </Link>
+        <form action={() => startTransition(() => logoutAction())}>
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl border border-line px-3 py-2 text-center text-xs font-semibold text-ink-muted transition-all hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-60"
+          >
+            {pending ? 'Déconnexion…' : 'Se déconnecter'}
+          </button>
+        </form>
       </div>
     </aside>
   );

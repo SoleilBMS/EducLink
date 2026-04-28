@@ -1,4 +1,6 @@
 import { Header } from '@/components/shell/Header';
+import { getCurrentUser, tenantLabel, SESSION_COOKIE } from '@/lib/auth';
+import { cookies } from 'next/headers';
 
 type Student = {
   id: string;
@@ -16,17 +18,28 @@ const FALLBACK_STUDENTS: Student[] = [
   { id: 'student-a5', firstName: 'Lina', lastName: 'Cherif', admissionNumber: 'A-005', classRoomId: 'class-a3', dateOfBirth: '2012-11-04' }
 ];
 
-async function fetchStudents(): Promise<{ items: Student[]; live: boolean }> {
+async function fetchStudents(tenantId: string | null): Promise<{ items: Student[]; live: boolean }> {
+  const sessionId = cookies().get(SESSION_COOKIE)?.value;
+  const apiBase = process.env.EDUCLINK_API_URL || 'http://localhost:3000';
   try {
-    const res = await fetch('http://localhost:3000/api/v1/students', {
-      headers: { 'x-tenant-id': 'school-a' },
+    const res = await fetch(`${apiBase}/api/v1/students`, {
+      headers: {
+        ...(sessionId ? { cookie: `${SESSION_COOKIE}=${sessionId}` } : {}),
+        ...(tenantId ? { 'x-tenant-id': tenantId } : {})
+      },
       cache: 'no-store'
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const items: Student[] = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
-    if (!items.length) throw new Error('empty');
-    return { items, live: true };
+    const list = Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data)
+          ? data
+          : [];
+    if (!list.length) throw new Error('empty');
+    return { items: list as Student[], live: true };
   } catch {
     return { items: FALLBACK_STUDENTS, live: false };
   }
@@ -40,16 +53,18 @@ function formatAge(dob: string): string {
 }
 
 export default async function StudentsPage() {
-  const { items, live } = await fetchStudents();
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const { items, live } = await fetchStudents(user.tenantId);
 
   return (
     <>
       <Header
-        schoolLabel="École Pilote · School A"
+        schoolLabel={tenantLabel(user.tenantId)}
         title="Élèves"
-        userName="Karim Bouaziz"
-        userEmail="admin@school-a.test"
-        roleLabel="School Admin"
+        userName={user.displayName}
+        userEmail={user.email}
+        roleLabel={user.roleLabel}
       />
 
       <section className="card p-6">
