@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE } from '@/lib/auth';
 
-const PROTECTED_PREFIXES = ['/dashboard', '/students', '/classes', '/attendance', '/grades', '/finance', '/messaging'];
+const PROTECTED_PREFIXES = ['/dashboard', '/students', '/classes', '/attendance', '/grades', '/finance', '/messaging', '/lesson-homework'];
 const AUTH_PAGES = ['/login'];
 
 export function middleware(request: NextRequest) {

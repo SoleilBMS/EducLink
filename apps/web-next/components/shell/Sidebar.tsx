@@ -12,7 +12,8 @@ const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Tableau de bord', icon: '◇' },
   { href: '/students', label: 'Élèves', icon: '○', roles: ['super_admin', 'school_admin', 'director', 'teacher'] },
   { href: '/classes', label: 'Classes', icon: '◧', roles: ['super_admin', 'school_admin', 'director', 'teacher'] },
-  { href: '/attendance', label: 'Absences', icon: '⊖' },
+  { href: '/attendance', label: 'Absences', icon: '⊖', roles: ['super_admin', 'school_admin', 'teacher'] },
+  { href: '/lesson-homework', label: 'Cahier de texte', icon: '✎', roles: ['teacher'] },
   { href: '/grades', label: 'Notes', icon: '☆' },
   { href: '/finance', label: 'Finance', icon: '◈', roles: ['super_admin', 'school_admin', 'accountant', 'parent'] },
   { href: '/messaging', label: 'Messagerie', icon: '✉' }

@@ -2,10 +2,12 @@ const { ROLES } = require('../../../../packages/auth/src/roles/roles');
 const { authorizeApiRequest } = require('../../../../packages/auth/src/guards/api-guard');
 const { buildNotFoundError, ensureAuthorized, handleRouteError } = require('./error-helpers');
 
-function createStudentRoutes({ studentService, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
+function createStudentRoutes({ studentService, teacherStore, auditWriter, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
   return async function handleStudentRoutes({ request, response, url, session }) {
     if (url.pathname === '/api/v1/students' && request.method === 'GET') {
-      const auth = authorizeApiRequest(session, null, { allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] });
+      const auth = authorizeApiRequest(session, null, {
+        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER]
+      });
       const authError = ensureAuthorized(auth);
       if (authError) {
         sendApiError(response, authError);
@@ -14,6 +16,22 @@ function createStudentRoutes({ studentService, auditWriter, sendApiError, sendAp
 
       const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
       const classRoomId = url.searchParams.get('classRoomId') ?? undefined;
+
+      // Teachers may only list students of class rooms they own.
+      if (session.role === ROLES.TEACHER) {
+        if (!classRoomId) {
+          sendApiError(response, 400, 'CLASSROOM_REQUIRED', 'classRoomId est requis pour un enseignant');
+          return true;
+        }
+        if (teacherStore) {
+          const teacher = teacherStore.get(tenantId, session.userId, { includeArchived: false });
+          if (!teacher || !teacher.classRoomIds.includes(classRoomId)) {
+            sendApiError(response, 403, 'FORBIDDEN', 'Enseignant non autorisé pour cette classe');
+            return true;
+          }
+        }
+      }
+
       sendApiSuccess(response, await studentService.listStudents(tenantId, { classRoomId }));
       return true;
     }
