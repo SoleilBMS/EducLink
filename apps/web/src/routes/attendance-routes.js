@@ -2,11 +2,19 @@ const { ROLES } = require('../../../../packages/auth/src/roles/roles');
 const { authorizeApiRequest } = require('../../../../packages/auth/src/guards/api-guard');
 const { buildForbiddenError, ensureAuthorized, handleRouteError } = require('./error-helpers');
 
-function createAttendanceRoutes({ attendanceService, teacherStore, sendApiError, sendApiSuccess, parseJsonBody, buildTenantScope }) {
+function createAttendanceRoutes({
+  attendanceService,
+  teacherStore,
+  parentStore,
+  sendApiError,
+  sendApiSuccess,
+  parseJsonBody,
+  buildTenantScope
+}) {
   return async function handleAttendanceRoutes({ request, response, url, session }) {
     if (url.pathname === '/api/v1/attendance' && request.method === 'GET') {
       const auth = authorizeApiRequest(session, null, {
-        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.TEACHER]
+        allowedRoles: [ROLES.SCHOOL_ADMIN, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT]
       });
       const authError = ensureAuthorized(auth);
       if (authError) {
@@ -17,6 +25,7 @@ function createAttendanceRoutes({ attendanceService, teacherStore, sendApiError,
       try {
         const tenantId = buildTenantScope(session, Object.fromEntries(url.searchParams));
         const classRoomId = url.searchParams.get('classRoomId') || undefined;
+        const date = url.searchParams.get('date') || undefined;
 
         // Teachers may only list attendance for class rooms they own.
         if (session.role === ROLES.TEACHER) {
@@ -33,10 +42,30 @@ function createAttendanceRoutes({ attendanceService, teacherStore, sendApiError,
           }
         }
 
-        const records = await attendanceService.listAttendance(tenantId, {
-          date: url.searchParams.get('date') || undefined,
-          classRoomId
-        });
+        // Parents see attendance only for their linked children.
+        if (session.role === ROLES.PARENT) {
+          const childIds = parentStore
+            ? new Set(
+                parentStore.listLinksByParent(tenantId, session.userId).map((link) => link.studentId)
+              )
+            : new Set();
+          const records = (await attendanceService.listAttendance(tenantId, { date, classRoomId })).filter(
+            (record) => childIds.has(record.studentId)
+          );
+          sendApiSuccess(response, records);
+          return true;
+        }
+
+        // Students see only their own attendance.
+        if (session.role === ROLES.STUDENT) {
+          const records = (await attendanceService.listAttendance(tenantId, { date, classRoomId })).filter(
+            (record) => record.studentId === session.userId
+          );
+          sendApiSuccess(response, records);
+          return true;
+        }
+
+        const records = await attendanceService.listAttendance(tenantId, { date, classRoomId });
         sendApiSuccess(response, records);
       } catch (error) {
         handleRouteError(sendApiError, response, error, { status: 422, code: 'VALIDATION_ERROR', message: 'Validation failed' });
