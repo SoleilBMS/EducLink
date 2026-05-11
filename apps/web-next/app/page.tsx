@@ -1,96 +1,65 @@
 import Link from 'next/link';
-import { LogoMark } from '@/components/ui/Logo';
+import { LogoWordmark } from '@/components/ui/Logo';
 
-const FEATURES = [
-  {
-    title: 'Gestion administrative',
-    description:
-      'Admissions, classes, enseignants, dossiers élèves et opérations quotidiennes sur une base unifiée.'
-  },
-  {
-    title: 'Suivi pédagogique',
-    description:
-      'Notes, assiduité, devoirs, évaluations et visibilité continue pour accompagner la réussite.'
-  },
-  {
-    title: 'Communication école-parents',
-    description:
-      'Annonces, messagerie et partage d’informations entre l’établissement et les familles.'
-  },
-  {
-    title: 'Finance & paiements',
-    description:
-      'Frais, factures, paiements, soldes — vue claire pour l’administration et les parents.'
-  },
-  {
-    title: 'IA intégrée',
-    description:
-      'Génération d’appréciations, résumés de suivi, alertes pédagogiques — auditables et validés humainement.'
-  }
+const PILLARS = [
+  'Design system unifié (web + mobile)',
+  'UX multi-profils: admin, enseignant, parent, élève',
+  'Automations IA avec validation humaine',
+  'Architecture frontend scalable Next.js + Tailwind'
 ];
 
-const AUDIENCE = ['Direction', 'Administration', 'Enseignants', 'Parents', 'Élèves'];
+const PHASES = [
+  'PHASE 1 — Design system, navigation, layout shell',
+  'PHASE 2 — Landing premium + conversion',
+  'PHASE 3 — Dashboard admin, KPI, analytics',
+  'PHASE 4 — Espace enseignant (présences, notes, devoirs)',
+  'PHASE 5 — Portail parent (messagerie, suivi enfant)',
+  'PHASE 6-8 — Responsive, animations, accessibilité'
+];
 
 export default function LandingPage() {
   return (
-    <main className="mx-auto grid max-w-6xl gap-7 px-6 py-10">
-      <section className="relative overflow-hidden rounded-3xl border border-line bg-white p-10 shadow-elevated bg-hero-glow">
-        <span className="absolute inset-x-0 top-0 h-1 bg-brand-gradient" />
-        <div className="flex items-center gap-3 text-xl font-extrabold tracking-tightest">
-          <LogoMark className="h-10 w-10" />
-          <span className="text-brand-gradient">EducLink</span>
-        </div>
-        <h1 className="mt-5 max-w-[22ch] text-4xl font-extrabold leading-[1.1] tracking-tightest sm:text-5xl">
-          L’école connectée, intelligente et simplifiée
-        </h1>
-        <p className="mt-4 max-w-[60ch] text-lg leading-relaxed text-ink-muted">
-          La solution SaaS pensée pour les établissements privés en Algérie et en Afrique
-          francophone : gestion scolaire, communication et IA dans une expérience moderne et
-          rassurante.
-        </p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Link href="/login" className="btn-primary">
-            Se connecter
-          </Link>
-          <Link href="/dashboard" className="btn-secondary">
-            Voir la démo
-          </Link>
+    <main className="mx-auto max-w-7xl px-6 py-10">
+      <section className="relative overflow-hidden rounded-3xl border border-line bg-white p-8 shadow-elevated sm:p-12">
+        <div className="absolute inset-0 bg-hero-glow" />
+        <div className="relative">
+          <LogoWordmark className="text-2xl" />
+          <p className="mt-8 inline-flex rounded-full border border-brand-blue/20 bg-brand-blue/5 px-3 py-1 text-xs font-semibold text-brand-blue-dark">
+            EdTech ERP nouvelle génération · Algérie & Afrique
+          </p>
+          <h1 className="mt-5 max-w-[16ch] text-5xl font-extrabold leading-[1.03] tracking-tightest">
+            Le frontend SaaS éducatif premium, rapide et scalable.
+          </h1>
+          <p className="mt-4 max-w-[65ch] text-lg leading-relaxed text-ink-muted">
+            EducLink connecte direction, enseignants, parents et élèves dans une expérience moderne
+            inspirée des meilleurs standards SaaS (Linear, Stripe, Notion, Vercel).
+          </p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <Link href="/dashboard" className="btn-primary">Voir le dashboard</Link>
+            <Link href="/login" className="btn-secondary">Essayer la démo</Link>
+          </div>
         </div>
       </section>
 
-      <section className="card p-6">
-        <h2>Produit</h2>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map((f) => (
-            <article
-              key={f.title}
-              className="group rounded-2xl border border-line bg-white p-5 shadow-soft transition-all hover:-translate-y-1 hover:border-brand-blue/30 hover:shadow-card"
-            >
-              <h3 className="text-base font-bold">{f.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-ink-muted">{f.description}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="card p-6">
-        <h2>Pour qui ?</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {AUDIENCE.map((a) => (
-            <div
-              key={a}
-              className="rounded-xl border border-line bg-surface-alt px-4 py-3 text-center text-sm font-semibold text-ink"
-            >
-              {a}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-2xl border-l-4 border-brand-purple bg-gradient-to-r from-brand-purple/[0.06] to-transparent p-5 text-sm text-ink-muted">
-        <strong className="text-ink">Note de transparence : </strong>
-        version pilot/demo-ready. Certaines fonctionnalités restent en évolution avant la mise en
-        production généralisée.
+      <section className="mt-6 grid gap-6 lg:grid-cols-2">
+        <article className="card p-6">
+          <h2>System pillars</h2>
+          <ul className="mt-4 grid gap-3">
+            {PILLARS.map((item) => (
+              <li key={item} className="rounded-xl border border-line bg-surface-alt px-4 py-3 text-sm text-ink">
+                {item}
+              </li>
+            ))}
+          </ul>
+        </article>
+        <article className="card p-6">
+          <h2>Roadmap UX/UI</h2>
+          <ul className="mt-4 grid gap-2">
+            {PHASES.map((phase) => (
+              <li key={phase} className="text-sm text-ink-muted">• {phase}</li>
+            ))}
+          </ul>
+        </article>
       </section>
     </main>
   );
