@@ -2681,6 +2681,116 @@ test('USR-03: création élève avec accès crée un compte étudiant utilisable
   });
 });
 
+test('MSG: la page /inbox affiche le formulaire de nouvelle conversation avec destinataires', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/inbox`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Nouvelle conversation'), 'section compose présente');
+    assert.ok(html.includes('action="/inbox/threads"'), 'form action vers /inbox/threads');
+    assert.ok(html.includes('name="participantIds"'), 'checkboxes destinataires');
+    // extrait la section compose pour éviter de matcher l'email admin dans le header de page
+    const composeIdx = html.indexOf('Nouvelle conversation');
+    const composeSection = html.substring(composeIdx);
+    assert.ok(composeSection.includes('teacher@school-a.test'), 'teacher listé comme destinataire');
+    assert.ok(composeSection.includes('parent@school-a.test'), 'parent listé comme destinataire');
+    assert.ok(!composeSection.includes('value="admin-a"'), 'l\'utilisateur courant (admin-a) n\'est pas dans les destinataires');
+  });
+});
+
+test('MSG: admin crée un thread avec teacher → redirection ?success=sent', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/inbox/threads', {
+      cookie,
+      fields: {
+        subject: 'Réunion équipe pédagogique',
+        body: 'Bonjour, pouvons-nous nous voir vendredi à 16h ?',
+        participantIds: 'teacher-a1'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/inbox?success=sent');
+
+    const inbox = await fetch(`${baseUrl}/inbox?success=sent`, { headers: { cookie } });
+    const html = await inbox.text();
+    assert.ok(html.includes('Réunion équipe pédagogique'), 'le nouveau thread apparaît dans l\'inbox');
+    assert.ok(html.includes('Message envoyé'), 'banner succès affiché');
+  });
+});
+
+test('MSG: sujet trop court → redirection ?error=invalid_input', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/inbox/threads', {
+      cookie,
+      fields: { subject: 'Hi', body: 'Hello', participantIds: 'teacher-a1' }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/inbox?error=invalid_input');
+  });
+});
+
+test('MSG: aucun destinataire → redirection ?error=invalid_input', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/inbox/threads', {
+      cookie,
+      fields: { subject: 'Test sans destinataire', body: 'Message' }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/inbox?error=invalid_input');
+  });
+});
+
+test('MSG: tentative de message à un user d\'un autre tenant → invalid_input', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    // admin-b est dans school-b, donc hors scope tenant
+    const response = await postForm(baseUrl, '/inbox/threads', {
+      cookie,
+      fields: { subject: 'Cross tenant', body: 'Hack', participantIds: 'admin-b' }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/inbox?error=invalid_input');
+  });
+});
+
+test('DIR-TCH: director peut voir /admin/teachers en lecture seule', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/teachers`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Samira') || html.includes('teacher@school-a.test'), 'liste affichée');
+    assert.ok(!html.includes('Créer un enseignant'), 'formulaire de création masqué pour director');
+  });
+});
+
+test('DIR-TCH: director sur fiche teacher → lecture seule, pas de form update', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/teachers/teacher-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Vue lecture seule'), 'mention lecture seule');
+    assert.ok(!html.includes('action="/admin/teachers/teacher-a1/update"'), 'pas de form update');
+    assert.ok(!html.includes('action="/admin/teachers/teacher-a1/archive"'), 'pas de form archive');
+  });
+});
+
+test('DIR-TCH: director ne peut PAS poster sur /admin/teachers (403)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await postForm(baseUrl, '/admin/teachers', {
+      cookie,
+      fields: { firstName: 'X', lastName: 'Y', email: 'x@y.test', password: 'TempPass1!' }
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
 test('CRUD-02: admin peut éditer la classe et le matricule d\'un élève', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'admin@school-a.test');

@@ -351,6 +351,10 @@ function canManageTeachers(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
 
+function canViewTeachers(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+}
+
 function canAccessBulletinForStudent(session, student, { teacherStore, parentStore }) {
   if (!session || !student) return false;
   if (session.tenantId !== student.tenant_id) return false;
@@ -2039,7 +2043,7 @@ function renderStudentDashboard(session, dashboard) {
   );
 }
 
-function renderInboxPage(session, inbox) {
+function renderInboxPage(session, inbox, { recipients = [], errorCode = null, successMessage = null } = {}) {
   const announcementRows = inbox.announcements
     .map((item) => `<li><strong>${item.title}</strong> (${item.visibility})<br/>${item.body}</li>`)
     .join('');
@@ -2048,16 +2052,32 @@ function renderInboxPage(session, inbox) {
     .map((thread) => `<li><a href="/inbox/threads/${thread.id}">${thread.subject}</a> — ${thread.messageCount} message(s)</li>`)
     .join('');
 
+  const recipientCheckboxes = recipients.length === 0
+    ? '<p class="el-empty-state">Aucun destinataire disponible dans votre tenant.</p>'
+    : recipients
+        .map((user) => `<label><input type="checkbox" name="participantIds" value="${user.id}" /> ${user.displayName || user.email} <span class="el-muted">— ${user.roleLabel}</span></label><br/>`)
+        .join('');
+
   return renderDashboardLayout(
     'Inbox interne',
     session,
-    `<section class="el-card">
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
       <h2>Annonces</h2>
       <ul>${announcementRows || '<li class="el-empty-state">Aucune annonce.</li>'}</ul>
     </section>
     <section class="el-card">
       <h2>Threads</h2>
-      <ul>${threadRows || '<li class="el-empty-state">Aucun thread.</li>'}</ul>
+      <ul>${threadRows || '<li class="el-empty-state">Aucun thread. Démarre une nouvelle conversation ci-dessous.</li>'}</ul>
+    </section>
+    <section class="el-card">
+      <h2>Nouvelle conversation</h2>
+      <form method="POST" action="/inbox/threads">${csrfField(session)}
+        <label>Sujet <input name="subject" required minlength="3" maxlength="200" /></label><br/>
+        <fieldset><legend>Destinataires (au moins 1)</legend>${recipientCheckboxes}</fieldset>
+        <label>Message <textarea name="body" required minlength="1" maxlength="4000"></textarea></label><br/>
+        <button type="submit">Envoyer</button>
+      </form>
     </section>`
   );
 }
@@ -2767,7 +2787,7 @@ function renderAdminSuccessBanner(message) {
   return `<div class="el-banner is-success" role="status">${message}</div>`;
 }
 
-function renderTeachersPage(session, teachers, { errorCode = null, successMessage = null } = {}) {
+function renderTeachersPage(session, teachers, { errorCode = null, successMessage = null, canManage = false } = {}) {
   const rows = teachers
     .map(
       (teacher) => `<tr>
@@ -2779,11 +2799,8 @@ function renderTeachersPage(session, teachers, { errorCode = null, successMessag
       </tr>`
     )
     .join('');
-  return renderDashboardLayout(
-    'Gestion des enseignants',
-    session,
-    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
-    <section class="el-card"><h2>Créer un enseignant</h2>
+  const createCard = canManage
+    ? `<section class="el-card"><h2>Créer un enseignant</h2>
     <p class="el-muted">Crée à la fois la fiche enseignant et le compte de connexion (rôle enseignant).</p>
     <form method="POST" action="/admin/teachers">${csrfField(session)}
       <label>Prénom <input name="firstName" required /></label><br/>
@@ -2794,14 +2811,20 @@ function renderTeachersPage(session, teachers, { errorCode = null, successMessag
       <label>Notes <textarea name="notes"></textarea></label><br/>
       <button type="submit">Créer</button>
     </form>
-    </section><section class="el-card">
+    </section>`
+    : '';
+  return renderDashboardLayout(
+    'Gestion des enseignants',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    ${createCard}<section class="el-card">
     <h2>Liste</h2>
     <table><thead><tr><th>Nom</th><th>Email</th><th># Classes</th><th># Matières</th><th>Statut</th></tr></thead><tbody>${rows || '<tr><td colspan="5">Aucun enseignant.</td></tr>'}</tbody></table>
     </section>`
   );
 }
 
-function renderTeacherProfile(session, teacher, classRooms, subjects) {
+function renderTeacherProfile(session, teacher, classRooms, subjects, { canManage = false } = {}) {
   const classRoomCheckboxes = classRooms
     .map(
       (classRoom) =>
@@ -2816,15 +2839,8 @@ function renderTeacherProfile(session, teacher, classRooms, subjects) {
     .join('');
   const classNames = teacher.classRoomIds.map((classRoomId) => classRooms.find((item) => item.id === classRoomId)?.name || classRoomId).join(', ') || '-';
   const subjectNames = teacher.subjectIds.map((subjectId) => subjects.find((item) => item.id === subjectId)?.name || subjectId).join(', ') || '-';
-
-  return renderDashboardLayout(
-    'Fiche enseignant',
-    session,
-    `<section class="el-card">
-    <h2>${teacher.firstName} ${teacher.lastName}</h2>
-    <p><strong>ID:</strong> ${teacher.id}</p>
-    <p><strong>Statut:</strong> ${renderStatusBadge(teacher.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</p>
-    <h3>Informations</h3>
+  const manageForm = canManage
+    ? `<h3>Informations</h3>
     <form method="POST" action="/admin/teachers/${teacher.id}/update">${csrfField(session)}
       <label>Prénom <input name="firstName" value="${teacher.firstName}" required /></label><br/>
       <label>Nom <input name="lastName" value="${teacher.lastName}" required /></label><br/>
@@ -2837,7 +2853,22 @@ function renderTeacherProfile(session, teacher, classRooms, subjects) {
       ${subjectCheckboxes}
       <button type="submit">Enregistrer</button>
     </form>
-    <form method="POST" action="/admin/teachers/${teacher.id}/archive" data-confirm="Archiver cet enseignant ? Il disparaîtra des listes actives.">${csrfField(session)}<button type="submit">Archiver</button></form>
+    <form method="POST" action="/admin/teachers/${teacher.id}/archive" data-confirm="Archiver cet enseignant ? Il disparaîtra des listes actives.">${csrfField(session)}<button type="submit">Archiver</button></form>`
+    : `<p class="el-muted">Vue lecture seule. Seul un administrateur peut modifier ces informations.</p>
+    <p><strong>Prénom:</strong> ${teacher.firstName}</p>
+    <p><strong>Nom:</strong> ${teacher.lastName}</p>
+    <p><strong>Email:</strong> ${teacher.email || '-'}</p>
+    <p><strong>Téléphone:</strong> ${teacher.phone || '-'}</p>
+    <p><strong>Notes:</strong> ${teacher.notes || '-'}</p>`;
+
+  return renderDashboardLayout(
+    'Fiche enseignant',
+    session,
+    `<section class="el-card">
+    <h2>${teacher.firstName} ${teacher.lastName}</h2>
+    <p><strong>ID:</strong> ${teacher.id}</p>
+    <p><strong>Statut:</strong> ${renderStatusBadge(teacher.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</p>
+    ${manageForm}
     </section>
     <section class="el-card">
     <h2>Affectations existantes</h2>
@@ -4679,7 +4710,7 @@ function createServer({
 
     if (request.method === 'GET' && url.pathname === '/admin/teachers') {
       const auth = requireAuth(session);
-      if (!auth.allowed || !canManageTeachers(auth.context)) {
+      if (!auth.allowed || !canViewTeachers(auth.context)) {
         sendForbiddenPage(response, session);
         return;
       }
@@ -4689,7 +4720,8 @@ function createServer({
       response.end(
         renderTeachersPage(auth.context, teachers, {
           errorCode: url.searchParams.get('error'),
-          successMessage: url.searchParams.get('created') === '1' ? 'Enseignant créé. Le compte peut désormais se connecter.' : null
+          successMessage: url.searchParams.get('created') === '1' ? 'Enseignant créé. Le compte peut désormais se connecter.' : null,
+          canManage: canManageTeachers(auth.context)
         })
       );
       return;
@@ -4776,7 +4808,7 @@ function createServer({
 
     if (request.method === 'GET' && /^\/admin\/teachers\/[^/]+$/.test(url.pathname)) {
       const auth = requireAuth(session);
-      if (!auth.allowed || !canManageTeachers(auth.context)) {
+      if (!auth.allowed || !canViewTeachers(auth.context)) {
         sendForbiddenPage(response, session);
         return;
       }
@@ -4791,7 +4823,7 @@ function createServer({
       const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
       const subjects = coreSchoolStore.list('subjects', auth.context.tenantId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderTeacherProfile(auth.context, teacher, classRooms, subjects));
+      response.end(renderTeacherProfile(auth.context, teacher, classRooms, subjects, { canManage: canManageTeachers(auth.context) }));
       return;
     }
 
@@ -5394,9 +5426,81 @@ function createServer({
       }
 
       const inbox = messagingStore.getInbox(auth.context.tenantId, auth.context);
+      const tenantUsers = await activeUserStore.listByTenant(auth.context.tenantId);
+      const recipients = tenantUsers
+        .filter((user) => user.id !== auth.context.userId && user.isActive !== false)
+        .map((user) => ({
+          id: user.id,
+          email: user.email,
+          displayName: user.email || user.id,
+          roleLabel: getRoleLabel(user.role)
+        }))
+        .sort((a, b) => a.displayName.localeCompare(b.displayName, 'fr'));
+
+      const successParam = url.searchParams.get('success');
+      const successMessage = successParam === 'sent' ? 'Message envoyé.' : null;
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderInboxPage(auth.context, inbox));
+      response.end(renderInboxPage(auth.context, inbox, {
+        recipients,
+        errorCode: url.searchParams.get('error'),
+        successMessage
+      }));
       return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/inbox/threads') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canAccessInbox(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const form = parseExtendedForm(await readBody(request));
+      const subject = (form.get('subject') || '').trim();
+      const body = (form.get('body') || '').trim();
+      const participantIds = form.getAll('participantIds').filter((id) => typeof id === 'string' && id.length > 0);
+
+      if (!subject || subject.length < 3) {
+        response.writeHead(302, { location: '/inbox?error=invalid_input' });
+        response.end();
+        return;
+      }
+      if (!body) {
+        response.writeHead(302, { location: '/inbox?error=invalid_input' });
+        response.end();
+        return;
+      }
+      if (participantIds.length === 0) {
+        response.writeHead(302, { location: '/inbox?error=invalid_input' });
+        response.end();
+        return;
+      }
+
+      try {
+        const tenantUsers = await activeUserStore.listByTenant(auth.context.tenantId);
+        const allowedIds = new Set(tenantUsers.map((u) => u.id));
+        const sanitizedParticipants = participantIds.filter((id) => allowedIds.has(id) && id !== auth.context.userId);
+        if (sanitizedParticipants.length === 0) {
+          response.writeHead(302, { location: '/inbox?error=invalid_input' });
+          response.end();
+          return;
+        }
+        const { thread } = messagingStore.createThread(auth.context.tenantId, auth.context, {
+          subject,
+          participantIds: sanitizedParticipants,
+          initialMessage: body
+        });
+        auditWriter.writeEntityEvent(auth.context, 'message.thread_created', 'thread', thread.id);
+        response.writeHead(302, { location: '/inbox?success=sent' });
+        response.end();
+        return;
+      } catch (error) {
+        requestLogger.warn('Unable to create thread', { error: serializeError(error) });
+        response.writeHead(302, { location: '/inbox?error=invalid_input' });
+        response.end();
+        return;
+      }
     }
 
     const inboxThreadMatch = url.pathname.match(/^\/inbox\/threads\/([^/]+)$/);
