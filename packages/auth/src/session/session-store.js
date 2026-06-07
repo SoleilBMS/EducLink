@@ -1,5 +1,7 @@
 const crypto = require('node:crypto');
 
+const { generateCsrfToken } = require('../csrf/csrf');
+
 /**
  * @typedef {'super_admin'|'school_admin'|'director'|'teacher'|'parent'|'student'|'accountant'} Role
  *
@@ -10,9 +12,48 @@ const crypto = require('node:crypto');
  * @property {string | null} tenantId
  * @property {number} createdAt
  * @property {number} expiresAt
+ * @property {string} csrfToken
  */
 
 const DEFAULT_SESSION_TTL_MS = 1000 * 60 * 60 * 12;
+
+function signSessionId(sessionId, secret) {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) {
+    throw new Error('signSessionId requires a non-empty sessionId');
+  }
+  if (typeof secret !== 'string' || secret.length === 0) {
+    throw new Error('signSessionId requires a non-empty secret');
+  }
+  const signature = crypto.createHmac('sha256', secret).update(sessionId).digest('hex');
+  return `${sessionId}.${signature}`;
+}
+
+function verifySignedSessionId(signedValue, secret) {
+  if (typeof signedValue !== 'string' || signedValue.length === 0) {
+    return null;
+  }
+  const dotIndex = signedValue.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex === signedValue.length - 1) {
+    return null;
+  }
+  const sessionId = signedValue.slice(0, dotIndex);
+  const providedSignature = signedValue.slice(dotIndex + 1);
+  let expectedSignature;
+  try {
+    expectedSignature = crypto.createHmac('sha256', secret).update(sessionId).digest('hex');
+  } catch {
+    return null;
+  }
+  if (providedSignature.length !== expectedSignature.length) {
+    return null;
+  }
+  const providedBuffer = Buffer.from(providedSignature, 'utf8');
+  const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
+  if (!crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+    return null;
+  }
+  return sessionId;
+}
 
 class SessionStore {
   /**
@@ -38,7 +79,8 @@ class SessionStore {
       role: payload.role,
       tenantId: payload.tenantId,
       createdAt: now,
-      expiresAt: now + this.ttlMs
+      expiresAt: now + this.ttlMs,
+      csrfToken: generateCsrfToken()
     };
 
     this.sessions.set(id, session);
@@ -96,6 +138,7 @@ class SessionStore {
       typeof session.role === 'string' &&
       typeof session.createdAt === 'number' &&
       typeof session.expiresAt === 'number' &&
+      typeof session.csrfToken === 'string' &&
       (typeof session.tenantId === 'string' || session.tenantId === null)
     );
   }
@@ -103,5 +146,7 @@ class SessionStore {
 
 module.exports = {
   DEFAULT_SESSION_TTL_MS,
-  SessionStore
+  SessionStore,
+  signSessionId,
+  verifySignedSessionId
 };

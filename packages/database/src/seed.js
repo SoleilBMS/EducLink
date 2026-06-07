@@ -1,4 +1,20 @@
 const { getPool, closePool } = require('./client');
+const { hashPassword } = require('../../auth/src/password/password-hasher');
+
+const DEFAULT_SEED_PASSWORD = 'password123';
+
+const seedUsers = [
+  { id: 'super-admin', email: 'superadmin@platform.test', role: 'super_admin', tenantId: null },
+  { id: 'admin-a', email: 'admin@school-a.test', role: 'school_admin', tenantId: 'school-a' },
+  { id: 'admin-b', email: 'admin@school-b.test', role: 'school_admin', tenantId: 'school-b' },
+  { id: 'director-a', email: 'director@school-a.test', role: 'director', tenantId: 'school-a' },
+  { id: 'teacher-a1', email: 'teacher@school-a.test', role: 'teacher', tenantId: 'school-a' },
+  { id: 'teacher-a2', email: 'teacher2@school-a.test', role: 'teacher', tenantId: 'school-a' },
+  { id: 'parent-a1', email: 'parent@school-a.test', role: 'parent', tenantId: 'school-a' },
+  { id: 'parent-a2', email: 'parent2@school-a.test', role: 'parent', tenantId: 'school-a' },
+  { id: 'student-a1', email: 'student@school-a.test', role: 'student', tenantId: 'school-a' },
+  { id: 'accountant-a', email: 'accountant@school-a.test', role: 'accountant', tenantId: 'school-a' }
+];
 
 const classRooms = [
   { id: 'class-a1', tenantId: 'school-a', name: 'A1', gradeLevelId: 'grade-a-1', capacity: 30 },
@@ -224,8 +240,22 @@ async function insertMany(pool, query, rows, mapper) {
   }
 }
 
+async function seedUsersTable(pool) {
+  const passwordHash = await hashPassword(DEFAULT_SEED_PASSWORD);
+  for (const user of seedUsers) {
+    await pool.query(
+      `INSERT INTO users (id, tenant_id, email, password_hash, role, is_active)
+       VALUES ($1, $2, $3, $4, $5, TRUE)
+       ON CONFLICT (id) DO NOTHING`,
+      [user.id, user.tenantId, user.email, passwordHash, user.role]
+    );
+  }
+}
+
 async function seed() {
   const pool = getPool();
+
+  await seedUsersTable(pool);
 
   await insertMany(
     pool,

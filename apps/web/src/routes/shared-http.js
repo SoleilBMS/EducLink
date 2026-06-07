@@ -3,12 +3,20 @@ const crypto = require('node:crypto');
 const { buildValidationError, toApiErrorPayload } = require('../modules/error-utils');
 
 function readBody(request) {
+  if (request && typeof request._bodyText === 'string') {
+    return Promise.resolve(request._bodyText);
+  }
   return new Promise((resolve) => {
     let body = '';
     request.on('data', (chunk) => {
       body += chunk;
     });
-    request.on('end', () => resolve(body));
+    request.on('end', () => {
+      if (request) {
+        request._bodyText = body;
+      }
+      resolve(body);
+    });
   });
 }
 

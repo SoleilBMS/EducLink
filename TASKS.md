@@ -1,463 +1,371 @@
 # TASKS — EducLink
+# Backlog complet : de l'état actuel au déploiement production
+# Mis à jour : 2026-06-07
 
-## Suivi d'avancement (2026-04-19)
-
-- ✅ P0-001 Initialiser le monorepo (structure + config de base)
-- ✅ P0-003 Définir les conventions de code (doc conventions + API)
-- 🟡 P0-103 Multi-tenant (helpers de scoping tenant côté package core)
-
----
-
-## Objectif
-
-Découper le projet EducLink en lots clairs, priorisés et directement exploitables par une équipe produit / tech / IA ou par Codex.
+> **Progression** : Sprint 1 sécurité **terminé** (SEC-01 à SEC-08). Sprint 2 gestion utilisateurs UI **terminé pour USR-01..04** (USR-05/06 reportés au Sprint 7, dépendent du service email OPS-04). Prêt à attaquer Sprint 3 (structure école UI) ou Sprint 7 (déploiement Railway).
 
 ---
 
 ## Légende
 
-- P0 = critique MVP
-- P1 = important post-MVP proche
-- P2 = extension
-- FE = frontend
-- BE = backend
-- DB = data
-- IA = intelligence artificielle
-- SEC = sécurité
-- QA = tests
+- ✅ Fait
+- 🟡 Partiel / en cours
+- ❌ À faire
+
+Priorités :
+- **BLOQUANT** = ne pas déployer sans ça
+- **PILOT** = nécessaire pour tester avec une vraie école
+- **CONFORT** = améliore l'expérience mais pas bloquant
+
+Modules : BE = backend · UI = interface utilisateur · DB = base de données · SEC = sécurité · OPS = infrastructure
 
 ---
 
-## EPIC 0 — Foundation & Project Setup
+## État actuel (socle fonctionnel confirmé)
 
-### P0-001 Initialiser le monorepo
-- créer la structure `apps/`, `packages/`, `docs/`, `infra/`
-- config TypeScript
-- config lint / format
-- config env example
-- config CI initiale
+Les éléments suivants **existent et fonctionnent** dans `apps/web` :
 
-### P0-002 Mettre en place le design system de base
-- tokens UI
-- composants bouton / input / card / modal / table
-- layout dashboard
-- navigation sidebar/topbar
-
-### P0-003 Définir les conventions de code
-- naming
-- structure modules
-- erreurs
-- validations
-- tests
-
-### P0-004 Préparer la documentation produit et technique
-- README
-- PRD
-- ARCHITECTURE
-- TASKS
-- conventions API
-
----
-
-## EPIC 1 — Auth, Roles, Tenant
-
-### P0-101 Implémenter l’authentification
-- login
-- logout
-- reset password
-- gestion session
-
-### P0-102 Implémenter le modèle de rôles
-- super_admin
-- school_admin
-- director
-- teacher
-- parent
-- student
-- accountant
-
-### P0-103 Implémenter le multi-tenant
-- modèle Tenant
-- rattachement School → Tenant
-- scoping requêtes
-- protections anti-fuite
-
-### P0-104 Créer les guards d’autorisation
-- route guards
-- API guards
-- helper permissions
-
-### P0-105 Ajouter audit logs sécurité
-- connexions
-- accès sensibles
-- changements de rôles
+- ✅ Serveur Node.js avec routage HTTP
+- ✅ Connexion / déconnexion avec session cookie
+- ✅ 7 rôles : super_admin, school_admin, director, teacher, parent, student, accountant
+- ✅ Isolation multi-tenant sur toutes les requêtes
+- ✅ Structure école (niveaux, classes, matières, années scolaires)
+- ✅ Fiches élèves, parents, enseignants avec archivage
+- ✅ Lien parent ↔ élève
+- ✅ Appel / présences (enseignant prend l'appel, admin visualise)
+- ✅ Cahier de texte + devoirs
+- ✅ Évaluations + saisie des notes
+- ✅ IA : génération brouillon appréciation (avec validation humaine)
+- ✅ Messagerie : threads, messages, réponses, inbox
+- ✅ Annonces établissement (globales et ciblées par rôle)
+- ✅ Finance : plans de frais, factures, paiements
+- ✅ Dashboards par rôle (admin, directeur, enseignant, parent, élève, comptable)
+- ✅ Audit logs basiques
+- ✅ Couche PostgreSQL avec migrations (3 migrations, dont `003_users_table.sql`)
+- ✅ Authentification bcrypt + table `users` lue depuis la DB en mode postgres
+- ✅ Cookies de session signés HMAC + `Secure`/`HttpOnly`/`SameSite=Lax`, `SESSION_SECRET` requis en prod
+- ✅ Protection CSRF (synchronizer token + double-submit cookie) sur tous les POST hors `/login`
+- ✅ En-têtes HTTP de sécurité : CSP stricte, X-Frame-Options, nosniff, Referrer-Policy, HSTS prod
+- ✅ Throttling login (5 essais / 15 min → 429)
+- ✅ Design system CSS cohérent
+- ✅ Données de démo seedées + guide de démo
+- ✅ CI GitHub Actions (Node 20 + 22, tests postgres)
+- ✅ Endpoint `/healthz`
+- ✅ Documentation Railway
 
 ---
 
-## EPIC 2 — Référentiel Établissement
+## SPRINT 1 — Sécurité (BLOQUANT avant tout déploiement)
 
-### P0-201 Créer le module School
-- établissement
-- paramètres
-- branding minimal
+Ces tâches sont **non négociables**. Aucun déploiement public sans elles.
 
-### P0-202 Créer les années scolaires et périodes
-- AcademicYear
-- Term / Semester / Trimester
+### SEC-01 — Hacher les mots de passe ✅ BLOQUANT
+- Dépendance `bcryptjs` ajoutée (pur JS, portable Windows/Railway sans toolchain native)
+- Wrapper `packages/auth/src/password/password-hasher.js` : `hashPassword`, `hashPasswordSync`, `verifyPassword` (avec dummy hash pour comparaison à temps constant)
+- Cost factor 10 en prod, 4 en `NODE_ENV=test` pour ne pas ralentir la suite
+- Login `/login` utilise désormais `verifyPassword` au lieu de la comparaison en clair
 
-### P0-203 Créer niveaux, classes et matières
-- GradeLevel
-- ClassRoom
-- Subject
+### SEC-02 — Migrer les utilisateurs vers PostgreSQL ✅ BLOQUANT
+- Tableau `users` hardcodé supprimé de `server.js` ; remplacé par `SEED_USERS` (métadonnées uniquement) + `InMemoryUserStore` pour le mode mémoire
+- `PostgresUserRepository` (`apps/web/src/modules/persistence/postgres-user-repository.js`) sélectionné automatiquement quand `EDUCLINK_PERSISTENCE=postgres`
+- Login lit depuis l'`activeUserStore` (`findByEmail` async) et vérifie le hash bcrypt
+- Identité d'affichage (sidebar) servie par un cache pré-rempli, sans rendre toute la pile dashboard async
 
-### P0-204 Construire les écrans d’administration école
-- CRUD niveaux
-- CRUD classes
-- CRUD matières
+### SEC-03 — Ajouter une migration DB pour la table users ✅ BLOQUANT
+- Migration `packages/database/migrations/003_users_table.sql` : table `users` (id, tenant_id, email unique, password_hash, role check, is_active, timestamps) + index `LOWER(email)`
+- Contrainte CHECK : `super_admin` impose `tenant_id IS NULL`, autres rôles imposent `tenant_id NOT NULL`
+- Script `packages/database/src/seed.js` insère les 10 comptes démo avec mot de passe `password123` haché via `bcryptjs`
 
----
+### SEC-04 — Sécuriser le cookie de session en production ✅ BLOQUANT
+- Flag `Secure` ajouté à `sessionId` et `csrf` cookies quand `NODE_ENV=production` ([apps/web/src/server.js](apps/web/src/server.js) `buildSessionCookie` / `buildCsrfCookie`)
+- `HttpOnly` + `SameSite=Lax` + `Max-Age` conservés
+- Test : `SEC-04 + SEC-08: le cookie de session est signé et marqué HttpOnly/SameSite/Path`
 
-## EPIC 3 — Utilisateurs métier
+### SEC-05 — Protection CSRF sur les formulaires POST ✅ BLOQUANT
+- Token CSRF (32 octets hex) généré par session via [packages/auth/src/csrf/csrf.js](packages/auth/src/csrf/csrf.js), stocké sur la session et exposé en cookie non-HttpOnly `csrf`
+- Middleware central `enforceCsrf` dans [apps/web/src/server.js](apps/web/src/server.js) appliqué à **tous** les POST sauf `/login` — vérifie `X-CSRF-Token` header OU `_csrf` dans le body, comparaison constant-time
+- Helper `csrfField(session)` injecté dans **20 formulaires HTML** (login exempt)
+- Tests : `SEC-05 POST sans CSRF → 403` (API JSON et form), `SEC-05 POST avec token valide → 302`
 
-### P0-301 Créer le module Teachers
-- fiche enseignant
-- matière(s)
-- classe(s)
-- statut
+### SEC-06 — En-têtes de sécurité HTTP ✅ BLOQUANT
+- Helper `applySecurityHeaders` appliqué en haut du request handler ([apps/web/src/server.js](apps/web/src/server.js))
+- `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin` (toujours)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` (production uniquement)
+- **CSP stricte** sans `unsafe-inline` (l'app n'a aucun `<script>`/`<style>` inline) : `default-src 'self'; style-src 'self' fonts.googleapis.com; font-src 'self' fonts.gstatic.com; script-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'`
+- Tests : `SEC-06 headers présents` / `SEC-06 HSTS absent en dev`
 
-### P0-302 Créer le module Students
-- fiche élève
-- rattachement classe
-- données administratives essentielles
+### SEC-07 — Limitation des tentatives de connexion ✅ BLOQUANT
+- Classe `LoginThrottle` en mémoire ([packages/auth/src/rate-limit/login-throttle.js](packages/auth/src/rate-limit/login-throttle.js)) : 5 échecs / 15 min → verrou 15 min, clé = IP
+- Réponse `429 Too Many Requests` avec `Retry-After` (secondes restantes), page login affiche un message UX
+- Reset automatique sur login réussi
+- Note : en mémoire = par-process ; à migrer vers Redis si on quitte le single-instance Railway
+- Tests : `SEC-07 5 logins échoués bloquent le 6ème`
 
-### P0-303 Créer le module Parents
-- fiche parent
-- coordonnées
-- statut accès portail
-
-### P0-304 Implémenter le lien Parent ↔ Élève
-- multi-enfant
-- multi-responsable
-
-### P0-305 Construire les écrans CRUD people
-- liste
-- détail
-- création
-- modification
-- archivage logique
-
----
-
-## EPIC 4 — Inscriptions / Affectations
-
-### P1-401 Créer le module Enrollment
-- inscription
-- réinscription
-- statut
-- affectation classe
-
-### P1-402 Écran admin de suivi des inscriptions
-- filtres
-- statuts
-- affectations
+### SEC-08 — Variable SESSION_SECRET depuis l'environnement ✅ BLOQUANT
+- `SESSION_SECRET` validé par [packages/core/src/runtime-env.js](packages/core/src/runtime-env.js) : requis (≥32 chars) en staging/production, fallback dev avec warning sinon
+- Cookie de session **signé** HMAC-SHA256 (`sessionId.signature`) via `signSessionId` / `verifySignedSessionId` dans [packages/auth/src/session/session-store.js](packages/auth/src/session/session-store.js)
+- Signature falsifiée → cookie rejeté, session non chargée (`crypto.timingSafeEqual`)
+- `.env.example` et `.env.production.example` mis à jour
+- Tests : `validateRuntimeEnv exige SESSION_SECRET en production`, `signSessionId/verifySignedSessionId` round-trip, refus signature/secret falsifié
 
 ---
 
-## EPIC 5 — Attendance
+## SPRINT 2 — Gestion des utilisateurs depuis l'interface (BLOQUANT pour le pilot)
 
-### P0-501 Créer le modèle AttendanceRecord
-- présence
-- absence
-- retard
-- motif
-- justification
+Sans ça, pour ajouter un enseignant ou un parent il faut toucher au code.
 
-### P0-502 Développer l’écran d’appel enseignant
-- sélection classe
-- liste élèves
-- saisie rapide
-- sauvegarde
+### USR-01 — Admin : créer un compte enseignant ✅ PILOT
+- Formulaire `/admin/teachers` : prénom/nom, email **requis**, mot de passe temporaire (≥8 char), téléphone, notes
+- Validation côté serveur (email format, duplicate, longueur mot de passe) avant toute écriture
+- Crée la fiche `teachers` **puis** la ligne `users` (rôle `teacher`, même id, password bcrypt). Rollback de la fiche si la création user échoue
+- Audit event `user.created`
+- Tests : USR-01 dans [apps/web/src/server.test.js](apps/web/src/server.test.js) + variante Postgres dans [apps/web/src/server.postgres.test.js](apps/web/src/server.postgres.test.js)
 
-### P0-503 Créer la vue absences pour l’administration
-- liste quotidienne
-- filtres
-- détails
+### USR-02 — Admin : créer un compte parent ✅ PILOT
+- Formulaire `/admin/parents` : prénom/nom, email + mot de passe requis, téléphone, adresse, notes
+- Crée fiche `parents` + ligne `users` (rôle `parent`, même id). Rollback en cas d'échec
+- Audit event `user.created`
+- Tests : USR-02 dans `server.test.js`
 
-### P1-504 Notifications absence parent
-- in-app
-- email ensuite
+### USR-03 — Admin : créer un élève ✅ PILOT
+- Formulaire intégré à `/admin/students` (visible uniquement pour `school_admin`)
+- Champs : prénom/nom, matricule, date de naissance, classe (select)
+- Checkbox **« Créer un accès élève »** : si cochée, demande email + password et crée la ligne `users` (rôle `student`). Sinon, seulement la fiche `students` (cas par défaut pour primaire/collège)
+- Tests : 2 cas (avec/sans accès)
 
-### P1-505 Dashboard assiduité
-- statistiques par élève / classe
+### USR-04 — Admin : page liste et gestion des comptes utilisateurs ✅ PILOT
+- Page `/admin/users` (sidebar « Comptes ») : tableau email/rôle/statut + actions par ligne
+- Actions : **désactiver / réactiver** (inactif → login refusé) et **reset password** (nouveau mdp ≥8 char)
+- Garde-fous : un admin ne peut pas se désactiver lui-même, ni agir sur un user d'un autre tenant (403)
+- Audit events `user.deactivated` / `user.activated` / `user.password_reset_by_admin`
+- Tests : liste filtrée par tenant, non-admin → 403, deactivate/activate aller-retour, reset password aller-retour, refus self-désactivation, refus cross-tenant
 
----
+### USR-05 — Réinitialisation du mot de passe (par email) ❌ PILOT
+- Formulaire "mot de passe oublié"
+- Envoi d'un lien par email (token à usage unique, expirant en 1h)
+- Page de changement de mot de passe
+- **Nécessite :** configuration d'un service email (voir OPS-04) → reporté au Sprint 7
 
-## EPIC 6 — Cahier de texte / Devoirs
-
-### P0-601 Créer le module LessonLog
-- date
-- classe
-- matière
-- contenu du cours
-
-### P0-602 Créer le module Homework
-- devoir
-- échéance
-- consignes
-- pièce jointe optionnelle
-
-### P0-603 Écran enseignant cahier de texte
-- création
-- historique
-- filtrage
-
-### P0-604 Vue parent / élève devoirs
-- liste
-- détail
-- échéances
+### USR-06 — Invitation par email (optionnel MVP) ❌ CONFORT
+- L'admin saisit l'email, l'utilisateur reçoit un lien pour créer son mot de passe
+- Meilleure UX que le mot de passe temporaire
+- **Nécessite :** OPS-04, reporté au Sprint 7
 
 ---
 
-## EPIC 7 — Notes / Évaluations
+## SPRINT 3 — Structure école depuis l'interface (PILOT)
 
-### P0-701 Créer le module Assessment
-- type
-- date
-- matière
-- coefficient
+Aujourd'hui, les structures (classes, matières, années) ne peuvent pas être créées depuis l'UI.
 
-### P0-702 Créer le module GradeEntry
-- note
-- observation
-- élève
-- évaluation
+### SCH-01 — Admin : gérer les années scolaires ❌ PILOT
+- Liste, création, modification, clôture
+- Formulaire : nom (ex: "2025-2026"), date de début et fin
 
-### P0-703 Écran de saisie des notes enseignant
-- sélection classe
-- grille de saisie
-- sauvegarde en lot
+### SCH-02 — Admin : gérer les trimestres / semestres ❌ PILOT
+- Rattachés à une année scolaire
+- Formulaire : nom, dates
 
-### P0-704 Vue parent / élève des notes
-- liste des notes
-- moyenne par matière simple
+### SCH-03 — Admin : gérer les niveaux et classes ❌ PILOT
+- CRUD GradeLevel (6ème, 5ème, 4ème...)
+- CRUD ClassRoom (6ème A, 6ème B...) avec capacité et niveau
 
-### P1-705 Calcul de moyennes
-- matière
-- période
-- générale
+### SCH-04 — Admin : gérer les matières ❌ PILOT
+- CRUD Subject (Maths, Français, Sciences...)
+- Code court et nom complet
 
-### P1-706 Préparer le socle bulletin
-- agrégations
-- appréciations
+### SCH-05 — Admin : page paramètres de l'école ❌ PILOT
+- Nom de l'établissement, logo (texte pour MVP), adresse
+- Premier écran visible après la création d'un nouveau tenant
+
+### SCH-06 — Super admin : créer un nouveau tenant école ❌ PILOT
+- Formulaire : nom école, slug tenant, email admin
+- Crée le tenant + le premier compte school_admin
+- **Pourquoi :** aujourd'hui il faut toucher au code pour ajouter une école
 
 ---
 
-## EPIC 8 — Communication / Messagerie
+## SPRINT 4 — Compléter les CRUD métier manquants (PILOT)
 
-### P0-801 Créer le module Messaging
-- thread
-- message
-- audience
-- statut lecture simple
+### CRUD-01 — UI : formulaire de création élève ❌ PILOT
+- La logique back existe, il manque juste le formulaire HTML côté admin
+- Champs : nom, prénom, date de naissance, classe, numéro d'admission
 
-### P0-802 Créer les annonces établissement
-- annonces globales
-- annonces ciblées
+### CRUD-02 — UI : formulaire de modification élève ❌ PILOT
+- Modifier les infos d'un élève existant
 
-### P0-803 Interface messagerie enseignant / parent / admin
-- boîte de réception
-- fil
-- envoi
+### CRUD-03 — UI : page détail élève pour l'admin ❌ PILOT
+- Vue consolidée : infos de base, responsables liés, absences récentes, notes récentes
 
-### P1-804 Notifications liées aux messages
-- badge
-- email
+### CRUD-04 — UI : page détail élève pour l'enseignant ❌ PILOT
+- Vue lecture seule : présences, notes de ses matières, devoirs en cours
 
----
+### CRUD-05 — UI : formulaire modification profil enseignant ❌ PILOT
+- Modifier classes assignées, matières, coordonnées
 
-## EPIC 9 — Documents
-
-### P1-901 Créer le module Documents
-- stockage metadata
-- type de document
-- lien sécurisé
-
-### P1-902 Interface de dépôt / téléchargement
-- admin
-- enseignant
-- parent selon droits
-
-### P1-903 Catégoriser les documents
-- administratif
-- pédagogique
-- bulletin
-- reçu
+### CRUD-06 — UI : archivage élève depuis l'interface ❌ PILOT
+- Bouton d'archivage avec confirmation
+- L'élève reste en base mais disparaît des listes actives
 
 ---
 
-## EPIC 10 — Finance
+## SPRINT 5 — Moyennes et bulletins (PILOT)
 
-### P1-1001 Créer le modèle FeePlan
-- frais inscription
-- scolarité
-- autres frais
+### BULL-01 — Calcul de la moyenne par matière ❌ PILOT
+- Par élève et par trimestre
+- Weighted average (coefficient des évaluations)
+- Affichée dans la vue notes parent et élève
 
-### P1-1002 Créer le modèle Invoice
-- échéance
-- statut
-- montant
+### BULL-02 — Calcul de la moyenne générale ❌ PILOT
+- Agrégation de toutes les matières par trimestre
 
-### P1-1003 Créer le modèle Payment
-- montant payé
-- date
-- mode
-- référence
+### BULL-03 — Page bulletin simple (vue HTML) ❌ PILOT
+- Vue par élève et par trimestre
+- Affiche : matières, notes, moyennes, appréciations IA si disponibles
+- Accessible par l'admin, l'enseignant (ses matières), le parent et l'élève
 
-### P1-1004 Interface admin finance
-- liste paiements
-- impayés
-- enregistrement paiement
-
-### P1-1005 Vue parent finance
-- solde
-- historique
-- échéances
-
-### P2-1006 Génération reçu PDF
-### P2-1007 Paiement en ligne
+### BULL-04 — Export PDF du bulletin ❌ CONFORT
+- Génération PDF depuis la vue HTML
+- Accessible à l'admin pour impression / envoi
 
 ---
 
-## EPIC 11 — Dashboards & Reporting
+## SPRINT 6 — UX et polish (CONFORT mais important pour le pilot)
 
-### P0-1101 Dashboard enseignant
-- classes du jour
-- appels à faire
-- notes récentes
-- devoirs
+### UX-01 — Design responsive mobile ❌ CONFORT
+- L'interface actuelle est partiellement responsive
+- Vérifier et corriger les écrans clés sur mobile : login, dashboard, appel, notes
 
-### P0-1102 Dashboard parent
-- enfants
-- absences
-- notes
-- devoirs
-- messages
+### UX-02 — Pages d'erreur avec design ❌ CONFORT
+- Page 404 avec retour au dashboard
+- Page 403 avec message clair ("Vous n'avez pas accès à cette section")
+- Page 500 avec message utilisateur
 
-### P0-1103 Dashboard admin / direction basique
-- effectif
-- absences du jour
-- notes à saisir
-- paiements en attente
+### UX-03 — Feedback de formulaires ❌ CONFORT
+- Erreurs inline sur les champs mal remplis
+- Message de succès après une action (ex: "Appel enregistré")
+- Actuellement les erreurs sont silencieuses ou redirigent sans message
 
-### P1-1104 KPIs avancés direction
-- recouvrement
-- moyennes par classe
-- alertes
+### UX-04 — Confirmation avant actions destructives ❌ CONFORT
+- Archivage d'un élève / enseignant / parent
+- Suppression d'un devoir ou d'une note
+
+### UX-05 — Navigation active dans la sidebar ❌ CONFORT
+- Mettre en surbrillance la page actuelle dans le menu (partiel aujourd'hui)
 
 ---
 
-## EPIC 12 — IA
+## SPRINT 7 — Infrastructure et déploiement production (BLOQUANT)
 
-### P0-1201 Mettre en place l’abstraction provider IA
-- service serveur
-- config provider
-- logging
+### OPS-01 — Configuration variables d'environnement production ❌ BLOQUANT
+- Documenter toutes les variables requises en production
+- Ajouter dans `.env.production.example` :
+  - `SESSION_SECRET` (chaîne aléatoire longue)
+  - `DATABASE_URL`
+  - `NODE_ENV=production`
+  - `EDUCLINK_PERSISTENCE=postgres`
+  - Variables AI provider (si IA activée)
+  - Variables email (si reset password activé)
 
-### P0-1202 Génération d’appréciations
-- input notes + observations
-- output brouillon validable
+### OPS-02 — Déploiement Railway initial ❌ BLOQUANT
+- Créer le projet Railway
+- Ajouter le service PostgreSQL
+- Configurer les variables d'environnement
+- Brancher le déploiement depuis GitHub (branche main)
+- Vérifier `/healthz` accessible
 
-### P0-1203 Résumé élève
-- absences
-- notes
-- remarques
-- synthèse courte
+### OPS-03 — Migration automatique au démarrage ❌ BLOQUANT
+- `npm run db:migrate` doit s'exécuter automatiquement au démarrage en production
+- Railway : ajouter dans le start command ou comme release command
+- Vérifier que c'est idempotent (peut tourner plusieurs fois sans erreur)
 
-### P1-1204 Aide à rédaction de message parent
-### P1-1205 Synthèse classe pour direction
-### P2-1206 Détection élèves à risque
-### P2-1207 OCR documents / copies
+### OPS-04 — Service email pour le reset de mot de passe ❌ PILOT
+- Choisir un provider : Resend, Mailgun ou SendGrid (Resend recommandé, gratuit à l'essai)
+- Configurer dans les variables Railway
+- Ajouter `SMTP_URL` ou clé API dans `.env.production.example`
 
----
+### OPS-05 — Domaine personnalisé ❌ CONFORT
+- Configurer un domaine `app.educlink.xyz` (ou similaire) sur Railway
+- Activer HTTPS automatique (Railway le gère)
 
-## EPIC 13 — Qualité, Sécurité, Tests
+### OPS-06 — Suivi des erreurs (Sentry ou équivalent) ❌ CONFORT
+- Intégrer Sentry pour capturer les erreurs 500 en production
+- Gratuit jusqu'à 5 000 erreurs/mois
 
-### P0-1301 Tests auth
-### P0-1302 Tests rôles / permissions
-### P0-1303 Tests multi-tenant
-### P0-1304 Tests endpoints critiques
-### P0-1305 Tests UI critiques
+### OPS-07 — Sauvegarde PostgreSQL ❌ BLOQUANT pour production réelle
+- Railway ne fait pas de backup automatique sur le plan gratuit
+- Mettre en place pg_dump via un cron Railway ou un script externe
+- Tester la restauration
 
-### P1-1306 Audit logs métier
-### P1-1307 Monitoring erreurs
-### P1-1308 Performance dashboards
-
----
-
-## EPIC 14 — DevOps / Delivery
-
-### P0-1401 Config CI
-- lint
-- tests
-- build
-
-### P0-1402 Config staging
-### P0-1403 Config production
-### P1-1404 Observabilité
-### P1-1405 Sauvegarde / restauration
+### OPS-08 — Nettoyage apps/web-next ❌ CONFORT
+- Supprimer ou ignorer le dossier `apps/web-next` pour éviter la confusion
+- Decision : le mettre en archive ou le supprimer proprement
 
 ---
 
-## Sprint suggéré MVP
+## SPRINT 8 — Tests et validation pilote (PILOT)
 
-### Sprint 1
-- setup projet
-- auth
-- rôles
-- tenant
-- référentiel école
+### TEST-01 — Checklist de validation manuelle ❌ PILOT
+- Scénario Admin : créer classe → créer élève → créer enseignant → assigner
+- Scénario Enseignant : prendre l'appel → saisir notes → générer appréciation IA
+- Scénario Parent : voir notes → voir absences → voir facture → envoyer message
+- Scénario Finance : créer facture → enregistrer paiement → vérifier solde
 
-### Sprint 2
-- students
-- parents
-- teachers
-- CRUD métier
+### TEST-02 — Tests de non-régression permissions ❌ PILOT
+- Un parent ne voit que ses enfants
+- Un enseignant ne voit que ses classes
+- Un utilisateur d'un tenant A ne peut pas accéder au tenant B
+- Ces tests doivent tourner en CI (certains existent déjà, compléter les manquants)
 
-### Sprint 3
-- attendance
-- dashboard enseignant
-- dashboard parent
+### TEST-03 — Test de charge basique ❌ CONFORT
+- Simuler 50 utilisateurs simultanés sur le dashboard
+- Vérifier que le temps de réponse reste < 2 secondes
 
-### Sprint 4
-- homework
-- lesson log
-- messaging
+### TEST-04 — Onboarding première école réelle ❌ PILOT
+- Créer le tenant de l'école pilote via super_admin
+- Créer les comptes admin, enseignants, parents
+- Importer les élèves (formulaire ou import CSV basique)
+- Former l'admin de l'école (1h de présentation)
 
-### Sprint 5
-- assessments
-- grades
-- dashboard admin
-
-### Sprint 6
-- documents simples
-- finance basique
-- IA v1
-
-### Sprint 7
-- stabilisation
-- tests
-- sécurité
-- polish UX
+### TEST-05 — Recueil des retours pilote et corrections ❌ PILOT
+- Session de feedback avec l'école pilote après 2 semaines d'usage
+- Liste des bugs bloquants et corrections en priorité
 
 ---
 
-## Définition of Done
+## Résumé du chemin critique
+
+```
+[✅ SEC-01..08]              (Sprint 1 sécurité — terminé)
+         ↓
+USR-01 → USR-02 → USR-03   (créer utilisateurs depuis l'UI)
+         ↓
+SCH-01 → SCH-03 → SCH-04   (structure école configurable)
+         ↓
+OPS-01 → OPS-02 → OPS-03   (déploiement Railway)
+         ↓
+TEST-01 → TEST-04           (validation pilote)
+```
+
+**Estimation grossière :**
+- Sprint 1 (sécurité) : 3-5 jours de dev
+- Sprint 2 (gestion users) : 3-4 jours
+- Sprint 3 (structure école UI) : 2-3 jours
+- Sprint 4 (CRUD manquants) : 2-3 jours
+- Sprint 5 (bulletins) : 2-3 jours
+- Sprint 6 (UX) : 2-3 jours
+- Sprint 7 (infra) : 1-2 jours
+- Sprint 8 (tests pilote) : continu
+
+**Total estimé jusqu'au pilot : 3 à 5 semaines de développement.**
+
+---
+
+## Définition of Done (inchangée)
 
 Une tâche est terminée si :
 - le besoin métier est couvert
-- les permissions sont respectées
-- le tenant scoping est correct
-- les validations sont en place
-- les tests minimum existent
-- l’UI est cohérente
+- les permissions sont respectées (rôle + tenant)
+- les validations sont en place sur les inputs
+- les tests minimum existent pour les permissions critiques
+- l'UI est cohérente avec le design system existant
 - la doc est mise à jour si nécessaire

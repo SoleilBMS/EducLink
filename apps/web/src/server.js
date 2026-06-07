@@ -5,7 +5,9 @@ const { createLogger } = require('./observability/logger');
 const { authorizeApiRequest } = require('../../../packages/auth/src/guards/api-guard');
 const { requireAuth } = require('../../../packages/auth/src/guards/require-auth');
 const { ROLES } = require('../../../packages/auth/src/roles/roles');
-const { DEFAULT_SESSION_TTL_MS, SessionStore } = require('../../../packages/auth/src/session/session-store');
+const { DEFAULT_SESSION_TTL_MS, SessionStore, signSessionId, verifySignedSessionId } = require('../../../packages/auth/src/session/session-store');
+const { compareCsrfTokens } = require('../../../packages/auth/src/csrf/csrf');
+const { LoginThrottle } = require('../../../packages/auth/src/rate-limit/login-throttle');
 const { CoreSchoolStore } = require('./modules/core-school');
 const { StudentStore } = require('./modules/student');
 const { ParentStore } = require('./modules/parent');
@@ -37,20 +39,36 @@ const { PostgresAttendanceRepository } = require('./modules/persistence/postgres
 const { PostgresGradingRepository } = require('./modules/persistence/postgres-grading-repository');
 const { PostgresMessagingRepository } = require('./modules/persistence/postgres-messaging-repository');
 const { PostgresFinanceRepository } = require('./modules/persistence/postgres-finance-repository');
+const { PostgresUserRepository } = require('./modules/persistence/postgres-user-repository');
 const { buildValidationError, buildForbiddenError } = require('./modules/error-utils');
+const { InMemoryUserStore, DuplicateEmailError, buildSeedUsersWithHashedPassword, normalizeEmail } = require('../../../packages/auth/src/users/user-store');
+const { hashPassword, verifyPassword } = require('../../../packages/auth/src/password/password-hasher');
 
-const users = [
-  { id: 'super-admin', email: 'superadmin@platform.test', password: 'password123', role: ROLES.SUPER_ADMIN, tenantId: null },
-  { id: 'admin-a', email: 'admin@school-a.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
-  { id: 'admin-b', email: 'admin@school-b.test', password: 'password123', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-b' },
-  { id: 'director-a', email: 'director@school-a.test', password: 'password123', role: ROLES.DIRECTOR, tenantId: 'school-a' },
-  { id: 'teacher-a1', email: 'teacher@school-a.test', password: 'password123', role: ROLES.TEACHER, tenantId: 'school-a' },
-  { id: 'teacher-a2', email: 'teacher2@school-a.test', password: 'password123', role: ROLES.TEACHER, tenantId: 'school-a' },
-  { id: 'parent-a1', email: 'parent@school-a.test', password: 'password123', role: ROLES.PARENT, tenantId: 'school-a' },
-  { id: 'parent-a2', email: 'parent2@school-a.test', password: 'password123', role: ROLES.PARENT, tenantId: 'school-a' },
-  { id: 'student-a1', email: 'student@school-a.test', password: 'password123', role: ROLES.STUDENT, tenantId: 'school-a' },
-  { id: 'accountant-a', email: 'accountant@school-a.test', password: 'password123', role: ROLES.ACCOUNTANT, tenantId: 'school-a' }
+const DEFAULT_SEED_PASSWORD = 'password123';
+
+const SEED_USERS = [
+  { id: 'super-admin', email: 'superadmin@platform.test', role: ROLES.SUPER_ADMIN, tenantId: null },
+  { id: 'admin-a', email: 'admin@school-a.test', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-a' },
+  { id: 'admin-b', email: 'admin@school-b.test', role: ROLES.SCHOOL_ADMIN, tenantId: 'school-b' },
+  { id: 'director-a', email: 'director@school-a.test', role: ROLES.DIRECTOR, tenantId: 'school-a' },
+  { id: 'teacher-a1', email: 'teacher@school-a.test', role: ROLES.TEACHER, tenantId: 'school-a' },
+  { id: 'teacher-a2', email: 'teacher2@school-a.test', role: ROLES.TEACHER, tenantId: 'school-a' },
+  { id: 'parent-a1', email: 'parent@school-a.test', role: ROLES.PARENT, tenantId: 'school-a' },
+  { id: 'parent-a2', email: 'parent2@school-a.test', role: ROLES.PARENT, tenantId: 'school-a' },
+  { id: 'student-a1', email: 'student@school-a.test', role: ROLES.STUDENT, tenantId: 'school-a' },
+  { id: 'accountant-a', email: 'accountant@school-a.test', role: ROLES.ACCOUNTANT, tenantId: 'school-a' }
 ];
+
+let cachedInMemorySeedUsers = null;
+function getInMemorySeedUsers() {
+  if (!cachedInMemorySeedUsers) {
+    cachedInMemorySeedUsers = buildSeedUsersWithHashedPassword({
+      users: SEED_USERS,
+      plainPassword: DEFAULT_SEED_PASSWORD
+    });
+  }
+  return cachedInMemorySeedUsers;
+}
 
 function createSeedData() {
   const now = new Date().toISOString();
@@ -319,6 +337,23 @@ function canManageTeachers(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
 
+function canManageUsers(session) {
+  return session.role === ROLES.SCHOOL_ADMIN;
+}
+
+const MIN_PASSWORD_LENGTH = 8;
+
+function isValidEmailFormat(email) {
+  if (typeof email !== 'string') return false;
+  const trimmed = email.trim();
+  if (trimmed.length === 0 || trimmed.length > 254) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
+function isValidPasswordFormat(password) {
+  return typeof password === 'string' && password.length >= MIN_PASSWORD_LENGTH;
+}
+
 function canTakeAttendance(session) {
   return session.role === ROLES.TEACHER;
 }
@@ -356,18 +391,157 @@ function todayIsoDate() {
 }
 
 
-function buildSessionCookie(sessionId) {
-  return [
-    `sessionId=${sessionId}`,
+function buildSessionCookie(signedSessionId, { secure = false } = {}) {
+  const parts = [
+    `sessionId=${signedSessionId}`,
     'HttpOnly',
     'Path=/',
     'SameSite=Lax',
     `Max-Age=${Math.floor(DEFAULT_SESSION_TTL_MS / 1000)}`
-  ].join('; ');
+  ];
+  if (secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
 }
 
-function clearSessionCookie() {
-  return 'sessionId=; HttpOnly; Max-Age=0; Path=/; SameSite=Lax';
+function clearSessionCookie({ secure = false } = {}) {
+  const parts = ['sessionId=', 'HttpOnly', 'Max-Age=0', 'Path=/', 'SameSite=Lax'];
+  if (secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+function buildCsrfCookie(csrfToken, { secure = false } = {}) {
+  const parts = [
+    `csrf=${csrfToken}`,
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${Math.floor(DEFAULT_SESSION_TTL_MS / 1000)}`
+  ];
+  if (secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+function clearCsrfCookie({ secure = false } = {}) {
+  const parts = ['csrf=', 'Max-Age=0', 'Path=/', 'SameSite=Lax'];
+  if (secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+function applySecurityHeaders(response, { isProduction }) {
+  response.setHeader('x-content-type-options', 'nosniff');
+  response.setHeader('x-frame-options', 'SAMEORIGIN');
+  response.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
+  response.setHeader(
+    'content-security-policy',
+    [
+      "default-src 'self'",
+      "style-src 'self' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "script-src 'self'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "object-src 'none'"
+    ].join('; ')
+  );
+  if (isProduction) {
+    response.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
+  }
+}
+
+function csrfField(session) {
+  return `<input type="hidden" name="_csrf" value="${session.csrfToken}" />`;
+}
+
+function getClientIp(request) {
+  const forwarded = request.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    const first = forwarded.split(',')[0]?.trim();
+    if (first) {
+      return first;
+    }
+  }
+  return request.socket?.remoteAddress ?? 'unknown';
+}
+
+function readCsrfToken(request, form) {
+  const headerToken = request.headers['x-csrf-token'];
+  if (typeof headerToken === 'string' && headerToken.length > 0) {
+    return headerToken;
+  }
+  if (form && typeof form.get === 'function') {
+    const fromForm = form.get('_csrf');
+    if (typeof fromForm === 'string' && fromForm.length > 0) {
+      return fromForm;
+    }
+  }
+  return '';
+}
+
+function isJsonRequest(request) {
+  const contentType = request.headers['content-type'];
+  if (typeof contentType === 'string' && contentType.includes('application/json')) {
+    return true;
+  }
+  const accept = request.headers.accept;
+  return typeof accept === 'string' && accept.includes('application/json');
+}
+
+function extractCsrfTokenFromBody(bodyText, contentType) {
+  if (typeof bodyText !== 'string' || bodyText.length === 0) {
+    return '';
+  }
+  const ct = typeof contentType === 'string' ? contentType : '';
+  if (ct.includes('application/json')) {
+    try {
+      const parsed = JSON.parse(bodyText);
+      const candidate = parsed && typeof parsed === 'object' ? parsed._csrf : '';
+      return typeof candidate === 'string' ? candidate : '';
+    } catch {
+      return '';
+    }
+  }
+  try {
+    return new URLSearchParams(bodyText).get('_csrf') ?? '';
+  } catch {
+    return '';
+  }
+}
+
+async function enforceCsrf({ request, response, session }) {
+  if (request.method !== 'POST') {
+    return true;
+  }
+  const headerToken = request.headers['x-csrf-token'];
+  let provided = typeof headerToken === 'string' ? headerToken : '';
+  if (!provided) {
+    const bodyText = await readBody(request);
+    provided = extractCsrfTokenFromBody(bodyText, request.headers['content-type']);
+  }
+  if (!session || !compareCsrfTokens(session.csrfToken, provided)) {
+    sendCsrfFailure(request, response);
+    return false;
+  }
+  return true;
+}
+
+function sendCsrfFailure(request, response) {
+  if (isJsonRequest(request)) {
+    response.writeHead(403, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ success: false, error: { code: 'csrf_token_invalid', message: 'Missing or invalid CSRF token' } }));
+    return;
+  }
+  response.writeHead(403, { 'content-type': 'text/html; charset=utf-8' });
+  response.end('<!doctype html><html><body><h1>403 - CSRF token invalide</h1><p>Veuillez recharger la page et réessayer.</p></body></html>');
 }
 
 const DESIGN_SYSTEM_CSS = `
@@ -1122,11 +1296,21 @@ function getTenantLabel(tenantId) {
   return tenantNames[tenantId] ?? tenantId;
 }
 
+const userDisplayCache = new Map();
+
+function rememberUserIdentity(user) {
+  if (!user || typeof user.id !== 'string') return;
+  userDisplayCache.set(user.id, {
+    displayName: user.id,
+    email: typeof user.email === 'string' ? user.email : `${user.id}@educ.link`
+  });
+}
+
 function getSessionIdentity(session) {
-  const matchedUser = users.find((user) => user.id === session.userId);
+  const cached = userDisplayCache.get(session.userId);
   return {
-    displayName: matchedUser?.id ?? session.userId,
-    email: matchedUser?.email ?? `${session.userId}@educ.link`,
+    displayName: cached?.displayName ?? session.userId,
+    email: cached?.email ?? `${session.userId}@educ.link`,
     roleLabel: getRoleLabel(session.role),
     tenantLabel: getTenantLabel(session.tenantId)
   };
@@ -1137,6 +1321,7 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Dashboard', href: getDashboardPathForRole(session.role), roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.ACCOUNTANT] },
     { label: 'Élèves', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT] },
     { label: 'Enseignants', href: '/admin/teachers', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
+    { label: 'Comptes', href: '/admin/users', roles: [ROLES.SCHOOL_ADMIN] },
     { label: 'Classes', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
     { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
@@ -1175,7 +1360,7 @@ function renderDashboardLayout(title, session, body) {
           <p class="el-user-name">${identity.displayName}</p>
           <p class="el-user-email">${identity.email}</p>
           <p><span class="el-badge">${identity.roleLabel}</span></p>
-          <form method="POST" action="/logout"><button type="submit">Logout</button></form>
+          <form method="POST" action="/logout">${csrfField(session)}<button type="submit">Logout</button></form>
         </div>
       </header>
       <main class="el-dashboard-content">
@@ -1212,6 +1397,15 @@ function summarizeFinance(invoices, payments) {
 
 function formatCurrency(amount) {
   return `${Number(amount || 0).toFixed(2)} €`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderStatusBadge(value, mapper = {}) {
@@ -1398,12 +1592,12 @@ function renderTeacherReportCommentsPage(session, { teacher, students, selectedS
     <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
     <p><strong>Le texte IA est un brouillon. Validation/édition humaine obligatoire avant enregistrement final.</strong></p>
     ${message ? `<p>${escapeHtml(message)}</p>` : ''}
-    <form method="POST" action="/teacher/report-comments/generate">
+    <form method="POST" action="/teacher/report-comments/generate">${csrfField(session)}
       <label>Élève <select name="studentId" required>${studentOptions}</select></label>
       <button type="submit">Générer un brouillon</button>
     </form>
     <h2>Brouillon éditable</h2>
-    <form method="POST" action="/teacher/report-comments/save">
+    <form method="POST" action="/teacher/report-comments/save">${csrfField(session)}
       <input type="hidden" name="studentId" value="${escapeHtml(selectedStudentId || '')}" />
       <label>Brouillon <textarea name="draftText" rows="8" cols="80" required>${escapeHtml(draftText)}</textarea></label><br/>
       <label><input type="checkbox" name="humanValidated" value="true" /> J'ai relu/édité et je valide humainement</label><br/>
@@ -1460,7 +1654,7 @@ function renderTeacherAttendancePage(session, { teacher, classRooms, selectedCla
       <h2>Liste des élèves</h2>
       ${
         selectedClassRoomId
-          ? `<form method="POST" action="/teacher/attendance">
+          ? `<form method="POST" action="/teacher/attendance">${csrfField(session)}
       <input type="hidden" name="date" value="${selectedDate}" />
       <input type="hidden" name="classRoomId" value="${selectedClassRoomId}" />
       <table><thead><tr><th>Nom</th><th>Matricule</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>
@@ -1659,7 +1853,7 @@ function renderThreadPage(session, thread) {
       <ul>${rows || '<li class="el-empty-state">Aucun message.</li>'}</ul>
     </section>
     <section class="el-card">
-      <form method="POST" action="/inbox/threads/${thread.id}/reply">
+      <form method="POST" action="/inbox/threads/${thread.id}/reply">${csrfField(session)}
         <label>Réponse <textarea name="body" required></textarea></label><br/>
         <button type="submit">Envoyer</button>
       </form>
@@ -1677,7 +1871,7 @@ function renderAdminAnnouncementsPage(session, announcements) {
     'Publication d’annonces',
     session,
     `<section class="el-card">
-    <form method="POST" action="/admin/announcements">
+    <form method="POST" action="/admin/announcements">${csrfField(session)}
       <label>Titre <input name="title" required /></label><br/>
       <label>Message <textarea name="body" required></textarea></label><br/>
       <label>Visibilité
@@ -1717,7 +1911,7 @@ function renderTeacherLessonHomeworkPage(session, { teacher, classRooms, subject
     <p>Tenant: ${session.tenantId}</p>
     <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
     <h2>Nouveau contenu de cours</h2>
-    <form method="POST" action="/teacher/lesson-logs">
+    <form method="POST" action="/teacher/lesson-logs">${csrfField(session)}
       <label>Date <input type="date" name="date" required /></label><br/>
       <label>Classe <select name="classRoomId" required>${classOptions}</select></label><br/>
       <label>Matière <select name="subjectId" required>${subjectOptions}</select></label><br/>
@@ -1725,7 +1919,7 @@ function renderTeacherLessonHomeworkPage(session, { teacher, classRooms, subject
       <button type="submit">Publier lesson log</button>
     </form>
     <h2>Nouveau devoir</h2>
-    <form method="POST" action="/teacher/homeworks">
+    <form method="POST" action="/teacher/homeworks">${csrfField(session)}
       <label>Échéance <input type="date" name="dueDate" required /></label><br/>
       <label>Classe <select name="classRoomId" required>${classOptions}</select></label><br/>
       <label>Matière <select name="subjectId" required>${subjectOptions}</select></label><br/>
@@ -1803,7 +1997,7 @@ function renderTeacherGradesPage(session, { teacher, classRooms, subjects, asses
     `<section class="el-card">
     <p>Enseignant: ${teacher?.firstName ?? ''} ${teacher?.lastName ?? ''}</p>
     <h2>Créer une évaluation</h2>
-    <form method="POST" action="/teacher/assessments">
+    <form method="POST" action="/teacher/assessments">${csrfField(session)}
       <label>Date <input type="date" name="date" required /></label><br/>
       <label>Classe <select name="classRoomId" required>${classOptions}</select></label><br/>
       <label>Matière <select name="subjectId" required>${subjectOptions}</select></label><br/>
@@ -1820,7 +2014,7 @@ function renderTeacherGradesPage(session, { teacher, classRooms, subjects, asses
     </form>
     ${
       selectedAssessmentId
-        ? `<form method="POST" action="/teacher/grades">
+        ? `<form method="POST" action="/teacher/grades">${csrfField(session)}
       <input type="hidden" name="assessmentId" value="${selectedAssessmentId}" />
       <table><thead><tr><th>Élève</th><th>Matricule</th><th>Note /20</th><th>Remarque</th></tr></thead><tbody>${rows}</tbody></table>
       <button type="submit">Enregistrer les notes</button>
@@ -1914,7 +2108,7 @@ function renderAdminFinancePage(session, { students, feePlans, invoices, payment
     </div>
     </section>
     <section class="el-card"><h2>Nouveau plan de frais</h2>
-    <form method="POST" action="/admin/finance/fee-plans">
+    <form method="POST" action="/admin/finance/fee-plans">${csrfField(session)}
       <label>Nom <input name="name" required /></label><br/>
       <label>Montant <input name="amountDue" type="number" step="0.01" min="0" required /></label><br/>
       <label>Échéance <input name="dueDate" type="date" required /></label><br/>
@@ -1922,7 +2116,7 @@ function renderAdminFinancePage(session, { students, feePlans, invoices, payment
       <button type="submit">Créer plan de frais</button>
     </form>
     </section><section class="el-card"><h2>Nouvelle facture</h2>
-    <form method="POST" action="/admin/finance/invoices">
+    <form method="POST" action="/admin/finance/invoices">${csrfField(session)}
       <label>Élève <select name="studentId" required>${studentOptions}</select></label><br/>
       <label>Plan de frais <select name="feePlanId">${feePlanOptions}</select></label><br/>
       <label>Montant <input name="amountDue" type="number" step="0.01" min="0" required /></label><br/>
@@ -1931,7 +2125,7 @@ function renderAdminFinancePage(session, { students, feePlans, invoices, payment
       <button type="submit">Créer facture</button>
     </form>
     </section><section class="el-card"><h2>Nouveau paiement</h2>
-    <form method="POST" action="/admin/finance/payments">
+    <form method="POST" action="/admin/finance/payments">${csrfField(session)}
       <label>Facture <input name="invoiceId" required /></label><br/>
       <label>Montant payé <input name="amountPaid" type="number" step="0.01" min="0.01" required /></label><br/>
       <label>Date paiement <input name="paidAt" type="date" required /></label><br/>
@@ -1986,9 +2180,12 @@ function renderAccountantDashboard(session, dashboard) {
   );
 }
 
-function renderStudentsPage(session, classRooms, students, selectedClassRoomId = '') {
-  const options = ['<option value="">Toutes les classes</option>']
+function renderStudentsPage(session, classRooms, students, selectedClassRoomId = '', { errorCode = null, successMessage = null, canCreate = false } = {}) {
+  const filterOptions = ['<option value="">Toutes les classes</option>']
     .concat(classRooms.map((classRoom) => `<option value="${classRoom.id}" ${selectedClassRoomId === classRoom.id ? 'selected' : ''}>${classRoom.name}</option>`))
+    .join('');
+  const createOptions = ['<option value="">— sélectionner —</option>']
+    .concat(classRooms.map((classRoom) => `<option value="${classRoom.id}">${classRoom.name}</option>`))
     .join('');
 
   const rows = students
@@ -2000,17 +2197,39 @@ function renderStudentsPage(session, classRooms, students, selectedClassRoomId =
       </tr>`
     )
     .join('');
+
+  const createCard = canCreate
+    ? `<section class="el-card"><h2>Créer un élève</h2>
+    <p class="el-muted">Crée la fiche élève. Cochez « Créer un accès élève » uniquement si l'élève doit pouvoir se connecter (collège/lycée).</p>
+    <form method="POST" action="/admin/students">${csrfField(session)}
+      <label>Prénom <input name="firstName" required /></label><br/>
+      <label>Nom <input name="lastName" required /></label><br/>
+      <label>Matricule <input name="admissionNumber" required /></label><br/>
+      <label>Date de naissance <input name="dateOfBirth" type="date" /></label><br/>
+      <label>Classe
+        <select name="classRoomId" required>${createOptions}</select>
+      </label><br/>
+      <label><input type="checkbox" name="createAccess" value="1" /> Créer un accès élève (login)</label><br/>
+      <label>Email (si accès) <input name="email" type="email" /></label><br/>
+      <label>Mot de passe temporaire (si accès) <input name="password" type="password" minlength="${MIN_PASSWORD_LENGTH}" /></label><br/>
+      <button type="submit">Créer</button>
+    </form>
+    </section>`
+    : '';
+
   return renderDashboardLayout(
     'Gestion des élèves',
     session,
-    `<section class="el-card">
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    ${createCard}
+    <section class="el-card">
     <div class="el-page-intro">
       <h2>Liste des élèves</h2>
       <span class="el-badge">${students.length} élève(s)</span>
     </div>
     <form class="el-toolbar" method="GET" action="/admin/students">
       <label>Filtre classe
-        <select name="classRoomId">${options}</select>
+        <select name="classRoomId">${filterOptions}</select>
       </label>
       <button type="submit">Filtrer</button>
     </form>
@@ -2035,38 +2254,42 @@ function renderStudentProfile(session, student) {
   );
 }
 
-function renderParentsPage(session, parents) {
+function renderParentsPage(session, parents, { errorCode = null, successMessage = null } = {}) {
   const rows = parents
     .map(
       (parent) => `<tr>
         <td><a href="/admin/parents/${parent.id}">${parent.firstName} ${parent.lastName}</a></td>
         <td>${parent.phone || '-'}</td>
         <td>${parent.email || '-'}</td>
-        <td>${parent.archived_at ? 'oui' : 'non'}</td>
+        <td>${renderStatusBadge(parent.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</td>
       </tr>`
     )
     .join('');
 
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Parents</title></head><body>
-    <h1>Gestion des responsables</h1>
-    <p>Tenant: ${session.tenantId}</p>
-    <h2>Créer un responsable</h2>
-    <form method="POST" action="/admin/parents">
+  return renderDashboardLayout(
+    'Gestion des responsables',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card"><h2>Créer un responsable</h2>
+    <p class="el-muted">Crée à la fois la fiche parent et le compte de connexion (rôle parent).</p>
+    <form method="POST" action="/admin/parents">${csrfField(session)}
       <label>Prénom <input name="firstName" required /></label><br/>
       <label>Nom <input name="lastName" required /></label><br/>
+      <label>Email <input name="email" type="email" required /></label><br/>
+      <label>Mot de passe temporaire <input name="password" type="password" minlength="${MIN_PASSWORD_LENGTH}" required /></label><br/>
       <label>Téléphone <input name="phone" /></label><br/>
-      <label>Email <input name="email" type="email" /></label><br/>
       <label>Adresse <input name="address" /></label><br/>
       <label>Notes <textarea name="notes"></textarea></label><br/>
       <button type="submit">Créer</button>
     </form>
+    </section><section class="el-card">
     <h2>Liste</h2>
-    <table border="1"><thead><tr><th>Nom</th><th>Téléphone</th><th>Email</th><th>Archivé</th></tr></thead><tbody>${rows}</tbody></table>
-    <p><a href="/dashboard">Retour dashboard</a></p>
-  </body></html>`;
+    <table><thead><tr><th>Nom</th><th>Téléphone</th><th>Email</th><th>Statut</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Aucun responsable.</td></tr>'}</tbody></table>
+    </section>`
+  );
 }
 
-function renderParentProfile(parent, students, links) {
+function renderParentProfile(session, parent, students, links) {
   const studentCheckboxes = students
     .map((student) => `<label><input type="checkbox" name="studentIds" value="${student.id}" /> ${student.firstName} ${student.lastName} (${student.classRoomId})</label><br/>`)
     .join('');
@@ -2079,7 +2302,7 @@ function renderParentProfile(parent, students, links) {
     <p>id: ${parent.id}</p>
     <p>Tenant: ${parent.tenant_id}</p>
     <h2>Informations</h2>
-    <form method="POST" action="/admin/parents/${parent.id}/update">
+    <form method="POST" action="/admin/parents/${parent.id}/update">${csrfField(session)}
       <label>Prénom <input name="firstName" value="${parent.firstName}" required /></label><br/>
       <label>Nom <input name="lastName" value="${parent.lastName}" required /></label><br/>
       <label>Téléphone <input name="phone" value="${parent.phone}" /></label><br/>
@@ -2088,9 +2311,9 @@ function renderParentProfile(parent, students, links) {
       <label>Notes <textarea name="notes">${parent.notes}</textarea></label><br/>
       <button type="submit">Enregistrer</button>
     </form>
-    <form method="POST" action="/admin/parents/${parent.id}/archive"><button type="submit">Archiver</button></form>
+    <form method="POST" action="/admin/parents/${parent.id}/archive">${csrfField(session)}<button type="submit">Archiver</button></form>
     <h2>Lier à des élèves</h2>
-    <form method="POST" action="/admin/parents/${parent.id}/links">
+    <form method="POST" action="/admin/parents/${parent.id}/links">${csrfField(session)}
       ${studentCheckboxes}
       <label>Relation
         <select name="relationship">
@@ -2109,7 +2332,29 @@ function renderParentProfile(parent, students, links) {
   </body></html>`;
 }
 
-function renderTeachersPage(session, teachers) {
+const ADMIN_ERROR_MESSAGES = {
+  email_required: "L'email est requis pour créer un compte.",
+  email_invalid: "L'email saisi est invalide.",
+  password_required: `Le mot de passe temporaire doit faire au moins ${MIN_PASSWORD_LENGTH} caractères.`,
+  email_duplicate: 'Cet email est déjà utilisé par un autre compte.',
+  invalid_input: 'Les informations saisies sont invalides.',
+  cannot_self_deactivate: 'Vous ne pouvez pas désactiver votre propre compte.',
+  user_not_found: 'Compte introuvable.',
+  forbidden: 'Action non autorisée.'
+};
+
+function renderAdminErrorBanner(errorCode) {
+  if (!errorCode) return '';
+  const message = ADMIN_ERROR_MESSAGES[errorCode] || ADMIN_ERROR_MESSAGES.invalid_input;
+  return `<div class="el-banner is-error" role="alert">${message}</div>`;
+}
+
+function renderAdminSuccessBanner(message) {
+  if (!message) return '';
+  return `<div class="el-banner is-success" role="status">${message}</div>`;
+}
+
+function renderTeachersPage(session, teachers, { errorCode = null, successMessage = null } = {}) {
   const rows = teachers
     .map(
       (teacher) => `<tr>
@@ -2124,11 +2369,14 @@ function renderTeachersPage(session, teachers) {
   return renderDashboardLayout(
     'Gestion des enseignants',
     session,
-    `<section class="el-card"><h2>Créer un enseignant</h2>
-    <form method="POST" action="/admin/teachers">
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card"><h2>Créer un enseignant</h2>
+    <p class="el-muted">Crée à la fois la fiche enseignant et le compte de connexion (rôle enseignant).</p>
+    <form method="POST" action="/admin/teachers">${csrfField(session)}
       <label>Prénom <input name="firstName" required /></label><br/>
       <label>Nom <input name="lastName" required /></label><br/>
-      <label>Email <input name="email" type="email" /></label><br/>
+      <label>Email <input name="email" type="email" required /></label><br/>
+      <label>Mot de passe temporaire <input name="password" type="password" minlength="${MIN_PASSWORD_LENGTH}" required /></label><br/>
       <label>Téléphone <input name="phone" /></label><br/>
       <label>Notes <textarea name="notes"></textarea></label><br/>
       <button type="submit">Créer</button>
@@ -2164,7 +2412,7 @@ function renderTeacherProfile(session, teacher, classRooms, subjects) {
     <p><strong>ID:</strong> ${teacher.id}</p>
     <p><strong>Statut:</strong> ${renderStatusBadge(teacher.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</p>
     <h3>Informations</h3>
-    <form method="POST" action="/admin/teachers/${teacher.id}/update">
+    <form method="POST" action="/admin/teachers/${teacher.id}/update">${csrfField(session)}
       <label>Prénom <input name="firstName" value="${teacher.firstName}" required /></label><br/>
       <label>Nom <input name="lastName" value="${teacher.lastName}" required /></label><br/>
       <label>Email <input name="email" type="email" value="${teacher.email}" /></label><br/>
@@ -2176,13 +2424,56 @@ function renderTeacherProfile(session, teacher, classRooms, subjects) {
       ${subjectCheckboxes}
       <button type="submit">Enregistrer</button>
     </form>
-    <form method="POST" action="/admin/teachers/${teacher.id}/archive"><button type="submit">Archiver</button></form>
+    <form method="POST" action="/admin/teachers/${teacher.id}/archive">${csrfField(session)}<button type="submit">Archiver</button></form>
     </section>
     <section class="el-card">
     <h2>Affectations existantes</h2>
     <p><strong>Classes:</strong> ${classNames}</p>
     <p><strong>Matières:</strong> ${subjectNames}</p>
     <p><a href="/admin/teachers">Retour</a></p>
+    </section>`
+  );
+}
+
+function renderUsersPage(session, users, { errorCode = null, successMessage = null } = {}) {
+  const rows = users
+    .map((user) => {
+      const statusBadge = renderStatusBadge(user.isActive ? 'actif' : 'désactivé', {
+        actif: 'is-success',
+        'désactivé': 'is-warning'
+      });
+      const isSelf = user.id === session.userId;
+      const toggleAction = user.isActive ? 'deactivate' : 'activate';
+      const toggleLabel = user.isActive ? 'Désactiver' : 'Réactiver';
+      const toggleForm = isSelf && user.isActive
+        ? '<span class="el-muted">— (vous)</span>'
+        : `<form method="POST" action="/admin/users/${user.id}/${toggleAction}" style="display:inline">${csrfField(session)}<button type="submit">${toggleLabel}</button></form>`;
+      const resetForm = `<form method="POST" action="/admin/users/${user.id}/reset-password" style="display:inline">${csrfField(session)}<input name="password" type="password" minlength="${MIN_PASSWORD_LENGTH}" placeholder="Nouveau mot de passe" required /><button type="submit">Réinitialiser</button></form>`;
+      return `<tr>
+        <td>${user.email}${isSelf ? ' <span class="el-badge">vous</span>' : ''}</td>
+        <td>${getRoleLabel(user.role)}</td>
+        <td>${statusBadge}</td>
+        <td>${toggleForm}</td>
+        <td>${resetForm}</td>
+      </tr>`;
+    })
+    .join('');
+
+  return renderDashboardLayout(
+    'Gestion des comptes',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
+    <div class="el-page-intro">
+      <h2>Comptes utilisateurs</h2>
+      <span class="el-badge">${users.length} compte(s)</span>
+    </div>
+    <p class="el-muted">Activez/désactivez l'accès des comptes ou réinitialisez leur mot de passe. Un utilisateur désactivé ne peut plus se connecter.</p>
+    <table>
+      <thead><tr><th>Email</th><th>Rôle</th><th>Statut</th><th>Accès</th><th>Mot de passe</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="5">Aucun compte.</td></tr>'}</tbody>
+    </table>
+    <p class="el-muted">Pour créer un nouvel utilisateur, utilisez les pages <a href="/admin/teachers">Enseignants</a>, <a href="/admin/parents">Responsables</a> ou <a href="/admin/students">Élèves</a>.</p>
     </section>`
   );
 }
@@ -2237,8 +2528,26 @@ function createServer({
   aiConfig = {},
   logger = createLogger({ module: 'web.server' }),
   runtimeEnv = loadRuntimeEnv(process.env),
-  allowPublicDemoGuide = runtimeEnv.nodeEnv === 'development' || runtimeEnv.nodeEnv === 'test'
+  allowPublicDemoGuide = runtimeEnv.nodeEnv === 'development' || runtimeEnv.nodeEnv === 'test',
+  userStore,
+  loginThrottle = new LoginThrottle()
 } = {}) {
+  const sessionSecret = runtimeEnv.sessionSecret;
+  if (!sessionSecret || typeof sessionSecret !== 'string') {
+    throw new Error('createServer requires runtimeEnv.sessionSecret');
+  }
+  const isProductionEnv = runtimeEnv.nodeEnv === 'production';
+  const secureCookies = isProductionEnv;
+  if (runtimeEnv.sessionSecretIsFallback) {
+    logger.warn('SESSION_SECRET is using a development fallback. Set SESSION_SECRET in the environment for any deployed instance.');
+  }
+  const memorySeededUsers = getInMemorySeedUsers();
+  for (const user of memorySeededUsers) {
+    rememberUserIdentity(user);
+  }
+  const inMemoryUserStore = new InMemoryUserStore({ users: memorySeededUsers });
+  const activeUserStore =
+    userStore ?? (runtimeEnv.persistenceMode === 'postgres' ? new PostgresUserRepository({ pool: getPool() }) : inMemoryUserStore);
   const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms, subjects: seed.subjects });
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
   const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
@@ -2416,12 +2725,15 @@ function createServer({
     const requestStartedAt = Date.now();
     const requestId = request.headers['x-request-id'] || randomUUID();
     response.setHeader('x-request-id', requestId);
+    applySecurityHeaders(response, { isProduction: isProductionEnv });
 
     const url = new URL(request.url, 'http://localhost');
     const cookies = parseCookies(request.headers.cookie);
-    const rawSessionId = cookies.sessionId;
-    const session = sessionStore.get(rawSessionId);
-    const hasStaleSessionCookie = Boolean(rawSessionId && !session);
+    const rawCookieValue = cookies.sessionId;
+    const verifiedSessionId = rawCookieValue ? verifySignedSessionId(rawCookieValue, sessionSecret) : null;
+    const session = sessionStore.get(verifiedSessionId);
+    const hasStaleSessionCookie = Boolean(rawCookieValue && !session);
+    const rawSessionId = verifiedSessionId;
     const requestLogger = logger.child(
       {
         requestId,
@@ -2445,6 +2757,13 @@ function createServer({
     });
 
     try {
+
+    if (request.method === 'POST' && url.pathname !== '/login') {
+      const csrfOk = await enforceCsrf({ request, response, session });
+      if (!csrfOk) {
+        return;
+      }
+    }
 
     if (request.method === 'GET' && url.pathname === '/assets/design-system.css') {
       response.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=3600' });
@@ -2485,7 +2804,7 @@ function createServer({
       if (!allowPublicDemoGuide) {
         const auth = requireAuth(session);
         if (!auth.allowed) {
-          response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie() } : {}) });
+          response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie({ secure: secureCookies }) } : {}) });
           response.end();
           return;
         }
@@ -2497,15 +2816,31 @@ function createServer({
     }
 
     if (request.method === 'POST' && url.pathname === '/login') {
+      const clientIp = getClientIp(request);
+      if (loginThrottle.isLocked(clientIp)) {
+        const retryAfter = loginThrottle.retryAfterSeconds(clientIp);
+        requestLogger.warn('Login attempt blocked by throttle', { clientIp, retryAfter });
+        response.writeHead(429, {
+          'content-type': 'text/html; charset=utf-8',
+          'retry-after': String(retryAfter)
+        });
+        response.end(renderLoginPage(`Trop de tentatives. Réessayez dans ${Math.ceil(retryAfter / 60)} minute(s).`));
+        return;
+      }
       const form = parseForm(await readBody(request));
-      const user = users.find((candidate) => candidate.email === form.email && candidate.password === form.password);
-      if (!user) {
+      const candidate = await activeUserStore.findByEmail(form.email);
+      const passwordOk = await verifyPassword(form.password, candidate?.passwordHash);
+      if (!candidate || !passwordOk) {
+        loginThrottle.recordFailure(clientIp);
         requestLogger.warn('Authentication failed', { actor: form.email || null });
         response.writeHead(401, { 'content-type': 'text/html; charset=utf-8' });
         response.end(renderLoginPage('Identifiants invalides'));
         return;
       }
 
+      loginThrottle.reset(clientIp);
+      const user = candidate;
+      rememberUserIdentity(user);
       const createdSession = sessionStore.create({ userId: user.id, role: user.role, tenantId: user.tenantId });
       logAuthEvent(requestLogger, 'Authentication succeeded', createdSession);
       auditWriter.writeAuthEvent(createdSession, 'auth.login.success');
@@ -2513,7 +2848,14 @@ function createServer({
         sessionStore.destroy(rawSessionId);
       }
 
-      response.writeHead(302, { location: getDashboardPathForRole(user.role), 'set-cookie': buildSessionCookie(createdSession.id) });
+      const signedCookieValue = signSessionId(createdSession.id, sessionSecret);
+      response.writeHead(302, {
+        location: getDashboardPathForRole(user.role),
+        'set-cookie': [
+          buildSessionCookie(signedCookieValue, { secure: secureCookies }),
+          buildCsrfCookie(createdSession.csrfToken, { secure: secureCookies })
+        ]
+      });
       response.end();
       return;
     }
@@ -2524,7 +2866,13 @@ function createServer({
         logAuthEvent(requestLogger, 'Logout succeeded', session);
       }
       sessionStore.destroy(rawSessionId);
-      response.writeHead(302, { location: '/login', 'set-cookie': clearSessionCookie() });
+      response.writeHead(302, {
+        location: '/login',
+        'set-cookie': [
+          clearSessionCookie({ secure: secureCookies }),
+          clearCsrfCookie({ secure: secureCookies })
+        ]
+      });
       response.end();
       return;
     }
@@ -2532,7 +2880,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/dashboard') {
       const auth = requireAuth(session);
       if (!auth.allowed) {
-        response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie() } : {}) });
+        response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie({ secure: secureCookies }) } : {}) });
         response.end();
         return;
       }
@@ -2546,7 +2894,7 @@ function createServer({
     if (request.method === 'GET' && dashboardRoleMatch) {
       const auth = requireAuth(session);
       if (!auth.allowed) {
-        response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie() } : {}) });
+        response.writeHead(302, { location: '/login', ...(hasStaleSessionCookie ? { 'set-cookie': clearSessionCookie({ secure: secureCookies }) } : {}) });
         response.end();
         return;
       }
@@ -2670,7 +3018,95 @@ function createServer({
       const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
       const students = studentStore.list(auth.context.tenantId, { classRoomId: classRoomId || undefined });
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderStudentsPage(auth.context, classRooms, students, classRoomId));
+      response.end(
+        renderStudentsPage(auth.context, classRooms, students, classRoomId, {
+          errorCode: url.searchParams.get('error'),
+          successMessage: url.searchParams.get('created') === '1' ? 'Élève créé avec succès.' : null,
+          canCreate: canManageStudents(auth.context)
+        })
+      );
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/students') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageStudents(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const form = parseExtendedForm(await readBody(request));
+      const wantsAccess = form.get('createAccess') === '1';
+      const email = normalizeEmail(form.get('email'));
+      const password = form.get('password');
+
+      if (wantsAccess) {
+        if (!email) {
+          response.writeHead(302, { location: '/admin/students?error=email_required' });
+          response.end();
+          return;
+        }
+        if (!isValidEmailFormat(email)) {
+          response.writeHead(302, { location: '/admin/students?error=email_invalid' });
+          response.end();
+          return;
+        }
+        if (!isValidPasswordFormat(password)) {
+          response.writeHead(302, { location: '/admin/students?error=password_required' });
+          response.end();
+          return;
+        }
+        const existing = await activeUserStore.findByEmail(email);
+        if (existing) {
+          response.writeHead(302, { location: '/admin/students?error=email_duplicate' });
+          response.end();
+          return;
+        }
+      }
+
+      let created;
+      try {
+        created = studentStore.create(auth.context.tenantId, {
+          firstName: form.get('firstName'),
+          lastName: form.get('lastName'),
+          admissionNumber: form.get('admissionNumber'),
+          classRoomId: form.get('classRoomId'),
+          dateOfBirth: form.get('dateOfBirth')
+        });
+      } catch {
+        response.writeHead(302, { location: '/admin/students?error=invalid_input' });
+        response.end();
+        return;
+      }
+
+      if (wantsAccess) {
+        try {
+          const passwordHash = await hashPassword(password);
+          const createdUser = await activeUserStore.create({
+            id: created.id,
+            tenantId: auth.context.tenantId,
+            email,
+            role: ROLES.STUDENT,
+            passwordHash
+          });
+          rememberUserIdentity({ id: createdUser.id, email: createdUser.email });
+          auditWriter.writeEntityEvent(auth.context, 'user.created', 'user', createdUser.id, {
+            role: ROLES.STUDENT,
+            email
+          });
+        } catch (error) {
+          studentStore.archive(auth.context.tenantId, created.id);
+          const isDuplicate = error instanceof DuplicateEmailError || error?.code === 'DUPLICATE_EMAIL';
+          const errorCode = isDuplicate ? 'email_duplicate' : 'invalid_input';
+          response.writeHead(302, { location: `/admin/students?error=${errorCode}` });
+          response.end();
+          return;
+        }
+      }
+
+      response.writeHead(302, { location: '/admin/students?created=1' });
+      response.end();
       return;
     }
 
@@ -3277,7 +3713,12 @@ function createServer({
 
       const parents = parentStore.list(auth.context.tenantId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderParentsPage(auth.context, parents));
+      response.end(
+        renderParentsPage(auth.context, parents, {
+          errorCode: url.searchParams.get('error'),
+          successMessage: url.searchParams.get('created') === '1' ? 'Responsable créé. Le compte peut désormais se connecter.' : null
+        })
+      );
       return;
     }
 
@@ -3289,20 +3730,73 @@ function createServer({
         return;
       }
 
+      const form = parseExtendedForm(await readBody(request));
+      const email = normalizeEmail(form.get('email'));
+      const password = form.get('password');
+
+      if (!email) {
+        response.writeHead(302, { location: '/admin/parents?error=email_required' });
+        response.end();
+        return;
+      }
+      if (!isValidEmailFormat(email)) {
+        response.writeHead(302, { location: '/admin/parents?error=email_invalid' });
+        response.end();
+        return;
+      }
+      if (!isValidPasswordFormat(password)) {
+        response.writeHead(302, { location: '/admin/parents?error=password_required' });
+        response.end();
+        return;
+      }
+
+      const existing = await activeUserStore.findByEmail(email);
+      if (existing) {
+        response.writeHead(302, { location: '/admin/parents?error=email_duplicate' });
+        response.end();
+        return;
+      }
+
+      let created;
       try {
-        const form = parseExtendedForm(await readBody(request));
-        const created = parentStore.create(auth.context.tenantId, {
+        created = parentStore.create(auth.context.tenantId, {
           firstName: form.get('firstName'),
           lastName: form.get('lastName'),
           phone: form.get('phone'),
-          email: form.get('email'),
+          email,
           address: form.get('address'),
           notes: form.get('notes')
         });
-        response.writeHead(302, { location: `/admin/parents/${created.id}` });
       } catch {
-        response.writeHead(302, { location: '/admin/parents' });
+        response.writeHead(302, { location: '/admin/parents?error=invalid_input' });
+        response.end();
+        return;
       }
+
+      try {
+        const passwordHash = await hashPassword(password);
+        const createdUser = await activeUserStore.create({
+          id: created.id,
+          tenantId: auth.context.tenantId,
+          email,
+          role: ROLES.PARENT,
+          passwordHash
+        });
+        rememberUserIdentity({ id: createdUser.id, email: createdUser.email });
+        auditWriter.writeEntityEvent(auth.context, 'user.created', 'user', createdUser.id, {
+          role: ROLES.PARENT,
+          email
+        });
+      } catch (error) {
+        parentStore.archive(auth.context.tenantId, created.id);
+        const isDuplicate = error instanceof DuplicateEmailError || error?.code === 'DUPLICATE_EMAIL';
+        const errorCode = isDuplicate ? 'email_duplicate' : 'invalid_input';
+        response.writeHead(302, { location: `/admin/parents?error=${errorCode}` });
+        response.end();
+        return;
+      }
+
+      response.writeHead(302, { location: `/admin/parents/${created.id}` });
       response.end();
       return;
     }
@@ -3325,7 +3819,7 @@ function createServer({
 
       const students = studentStore.list(auth.context.tenantId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderParentProfile(parentWithLinks, students, parentWithLinks.links));
+      response.end(renderParentProfile(auth.context, parentWithLinks, students, parentWithLinks.links));
       return;
     }
 
@@ -3339,7 +3833,12 @@ function createServer({
 
       const teachers = teacherStore.list(auth.context.tenantId);
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderTeachersPage(auth.context, teachers));
+      response.end(
+        renderTeachersPage(auth.context, teachers, {
+          errorCode: url.searchParams.get('error'),
+          successMessage: url.searchParams.get('created') === '1' ? 'Enseignant créé. Le compte peut désormais se connecter.' : null
+        })
+      );
       return;
     }
 
@@ -3351,21 +3850,74 @@ function createServer({
         return;
       }
 
+      const form = parseExtendedForm(await readBody(request));
+      const email = normalizeEmail(form.get('email'));
+      const password = form.get('password');
+
+      if (!email) {
+        response.writeHead(302, { location: '/admin/teachers?error=email_required' });
+        response.end();
+        return;
+      }
+      if (!isValidEmailFormat(email)) {
+        response.writeHead(302, { location: '/admin/teachers?error=email_invalid' });
+        response.end();
+        return;
+      }
+      if (!isValidPasswordFormat(password)) {
+        response.writeHead(302, { location: '/admin/teachers?error=password_required' });
+        response.end();
+        return;
+      }
+
+      const existing = await activeUserStore.findByEmail(email);
+      if (existing) {
+        response.writeHead(302, { location: '/admin/teachers?error=email_duplicate' });
+        response.end();
+        return;
+      }
+
+      let created;
       try {
-        const form = parseExtendedForm(await readBody(request));
-        const created = teacherStore.create(auth.context.tenantId, {
+        created = teacherStore.create(auth.context.tenantId, {
           firstName: form.get('firstName'),
           lastName: form.get('lastName'),
-          email: form.get('email'),
+          email,
           phone: form.get('phone'),
           notes: form.get('notes'),
           classRoomIds: [],
           subjectIds: []
         });
-        response.writeHead(302, { location: `/admin/teachers/${created.id}` });
       } catch {
-        response.writeHead(302, { location: '/admin/teachers' });
+        response.writeHead(302, { location: '/admin/teachers?error=invalid_input' });
+        response.end();
+        return;
       }
+
+      try {
+        const passwordHash = await hashPassword(password);
+        const createdUser = await activeUserStore.create({
+          id: created.id,
+          tenantId: auth.context.tenantId,
+          email,
+          role: ROLES.TEACHER,
+          passwordHash
+        });
+        rememberUserIdentity({ id: createdUser.id, email: createdUser.email });
+        auditWriter.writeEntityEvent(auth.context, 'user.created', 'user', createdUser.id, {
+          role: ROLES.TEACHER,
+          email
+        });
+      } catch (error) {
+        teacherStore.archive(auth.context.tenantId, created.id);
+        const isDuplicate = error instanceof DuplicateEmailError || error?.code === 'DUPLICATE_EMAIL';
+        const errorCode = isDuplicate ? 'email_duplicate' : 'invalid_input';
+        response.writeHead(302, { location: `/admin/teachers?error=${errorCode}` });
+        response.end();
+        return;
+      }
+
+      response.writeHead(302, { location: `/admin/teachers/${created.id}` });
       response.end();
       return;
     }
@@ -3468,6 +4020,94 @@ function createServer({
       }
 
       response.writeHead(302, { location: `/admin/parents/${parentId}` });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/users') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageUsers(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const users = await activeUserStore.listByTenant(auth.context.tenantId);
+      const success = url.searchParams.get('success');
+      const successMessage =
+        success === 'deactivated' ? 'Compte désactivé.'
+        : success === 'activated' ? 'Compte réactivé.'
+        : success === 'password_reset' ? 'Mot de passe réinitialisé.'
+        : null;
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(
+        renderUsersPage(auth.context, users, {
+          errorCode: url.searchParams.get('error'),
+          successMessage
+        })
+      );
+      return;
+    }
+
+    const adminUserActionMatch = url.pathname.match(/^\/admin\/users\/([^/]+)\/(deactivate|activate|reset-password)$/);
+    if (adminUserActionMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageUsers(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const targetUserId = adminUserActionMatch[1];
+      const action = adminUserActionMatch[2];
+      const form = parseExtendedForm(await readBody(request));
+
+      const target = await activeUserStore.getById(targetUserId);
+      if (!target) {
+        response.writeHead(302, { location: '/admin/users?error=user_not_found' });
+        response.end();
+        return;
+      }
+      const targetTenant = target.tenantId ?? null;
+      const sessionTenant = auth.context.tenantId ?? null;
+      if (targetTenant !== sessionTenant) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      if (action === 'deactivate') {
+        if (target.id === auth.context.userId) {
+          response.writeHead(302, { location: '/admin/users?error=cannot_self_deactivate' });
+          response.end();
+          return;
+        }
+        await activeUserStore.update(target.id, { isActive: false });
+        auditWriter.writeEntityEvent(auth.context, 'user.deactivated', 'user', target.id, { email: target.email });
+        response.writeHead(302, { location: '/admin/users?success=deactivated' });
+        response.end();
+        return;
+      }
+
+      if (action === 'activate') {
+        await activeUserStore.update(target.id, { isActive: true });
+        auditWriter.writeEntityEvent(auth.context, 'user.activated', 'user', target.id, { email: target.email });
+        response.writeHead(302, { location: '/admin/users?success=activated' });
+        response.end();
+        return;
+      }
+
+      // reset-password
+      const newPassword = form.get('password');
+      if (!isValidPasswordFormat(newPassword)) {
+        response.writeHead(302, { location: '/admin/users?error=password_required' });
+        response.end();
+        return;
+      }
+      const passwordHash = await hashPassword(newPassword);
+      await activeUserStore.update(target.id, { passwordHash });
+      auditWriter.writeEntityEvent(auth.context, 'user.password_reset_by_admin', 'user', target.id, { email: target.email });
+      response.writeHead(302, { location: '/admin/users?success=password_reset' });
       response.end();
       return;
     }

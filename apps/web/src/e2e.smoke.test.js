@@ -18,6 +18,24 @@ async function withServer(run) {
   }
 }
 
+function collectSetCookies(response) {
+  if (typeof response.headers.getSetCookie === 'function') {
+    return response.headers.getSetCookie();
+  }
+  const raw = response.headers.get('set-cookie');
+  return raw ? [raw] : [];
+}
+
+function combineCookies(setCookies) {
+  return setCookies.map((raw) => raw.split(';')[0]).filter(Boolean).join('; ');
+}
+
+function extractCsrfFromCookieString(cookieString) {
+  if (!cookieString) return '';
+  const match = cookieString.match(/(?:^|;\s*)csrf=([^;]+)/);
+  return match ? match[1] : '';
+}
+
 async function login(baseUrl, email, password = 'password123') {
   const response = await fetch(`${baseUrl}/login`, {
     method: 'POST',
@@ -28,7 +46,7 @@ async function login(baseUrl, email, password = 'password123') {
 
   return {
     response,
-    cookie: response.headers.get('set-cookie')?.split(';')[0]
+    cookie: combineCookies(collectSetCookies(response))
   };
 }
 
@@ -41,10 +59,13 @@ async function expectLogin(baseUrl, { email, expectedLocation }) {
 }
 
 async function apiFetch(baseUrl, path, { cookie, method = 'GET', body } = {}) {
+  const csrfToken = extractCsrfFromCookieString(cookie);
+  const isMutation = method !== 'GET' && method !== 'HEAD';
   return fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       ...(cookie ? { cookie } : {}),
+      ...(isMutation && csrfToken ? { 'x-csrf-token': csrfToken } : {}),
       ...(body ? { 'content-type': 'application/json' } : {})
     },
     body: body ? JSON.stringify(body) : undefined

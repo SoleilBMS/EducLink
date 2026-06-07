@@ -22,6 +22,27 @@ async function withServer(run, options = {}) {
   }
 }
 
+function collectSetCookies(response) {
+  if (typeof response.headers.getSetCookie === 'function') {
+    return response.headers.getSetCookie();
+  }
+  const raw = response.headers.get('set-cookie');
+  return raw ? [raw] : [];
+}
+
+function combineCookies(setCookies) {
+  return setCookies
+    .map((raw) => raw.split(';')[0])
+    .filter(Boolean)
+    .join('; ');
+}
+
+function extractCsrfFromCookieString(cookieString) {
+  if (!cookieString) return '';
+  const match = cookieString.match(/(?:^|;\s*)csrf=([^;]+)/);
+  return match ? match[1] : '';
+}
+
 async function login(baseUrl, email, password = 'password123') {
   const response = await fetch(`${baseUrl}/login`, {
     method: 'POST',
@@ -30,9 +51,10 @@ async function login(baseUrl, email, password = 'password123') {
     redirect: 'manual'
   });
 
+  const setCookies = collectSetCookies(response);
   return {
     response,
-    cookie: response.headers.get('set-cookie')?.split(';')[0]
+    cookie: combineCookies(setCookies)
   };
 }
 
@@ -57,12 +79,16 @@ function createLogCollector() {
   return { logger, entries };
 }
 
-async function apiFetch(baseUrl, path, { cookie, method = 'GET', body } = {}) {
+async function apiFetch(baseUrl, path, { cookie, method = 'GET', body, headers: extraHeaders = {} } = {}) {
+  const csrfToken = extractCsrfFromCookieString(cookie);
+  const isMutation = method !== 'GET' && method !== 'HEAD';
   return fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       ...(cookie ? { cookie } : {}),
-      ...(body ? { 'content-type': 'application/json' } : {})
+      ...(isMutation && csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      ...extraHeaders
     },
     body: body ? JSON.stringify(body) : undefined
   });
@@ -123,7 +149,7 @@ test('guide de démonstration est protégé en environnement non fiable', async 
     const { cookie } = await login(baseUrl, 'admin@school-a.test');
     const authenticatedResponse = await fetch(`${baseUrl}/demo`, { headers: { cookie } });
     assert.equal(authenticatedResponse.status, 200);
-  }, { runtimeEnv: { nodeEnv: 'production' } });
+  }, { runtimeEnv: { nodeEnv: 'production', sessionSecret: 'test-secret-of-sufficient-length-1234' } });
 });
 test('logger structure les entrées et masque les champs sensibles', () => {
   const entries = [];
@@ -333,7 +359,7 @@ test('logout invalide réellement la session active', async () => {
 
     await fetch(`${baseUrl}/logout`, {
       method: 'POST',
-      headers: { cookie: adminLogin.cookie },
+      headers: { cookie: adminLogin.cookie, 'x-csrf-token': extractCsrfFromCookieString(adminLogin.cookie) },
       redirect: 'manual'
     });
 
@@ -349,6 +375,7 @@ test('enseignant ne peut pas enregistrer un commentaire pour un élève hors pé
       method: 'POST',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
+        _csrf: extractCsrfFromCookieString(cookie),
         studentId: 'student-a2',
         draftText: 'Très bon trimestre',
         humanValidated: 'true'
@@ -2187,7 +2214,8 @@ test('contrat API: validation JSON invalide expose code stable et details', asyn
       method: 'POST',
       headers: {
         cookie,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-csrf-token': extractCsrfFromCookieString(cookie)
       },
       body: '{"firstName":"Aya"'
     });
@@ -2405,5 +2433,336 @@ test('contrat erreur not found unifié', async () => {
     assert.equal(payload.success, false);
     assert.equal(payload.error.code, 'NOT_FOUND');
     assert.equal(payload.error.message, 'Student not found');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sprint 1 security suite (SEC-04..08)
+// ---------------------------------------------------------------------------
+
+test('SEC-06: les réponses HTML portent les headers de sécurité', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/login`);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(response.headers.get('x-frame-options'), 'SAMEORIGIN');
+    assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    const csp = response.headers.get('content-security-policy') ?? '';
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+  });
+});
+
+test("SEC-06: HSTS n'est pas envoyé en dev mais le serait en production", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/login`);
+    assert.equal(response.headers.get('strict-transport-security'), null);
+  });
+});
+
+test('SEC-04 + SEC-08: le cookie de session est signé et marqué HttpOnly/SameSite/Path', async () => {
+  await withServer(async (baseUrl) => {
+    const { response } = await login(baseUrl, 'admin@school-a.test');
+    const setCookies = collectSetCookies(response);
+    const sessionCookie = setCookies.find((entry) => entry.startsWith('sessionId='));
+    assert.ok(sessionCookie, 'sessionId cookie present');
+    assert.match(sessionCookie, /HttpOnly/i);
+    assert.match(sessionCookie, /SameSite=Lax/i);
+    assert.match(sessionCookie, /Path=\//);
+    const value = sessionCookie.split(';')[0].slice('sessionId='.length);
+    assert.ok(value.includes('.'), 'session id is signed (contains separator)');
+    assert.ok(value.split('.')[1].length === 64, 'HMAC signature is hex sha256');
+  });
+});
+
+test('SEC-05: POST API sans token CSRF renvoie 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const cookieWithoutCsrf = cookie.split(';').map((p) => p.trim()).filter((p) => p.startsWith('sessionId=')).join('; ');
+    const response = await fetch(`${baseUrl}/api/v1/students`, {
+      method: 'POST',
+      headers: { cookie: cookieWithoutCsrf, 'content-type': 'application/json' },
+      body: JSON.stringify({ firstName: 'CSRF', lastName: 'Test', admissionNumber: 'X-1', classRoomId: 'class-a1', dateOfBirth: '2014-01-01' })
+    });
+    assert.equal(response.status, 403);
+    const payload = await response.json();
+    assert.equal(payload.error?.code, 'csrf_token_invalid');
+  });
+});
+
+test('SEC-05: POST formulaire sans _csrf renvoie 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const cookieWithoutCsrf = cookie.split(';').map((p) => p.trim()).filter((p) => p.startsWith('sessionId=')).join('; ');
+    const response = await fetch(`${baseUrl}/admin/parents`, {
+      method: 'POST',
+      headers: { cookie: cookieWithoutCsrf, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ firstName: 'X', lastName: 'Y' }).toString(),
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('SEC-05: POST formulaire avec _csrf valide réussit', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const csrfToken = extractCsrfFromCookieString(cookie);
+    const response = await fetch(`${baseUrl}/admin/parents`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ _csrf: csrfToken, firstName: 'Anne', lastName: 'Test' }).toString(),
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 302);
+  });
+});
+
+test('SEC-07: 5 logins échoués bloquent le 6ème depuis la même IP', async () => {
+  await withServer(async (baseUrl) => {
+    for (let i = 0; i < 5; i += 1) {
+      const r = await fetch(`${baseUrl}/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ email: 'admin@school-a.test', password: 'wrong' }).toString(),
+        redirect: 'manual'
+      });
+      assert.equal(r.status, 401);
+    }
+    const blocked = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ email: 'admin@school-a.test', password: 'password123' }).toString(),
+      redirect: 'manual'
+    });
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+  });
+});
+
+// =====================================================================
+// Sprint 2 — Gestion des utilisateurs depuis l'interface (USR-01..04)
+// =====================================================================
+
+async function postForm(baseUrl, path, { cookie, fields }) {
+  const csrfToken = extractCsrfFromCookieString(cookie);
+  return fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ _csrf: csrfToken, ...fields }).toString(),
+    redirect: 'manual'
+  });
+}
+
+test('USR-01: admin crée un enseignant avec un compte de connexion fonctionnel', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/teachers', {
+      cookie,
+      fields: {
+        firstName: 'Nouvelle',
+        lastName: 'Prof',
+        email: 'nouvelle.prof@school-a.test',
+        password: 'TempPass1!'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /^\/admin\/teachers\//);
+
+    const loginResult = await login(baseUrl, 'nouvelle.prof@school-a.test', 'TempPass1!');
+    assert.equal(loginResult.response.status, 302);
+    assert.equal(loginResult.response.headers.get('location'), '/dashboard/teacher');
+  });
+});
+
+test('USR-01: email en double sur création enseignant renvoie une erreur', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/teachers', {
+      cookie,
+      fields: {
+        firstName: 'Doublon',
+        lastName: 'Prof',
+        email: 'teacher@school-a.test',
+        password: 'TempPass1!'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/teachers?error=email_duplicate');
+  });
+});
+
+test('USR-01: mot de passe trop court rejeté avant toute création', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/teachers', {
+      cookie,
+      fields: {
+        firstName: 'Faible',
+        lastName: 'Mdp',
+        email: 'faible.mdp@school-a.test',
+        password: 'short'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/teachers?error=password_required');
+
+    // Le compte ne doit pas avoir été créé
+    const loginResult = await login(baseUrl, 'faible.mdp@school-a.test', 'short');
+    assert.equal(loginResult.response.status, 401);
+  });
+});
+
+test('USR-02: admin crée un parent avec un compte de connexion fonctionnel', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/parents', {
+      cookie,
+      fields: {
+        firstName: 'Nouveau',
+        lastName: 'Parent',
+        email: 'nouveau.parent@school-a.test',
+        password: 'TempPass1!',
+        phone: '+213000000000'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /^\/admin\/parents\//);
+
+    const loginResult = await login(baseUrl, 'nouveau.parent@school-a.test', 'TempPass1!');
+    assert.equal(loginResult.response.status, 302);
+    assert.equal(loginResult.response.headers.get('location'), '/dashboard/parent');
+  });
+});
+
+test('USR-03: création élève sans accès ne crée pas de compte de connexion', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students', {
+      cookie,
+      fields: {
+        firstName: 'SansAccès',
+        lastName: 'Élève',
+        admissionNumber: 'A-NEW-1',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-05-05'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students?created=1');
+
+    // Tentative de login : aucun compte n'existe pour cet élève
+    const loginResult = await login(baseUrl, 'sansacces@inexistant.test', 'whatever');
+    assert.equal(loginResult.response.status, 401);
+  });
+});
+
+test('USR-03: création élève avec accès crée un compte étudiant utilisable', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students', {
+      cookie,
+      fields: {
+        firstName: 'AvecAccès',
+        lastName: 'Élève',
+        admissionNumber: 'A-NEW-2',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-06-06',
+        createAccess: '1',
+        email: 'avec.acces@school-a.test',
+        password: 'TempPass1!'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students?created=1');
+
+    const loginResult = await login(baseUrl, 'avec.acces@school-a.test', 'TempPass1!');
+    assert.equal(loginResult.response.status, 302);
+    assert.equal(loginResult.response.headers.get('location'), '/dashboard/student');
+  });
+});
+
+test('USR-04: GET /admin/users liste les comptes du tenant courant uniquement', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
+    const responseA = await fetch(`${baseUrl}/admin/users`, { headers: { cookie: adminACookie } });
+    assert.equal(responseA.status, 200);
+    const htmlA = await responseA.text();
+    assert.ok(htmlA.includes('admin@school-a.test'));
+    assert.ok(htmlA.includes('teacher@school-a.test'));
+    assert.ok(!htmlA.includes('admin@school-b.test'), 'le tenant A ne doit pas voir les users du tenant B');
+
+    const { cookie: adminBCookie } = await login(baseUrl, 'admin@school-b.test');
+    const responseB = await fetch(`${baseUrl}/admin/users`, { headers: { cookie: adminBCookie } });
+    const htmlB = await responseB.text();
+    assert.ok(htmlB.includes('admin@school-b.test'));
+    assert.ok(!htmlB.includes('teacher@school-a.test'));
+  });
+});
+
+test('USR-04: non-admin ne peut pas accéder à /admin/users', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/users`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('USR-04: désactiver un compte bloque la connexion, réactiver la rétablit', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const deactivate = await postForm(baseUrl, '/admin/users/teacher-a1/deactivate', { cookie, fields: {} });
+    assert.equal(deactivate.status, 302);
+    assert.equal(deactivate.headers.get('location'), '/admin/users?success=deactivated');
+
+    const blocked = await login(baseUrl, 'teacher@school-a.test', 'password123');
+    assert.equal(blocked.response.status, 401);
+
+    const activate = await postForm(baseUrl, '/admin/users/teacher-a1/activate', { cookie, fields: {} });
+    assert.equal(activate.status, 302);
+    assert.equal(activate.headers.get('location'), '/admin/users?success=activated');
+
+    const ok = await login(baseUrl, 'teacher@school-a.test', 'password123');
+    assert.equal(ok.response.status, 302);
+  });
+});
+
+test('USR-04: admin ne peut pas se désactiver lui-même', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/users/admin-a/deactivate', { cookie, fields: {} });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/users?error=cannot_self_deactivate');
+
+    // Vérifie que le compte est toujours actif
+    const stillOk = await login(baseUrl, 'admin@school-a.test', 'password123');
+    assert.equal(stillOk.response.status, 302);
+  });
+});
+
+test('USR-04: reset password — ancien refusé, nouveau accepté', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/users/teacher-a2/reset-password', {
+      cookie,
+      fields: { password: 'BrandNew99!' }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/users?success=password_reset');
+
+    const oldFail = await login(baseUrl, 'teacher2@school-a.test', 'password123');
+    assert.equal(oldFail.response.status, 401);
+
+    const newOk = await login(baseUrl, 'teacher2@school-a.test', 'BrandNew99!');
+    assert.equal(newOk.response.status, 302);
+  });
+});
+
+test('USR-04: admin tenant A ne peut pas agir sur les users du tenant B', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    // admin-b appartient au tenant B
+    const response = await postForm(baseUrl, '/admin/users/admin-b/deactivate', { cookie, fields: {} });
+    assert.equal(response.status, 403);
   });
 });

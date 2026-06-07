@@ -51,6 +51,24 @@ async function withServer(run) {
   }
 }
 
+function collectSetCookies(response) {
+  if (typeof response.headers.getSetCookie === 'function') {
+    return response.headers.getSetCookie();
+  }
+  const raw = response.headers.get('set-cookie');
+  return raw ? [raw] : [];
+}
+
+function combineCookies(setCookies) {
+  return setCookies.map((raw) => raw.split(';')[0]).filter(Boolean).join('; ');
+}
+
+function extractCsrfFromCookieString(cookieString) {
+  if (!cookieString) return '';
+  const match = cookieString.match(/(?:^|;\s*)csrf=([^;]+)/);
+  return match ? match[1] : '';
+}
+
 async function login(baseUrl, email, password = 'password123') {
   const response = await fetch(`${baseUrl}/login`, {
     method: 'POST',
@@ -61,18 +79,31 @@ async function login(baseUrl, email, password = 'password123') {
 
   return {
     response,
-    cookie: response.headers.get('set-cookie')?.split(';')[0]
+    cookie: combineCookies(collectSetCookies(response))
   };
 }
 
 async function apiFetch(baseUrl, path, { cookie, method = 'GET', body } = {}) {
+  const csrfToken = extractCsrfFromCookieString(cookie);
+  const isMutation = method !== 'GET' && method !== 'HEAD';
   return fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       ...(cookie ? { cookie } : {}),
+      ...(isMutation && csrfToken ? { 'x-csrf-token': csrfToken } : {}),
       ...(body ? { 'content-type': 'application/json' } : {})
     },
     body: body ? JSON.stringify(body) : undefined
+  });
+}
+
+async function postForm(baseUrl, path, { cookie, fields }) {
+  const csrfToken = extractCsrfFromCookieString(cookie);
+  return fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ _csrf: csrfToken, ...fields }).toString(),
+    redirect: 'manual'
   });
 }
 
@@ -94,5 +125,77 @@ test(
       assert.equal(forbidden.status, 403);
     });
   });
+  }
+);
+
+test(
+  'postgres persistence: USR-01 admin crée un enseignant qui peut se logger',
+  { skip: !process.env.DATABASE_URL },
+  async () => {
+    await withPostgresEnv(async () => {
+      await withServer(async (baseUrl) => {
+        const { cookie } = await login(baseUrl, 'admin@school-a.test');
+        const uniqueSuffix = `${process.pid}-${Date.now()}`;
+        const newEmail = `pg.usr01.${uniqueSuffix}@school-a.test`;
+
+        const created = await postForm(baseUrl, '/admin/teachers', {
+          cookie,
+          fields: {
+            firstName: 'Postgres',
+            lastName: 'Prof',
+            email: newEmail,
+            password: 'PgPassword1!'
+          }
+        });
+        assert.equal(created.status, 302);
+        assert.match(created.headers.get('location') || '', /^\/admin\/teachers\//);
+
+        const loginResult = await login(baseUrl, newEmail, 'PgPassword1!');
+        assert.equal(loginResult.response.status, 302);
+        assert.equal(loginResult.response.headers.get('location'), '/dashboard/teacher');
+      });
+    });
+  }
+);
+
+test(
+  'postgres persistence: USR-04 désactiver un compte bloque le login',
+  { skip: !process.env.DATABASE_URL },
+  async () => {
+    await withPostgresEnv(async () => {
+      await withServer(async (baseUrl) => {
+        const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+        const uniqueSuffix = `${process.pid}-${Date.now()}`;
+        const newEmail = `pg.usr04.${uniqueSuffix}@school-a.test`;
+
+        const created = await postForm(baseUrl, '/admin/teachers', {
+          cookie: adminCookie,
+          fields: {
+            firstName: 'Pg',
+            lastName: 'ToDeactivate',
+            email: newEmail,
+            password: 'PgPassword1!'
+          }
+        });
+        assert.equal(created.status, 302);
+        const teacherId = (created.headers.get('location') || '').split('/').pop();
+        assert.ok(teacherId);
+
+        const ok = await login(baseUrl, newEmail, 'PgPassword1!');
+        assert.equal(ok.response.status, 302);
+
+        const deactivate = await postForm(baseUrl, `/admin/users/${teacherId}/deactivate`, { cookie: adminCookie, fields: {} });
+        assert.equal(deactivate.status, 302);
+
+        const blocked = await login(baseUrl, newEmail, 'PgPassword1!');
+        assert.equal(blocked.response.status, 401);
+
+        const activate = await postForm(baseUrl, `/admin/users/${teacherId}/activate`, { cookie: adminCookie, fields: {} });
+        assert.equal(activate.status, 302);
+
+        const restored = await login(baseUrl, newEmail, 'PgPassword1!');
+        assert.equal(restored.response.status, 302);
+      });
+    });
   }
 );

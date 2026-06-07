@@ -1,6 +1,8 @@
 const ALLOWED_NODE_ENVS = new Set(['development', 'staging', 'production', 'test']);
 const ALLOWED_PERSISTENCE_MODES = new Set(['memory', 'postgres']);
 const ALLOWED_LOG_FORMATS = new Set(['pretty', 'json']);
+const MIN_SESSION_SECRET_LENGTH = 32;
+const DEV_SESSION_SECRET_FALLBACK = 'educlink-dev-secret-do-not-use-in-prod-please-rotate-me';
 
 function isBlank(value) {
   return typeof value !== 'string' || value.trim().length === 0;
@@ -72,6 +74,21 @@ function validateRuntimeEnv(env = process.env) {
     errors.push(`EDUCLINK_PERSISTENCE=postgres is required when NODE_ENV=${nodeEnv}`);
   }
 
+  const rawSessionSecret = env.SESSION_SECRET;
+  let sessionSecret = '';
+  let sessionSecretIsFallback = false;
+  if (typeof rawSessionSecret === 'string' && rawSessionSecret.trim().length > 0) {
+    sessionSecret = rawSessionSecret.trim();
+    if (sessionSecret.length < MIN_SESSION_SECRET_LENGTH) {
+      errors.push(`SESSION_SECRET must be at least ${MIN_SESSION_SECRET_LENGTH} characters (received: ${sessionSecret.length})`);
+    }
+  } else if (nodeEnv === 'production' || nodeEnv === 'staging') {
+    errors.push(`SESSION_SECRET is required when NODE_ENV=${nodeEnv}`);
+  } else {
+    sessionSecret = DEV_SESSION_SECRET_FALLBACK;
+    sessionSecretIsFallback = true;
+  }
+
   return {
     ok: errors.length === 0,
     errors,
@@ -82,7 +99,9 @@ function validateRuntimeEnv(env = process.env) {
       persistenceMode,
       databaseUrl,
       logFormat,
-      logLevel: env.LOG_LEVEL ?? 'info'
+      logLevel: env.LOG_LEVEL ?? 'info',
+      sessionSecret,
+      sessionSecretIsFallback
     }
   };
 }
@@ -100,5 +119,7 @@ module.exports = {
   validateRuntimeEnv,
   loadRuntimeEnv,
   parsePort,
-  parseHost
+  parseHost,
+  MIN_SESSION_SECRET_LENGTH,
+  DEV_SESSION_SECRET_FALLBACK
 };

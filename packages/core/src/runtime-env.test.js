@@ -52,7 +52,13 @@ test('validateRuntimeEnv rejette memory en staging/production', () => {
 });
 
 test('loadRuntimeEnv retourne une config normalisée', () => {
-  const config = loadRuntimeEnv({ NODE_ENV: 'staging', PORT: '4100', EDUCLINK_PERSISTENCE: 'postgres', DATABASE_URL: 'postgres://example' });
+  const config = loadRuntimeEnv({
+    NODE_ENV: 'staging',
+    PORT: '4100',
+    EDUCLINK_PERSISTENCE: 'postgres',
+    DATABASE_URL: 'postgres://example',
+    SESSION_SECRET: 'a'.repeat(40)
+  });
   assert.equal(config.nodeEnv, 'staging');
   assert.equal(config.host, '0.0.0.0');
   assert.equal(config.port, 4100);
@@ -60,8 +66,42 @@ test('loadRuntimeEnv retourne une config normalisée', () => {
 });
 
 test('loadRuntimeEnv utilise PORT injecté Railway quand présent', () => {
-  const config = loadRuntimeEnv({ NODE_ENV: 'production', PORT: '8080', EDUCLINK_PERSISTENCE: 'postgres', DATABASE_URL: 'postgres://example' });
+  const config = loadRuntimeEnv({
+    NODE_ENV: 'production',
+    PORT: '8080',
+    EDUCLINK_PERSISTENCE: 'postgres',
+    DATABASE_URL: 'postgres://example',
+    SESSION_SECRET: 'b'.repeat(40)
+  });
   assert.equal(config.port, 8080);
+});
+
+test('validateRuntimeEnv exige SESSION_SECRET en production', () => {
+  const result = validateRuntimeEnv({
+    NODE_ENV: 'production',
+    EDUCLINK_PERSISTENCE: 'postgres',
+    DATABASE_URL: 'postgres://example'
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(' '), /SESSION_SECRET is required/);
+});
+
+test('validateRuntimeEnv refuse un SESSION_SECRET trop court', () => {
+  const result = validateRuntimeEnv({
+    NODE_ENV: 'production',
+    EDUCLINK_PERSISTENCE: 'postgres',
+    DATABASE_URL: 'postgres://example',
+    SESSION_SECRET: 'short'
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(' '), /SESSION_SECRET must be at least/);
+});
+
+test('validateRuntimeEnv tombe sur le fallback dev et marque sessionSecretIsFallback', () => {
+  const result = validateRuntimeEnv({});
+  assert.equal(result.ok, true);
+  assert.equal(result.config.sessionSecretIsFallback, true);
+  assert.ok(result.config.sessionSecret.length >= 32);
 });
 
 test('loadRuntimeEnv lève une erreur explicite en cas de config invalide', () => {
