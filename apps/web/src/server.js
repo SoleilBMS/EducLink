@@ -1379,7 +1379,7 @@ function isNavLinkActive(currentPath, href) {
 function buildDashboardNavigation(session, currentPath = '') {
   const navItems = [
     { label: 'Dashboard', href: getDashboardPathForRole(session.role), roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.ACCOUNTANT] },
-    { label: 'Élèves', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT] },
+    { label: 'Élèves', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Enseignants', href: '/admin/teachers', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Comptes', href: '/admin/users', roles: [ROLES.SCHOOL_ADMIN] },
     { label: 'Établissement', href: '/admin/school-settings', roles: [ROLES.SCHOOL_ADMIN] },
@@ -1387,7 +1387,6 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Niveaux & classes', href: '/admin/classes', roles: [ROLES.SCHOOL_ADMIN] },
     { label: 'Matières', href: '/admin/subjects', roles: [ROLES.SCHOOL_ADMIN] },
     { label: 'Tenants', href: '/admin/tenants', roles: [ROLES.SUPER_ADMIN] },
-    { label: 'Classes', href: '/admin/students', roles: [ROLES.DIRECTOR, ROLES.TEACHER] },
     { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
@@ -1620,7 +1619,7 @@ function renderTeacherDashboard(session, dashboard) {
       <div class="el-quick-actions">
         <a href="/teacher/attendance">Record attendance</a>
         <a href="/teacher/grades">Add grade/comment</a>
-        <a href="/admin/students">View class students</a>
+        <a href="/teacher/lesson-homework">Cahier de texte / devoirs</a>
       </div>
     </section>`
   );
@@ -1983,9 +1982,9 @@ function renderParentDashboard(session, dashboard) {
     <section class="el-card">
       <h2>Quick actions</h2>
       <div class="el-quick-actions">
-        <a href="/admin/students">View child profile</a>
         <a href="/parent/grades">View grades</a>
         <a href="/parent/attendance">View attendance</a>
+        <a href="/parent/homeworks">View homeworks</a>
         <a href="/inbox">Open messages</a>
       </div>
     </section>`
