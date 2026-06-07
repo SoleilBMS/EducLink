@@ -10,11 +10,21 @@ type NavItem = { href: string; label: string; icon: string; roles?: readonly str
 
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Tableau de bord', icon: '◇' },
+  // Admin / direction / teacher
   { href: '/students', label: 'Élèves', icon: '○', roles: ['super_admin', 'school_admin', 'director', 'teacher'] },
   { href: '/classes', label: 'Classes', icon: '◧', roles: ['super_admin', 'school_admin', 'director', 'teacher'] },
   { href: '/attendance', label: 'Absences', icon: '⊖', roles: ['super_admin', 'school_admin', 'teacher'] },
   { href: '/lesson-homework', label: 'Cahier de texte', icon: '✎', roles: ['teacher'] },
-  { href: '/grades', label: 'Notes', icon: '☆' },
+  // Parent
+  { href: '/parent/homeworks', label: 'Devoirs', icon: '✎', roles: ['parent'] },
+  { href: '/parent/attendance', label: 'Absences', icon: '⊖', roles: ['parent'] },
+  { href: '/parent/grades', label: 'Notes', icon: '☆', roles: ['parent'] },
+  // Student
+  { href: '/student/homeworks', label: 'Mes devoirs', icon: '✎', roles: ['student'] },
+  { href: '/student/grades', label: 'Mes notes', icon: '☆', roles: ['student'] },
+  { href: '/student/attendance', label: 'Mon assiduité', icon: '⊖', roles: ['student'] },
+  // Shared
+  { href: '/grades', label: 'Notes', icon: '☆', roles: ['super_admin', 'school_admin', 'director', 'teacher'] },
   { href: '/finance', label: 'Finance', icon: '◈', roles: ['super_admin', 'school_admin', 'accountant', 'parent'] },
   { href: '/messaging', label: 'Messagerie', icon: '✉' }
 ];

@@ -138,7 +138,54 @@ export type Homework = {
   classRoomId: string;
   subjectId: string;
   dueDate: string;
+  assignedDate?: string;
   title: string;
   description: string;
   created_at: string;
+  students?: Pick<Student, 'id' | 'firstName' | 'lastName' | 'classRoomId'>[];
+};
+
+export type Assessment = {
+  id: string;
+  tenant_id: string;
+  classRoomId: string;
+  subjectId: string;
+  date: string;
+  title: string;
+  maxScore?: number;
+};
+
+export type Grade = {
+  id: string;
+  tenant_id: string;
+  assessmentId: string;
+  classRoomId: string;
+  subjectId: string;
+  teacherId: string;
+  studentId: string;
+  date: string;
+  score: number;
+  remark?: string;
+  assessment?: Assessment;
+  student?: Pick<Student, 'id' | 'firstName' | 'lastName'>;
+};
+
+export type ParentChild = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  admissionNumber: string;
+  classRoomId: string;
+  classRoomName: string | null;
+  relationship: string | null;
+};
+
+export type ParentProfile = {
+  id: string;
+  tenantId: string;
+  children: ParentChild[];
+};
+
+export type StudentProfile = Student & {
+  classRoom: ClassRoom | null;
 };

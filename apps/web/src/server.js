@@ -2379,6 +2379,7 @@ function createServer({
     createAttendanceRoutes({
       attendanceService: attendanceApiService,
       teacherStore,
+      parentStore,
       sendApiError,
       sendApiSuccess,
       parseJsonBody,
@@ -2528,6 +2529,69 @@ function createServer({
       sessionStore.destroy(rawSessionId);
       response.writeHead(302, { location: '/login', 'set-cookie': clearSessionCookie() });
       response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && (url.pathname === '/api/v1/subjects' || url.pathname === '/api/v1/class-rooms')) {
+      if (!session) {
+        sendApiError(response, 401, 'unauthenticated', 'Aucune session active');
+        return;
+      }
+      const collection = url.pathname === '/api/v1/subjects' ? 'subjects' : 'classRooms';
+      sendApiSuccess(response, coreSchoolStore.list(collection, session.tenantId));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/v1/parents/me') {
+      if (!session) {
+        sendApiError(response, 401, 'unauthenticated', 'Aucune session active');
+        return;
+      }
+      if (session.role !== ROLES.PARENT) {
+        sendApiError(response, 403, 'forbidden', 'Endpoint réservé aux parents');
+        return;
+      }
+      const links = parentStore.listLinksByParent(session.tenantId, session.userId);
+      const children = links
+        .map((link) => {
+          const student = studentStore.get(session.tenantId, link.studentId, { includeArchived: false });
+          if (!student) return null;
+          const classRoom = student.classRoomId
+            ? coreSchoolStore.get('classRooms', session.tenantId, student.classRoomId)
+            : null;
+          return {
+            id: student.id,
+            firstName: student.firstName,
+            lastName: student.lastName,
+            admissionNumber: student.admissionNumber,
+            classRoomId: student.classRoomId,
+            classRoomName: classRoom?.name ?? null,
+            relationship: link.relationship ?? null
+          };
+        })
+        .filter(Boolean);
+      sendApiSuccess(response, { id: session.userId, tenantId: session.tenantId, children });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/v1/students/me') {
+      if (!session) {
+        sendApiError(response, 401, 'unauthenticated', 'Aucune session active');
+        return;
+      }
+      if (session.role !== ROLES.STUDENT) {
+        sendApiError(response, 403, 'forbidden', 'Endpoint réservé aux élèves');
+        return;
+      }
+      const student = studentStore.get(session.tenantId, session.userId, { includeArchived: false });
+      if (!student) {
+        sendApiError(response, 404, 'student_not_found', 'Profil élève introuvable');
+        return;
+      }
+      const classRoom = student.classRoomId
+        ? coreSchoolStore.get('classRooms', session.tenantId, student.classRoomId)
+        : null;
+      sendApiSuccess(response, { ...student, classRoom });
       return;
     }
 
