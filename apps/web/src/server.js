@@ -1,5 +1,8 @@
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
+const { AsyncLocalStorage } = require('node:async_hooks');
+
+const requestContextStorage = new AsyncLocalStorage();
 const { createLogger } = require('./observability/logger');
 
 const { authorizeApiRequest } = require('../../../packages/auth/src/guards/api-guard');
@@ -18,6 +21,7 @@ const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
 const { AuditLogStore, createAuditEventWriter } = require('./modules/audit');
 const { FinanceStore } = require('./modules/finance');
+const { buildReportCard } = require('./modules/bulletin');
 const { AiService, PromptRegistry, TenantAiFeatureFlagStore, AiProviderRegistry, AiLogStore, DevEchoAiProvider } = require('./modules/ai');
 const { createStudentRoutes } = require('./routes/student-routes');
 const { createParentRoutes } = require('./routes/parent-routes');
@@ -75,6 +79,14 @@ function getInMemorySeedUsers() {
 function createSeedData() {
   const now = new Date().toISOString();
   return {
+    academicYears: [
+      { id: 'year-a-2025-2026', tenant_id: 'school-a', label: '2025-2026', starts_at: '2025-09-01', ends_at: '2026-07-05', status: 'active', created_at: now, updated_at: now }
+    ],
+    terms: [
+      { id: 'term-a-t1', tenant_id: 'school-a', academicYearId: 'year-a-2025-2026', name: 'Trimestre 1', starts_at: '2025-09-01', ends_at: '2025-12-20', created_at: now, updated_at: now },
+      { id: 'term-a-t2', tenant_id: 'school-a', academicYearId: 'year-a-2025-2026', name: 'Trimestre 2', starts_at: '2026-01-06', ends_at: '2026-03-31', created_at: now, updated_at: now },
+      { id: 'term-a-t3', tenant_id: 'school-a', academicYearId: 'year-a-2025-2026', name: 'Trimestre 3', starts_at: '2026-04-01', ends_at: '2026-07-05', created_at: now, updated_at: now }
+    ],
     classRooms: [
       { id: 'class-a1', tenant_id: 'school-a', name: '6ème A', gradeLevelId: 'grade-a-1', capacity: 32 },
       { id: 'class-a2', tenant_id: 'school-a', name: '6ème B', gradeLevelId: 'grade-a-1', capacity: 30 },
@@ -339,6 +351,23 @@ function canManageTeachers(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
 
+function canAccessBulletinForStudent(session, student, { teacherStore, parentStore }) {
+  if (!session || !student) return false;
+  if (session.tenantId !== student.tenant_id) return false;
+  if (session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR) return true;
+  if (session.role === ROLES.TEACHER) {
+    const teacher = teacherStore.get(session.tenantId, session.userId, { includeArchived: false });
+    return Boolean(teacher && teacher.classRoomIds.includes(student.classRoomId));
+  }
+  if (session.role === ROLES.PARENT) {
+    return parentStore.listLinksByStudent(session.tenantId, student.id).some((link) => link.parentId === session.userId);
+  }
+  if (session.role === ROLES.STUDENT) {
+    return session.userId === student.id;
+  }
+  return false;
+}
+
 function canManageUsers(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
 }
@@ -553,6 +582,19 @@ function sendCsrfFailure(request, response) {
   response.writeHead(403, { 'content-type': 'text/html; charset=utf-8' });
   response.end('<!doctype html><html><body><h1>403 - CSRF token invalide</h1><p>Veuillez recharger la page et réessayer.</p></body></html>');
 }
+
+const UX_SCRIPT_JS = `(function () {
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (!form || form.tagName !== 'FORM') return;
+    var message = form.getAttribute('data-confirm');
+    if (!message) return;
+    if (!window.confirm(message)) {
+      event.preventDefault();
+    }
+  });
+})();
+`;
 
 const DESIGN_SYSTEM_CSS = `
 :root {
@@ -1086,7 +1128,7 @@ th {
 const EDUCLINK_LOGO_SVG = `<svg class="el-logo-mark" viewBox="0 0 48 48" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="el-logo-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#22c55e"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs><path d="M24 8 4 18l20 10 16-8v10a1.5 1.5 0 0 0 3 0V18z" fill="url(#el-logo-grad)"/><path d="M12 24v6c0 3 5.4 6 12 6s12-3 12-6v-6l-12 6z" fill="url(#el-logo-grad)" opacity=".85"/><circle cx="41.5" cy="29.5" r="2.2" fill="#7c3aed"/></svg>`;
 
 function renderPageHead(title) {
-  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"><link rel="stylesheet" href="/assets/design-system.css">`;
+  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"><link rel="stylesheet" href="/assets/design-system.css"><script src="/assets/ux.js" defer></script>`;
 }
 
 function renderLoginPage(errorMessage = '') {
@@ -1327,6 +1369,13 @@ function getSessionIdentity(session) {
   };
 }
 
+function isNavLinkActive(currentPath, href) {
+  if (!currentPath || !href) return false;
+  if (currentPath === href) return true;
+  // prefix match avec séparateur "/" pour éviter qu'/admin/students matche /admin/students-other
+  return currentPath.startsWith(`${href}/`);
+}
+
 function buildDashboardNavigation(session, currentPath = '') {
   const navItems = [
     { label: 'Dashboard', href: getDashboardPathForRole(session.role), roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.ACCOUNTANT] },
@@ -1348,14 +1397,14 @@ function buildDashboardNavigation(session, currentPath = '') {
 
   return navItems
     .filter((item) => item.roles.includes(session.role))
-    .map((item) => `<a class="el-nav-link ${currentPath === item.href ? 'is-active' : ''}" href="${item.href}">${item.label}</a>`)
+    .map((item) => `<a class="el-nav-link ${isNavLinkActive(currentPath, item.href) ? 'is-active' : ''}" href="${item.href}">${item.label}</a>`)
     .join('');
 }
 
 function renderDashboardLayout(title, session, body) {
   const identity = getSessionIdentity(session);
-  const currentPath = getDashboardPathForRole(session.role);
-  const navigation = buildDashboardNavigation(session, currentPath);
+  const requestPath = requestContextStorage.getStore()?.pathname || getDashboardPathForRole(session.role);
+  const navigation = buildDashboardNavigation(session, requestPath);
 
   return `<!doctype html><html lang="fr"><head>${renderPageHead(title)}</head><body><div class="el-app-shell">
     <aside class="el-sidebar">
@@ -1623,7 +1672,7 @@ function renderTeacherReportCommentsPage(session, { teacher, students, selectedS
   </body></html>`;
 }
 
-function renderTeacherAttendancePage(session, { teacher, classRooms, selectedClassRoomId, selectedDate, students, attendanceByStudentId }) {
+function renderTeacherAttendancePage(session, { teacher, classRooms, selectedClassRoomId, selectedDate, students, attendanceByStudentId, successMessage = null, errorMessage = null }) {
   const options = classRooms
     .map((classRoom) => `<option value="${classRoom.id}" ${classRoom.id === selectedClassRoomId ? 'selected' : ''}>${classRoom.name}</option>`)
     .join('');
@@ -1635,7 +1684,7 @@ function renderTeacherAttendancePage(session, { teacher, classRooms, selectedCla
         .map((status) => `<option value="${status}" ${selectedStatus === status ? 'selected' : ''}>${status}</option>`)
         .join('');
       return `<tr>
-        <td>${student.firstName} ${student.lastName}</td>
+        <td><a href="/teacher/students/${student.id}">${student.firstName} ${student.lastName}</a></td>
         <td>${student.admissionNumber}</td>
         <td>
           <input type="hidden" name="studentId" value="${student.id}" />
@@ -1645,10 +1694,14 @@ function renderTeacherAttendancePage(session, { teacher, classRooms, selectedCla
     })
     .join('');
 
+  const banner =
+    (successMessage ? `<div class="el-banner is-success" role="status">${successMessage}</div>` : '') +
+    (errorMessage ? `<div class="el-banner is-error" role="alert">${errorMessage}</div>` : '');
+
   return renderDashboardLayout(
     'Appel enseignant',
     session,
-    `<section class="el-card">
+    `${banner}<section class="el-card">
       <div class="el-page-intro">
         <div>
           <h2>Prise de présence</h2>
@@ -1678,6 +1731,160 @@ function renderTeacherAttendancePage(session, { teacher, classRooms, selectedCla
     </form>`
           : '<p class="el-empty-state">Sélectionnez une classe autorisée pour commencer.</p>'
       }
+    </section>`
+  );
+}
+
+function renderTeacherStudentHomeworkSection(homeworks, subjectsById) {
+  if (homeworks.length === 0) {
+    return `<section class="el-card"><h3>Devoirs (mes matières)</h3><p class="el-empty-state">Aucun devoir pour cette classe sur vos matières.</p></section>`;
+  }
+  const rows = homeworks
+    .map((homework) => {
+      const subjectName = subjectsById.get(homework.subjectId)?.name || homework.subjectId;
+      return `<tr>
+        <td>${homework.dueDate}</td>
+        <td>${subjectName}</td>
+        <td>${homework.title}</td>
+        <td>${homework.description}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<section class="el-card">
+    <h3>Devoirs (mes matières) <span class="el-badge">${homeworks.length}</span></h3>
+    <table><thead><tr><th>Échéance</th><th>Matière</th><th>Titre</th><th>Consigne</th></tr></thead><tbody>${rows}</tbody></table>
+  </section>`;
+}
+
+function renderTeacherStudentView(session, { student, classRoom, recentAttendance, recentGrades, homeworks, classRooms, subjects }) {
+  const classRoomsById = new Map(classRooms.map((room) => [room.id, room]));
+  const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
+  const classRoomName = classRoom?.name || student.classRoomId;
+  return renderDashboardLayout(
+    'Fiche élève',
+    session,
+    `<section class="el-card">
+      <h2>${student.firstName} ${student.lastName}</h2>
+      <p><strong>Matricule:</strong> ${student.admissionNumber}</p>
+      <p><strong>Classe:</strong> <span class="el-badge">${classRoomName}</span></p>
+      <p><strong>Date de naissance:</strong> ${student.dateOfBirth || '-'}</p>
+      <p class="el-muted">Vue lecture seule — accès limité à vos classes et matières.</p>
+      <p><a href="/teacher/attendance">Retour à l'appel</a> · <a href="/bulletins/students/${student.id}">Voir bulletin</a></p>
+    </section>
+    ${renderStudentAttendanceSection(recentAttendance, classRoomsById)}
+    ${renderStudentGradesSection(recentGrades, subjectsById)}
+    ${renderTeacherStudentHomeworkSection(homeworks, subjectsById)}`
+  );
+}
+
+function renderBulletinIndexPage(session, { student, classRoom, terms }) {
+  const classRoomName = classRoom?.name || student.classRoomId;
+  const termRows = terms.length === 0
+    ? '<p class="el-empty-state">Aucun trimestre configuré. Demandez à un administrateur de créer une année scolaire avec ses trimestres.</p>'
+    : `<table><thead><tr><th>Trimestre</th><th>Période</th><th></th></tr></thead><tbody>${
+        terms
+          .map(
+            (term) => `<tr>
+              <td>${term.name}</td>
+              <td>${term.starts_at} → ${term.ends_at}</td>
+              <td><a href="/bulletins/students/${student.id}/terms/${term.id}">Voir le bulletin</a></td>
+            </tr>`
+          )
+          .join('')
+      }</tbody></table>`;
+
+  return renderDashboardLayout(
+    'Bulletins',
+    session,
+    `<section class="el-card">
+      <h2>Bulletins de ${student.firstName} ${student.lastName}</h2>
+      <p><strong>Classe:</strong> <span class="el-badge">${classRoomName}</span></p>
+      <p><strong>Matricule:</strong> ${student.admissionNumber}</p>
+    </section>
+    <section class="el-card">
+      <h3>Trimestres disponibles</h3>
+      ${termRows}
+    </section>`
+  );
+}
+
+function formatAverage(value) {
+  if (value === null || value === undefined) return '-';
+  return `${value.toFixed(2)}/20`;
+}
+
+function renderReportCardPage(session, { reportCard, schoolName, limitedScope = false }) {
+  const { student, classRoom, term, subjects, overallAverage, evaluatedSubjectCount, totalGradeCount, reportComments } = reportCard;
+  const averageLabel = limitedScope ? 'Moyenne sur vos matières' : 'Moyenne générale';
+  const scopeNote = limitedScope
+    ? '<p class="el-muted"><em>Vue restreinte aux matières que vous enseignez.</em></p>'
+    : '';
+  const subjectsTable = subjects.length === 0
+    ? '<p class="el-empty-state">Aucune note enregistrée pour ce trimestre.</p>'
+    : `<table><thead><tr><th>Matière</th><th>Notes</th><th>Moyenne</th></tr></thead><tbody>${
+        subjects
+          .map(
+            (subject) => `<tr>
+              <td><strong>${subject.subjectName}</strong>${subject.subjectCode ? ` <span class="el-badge">${subject.subjectCode}</span>` : ''}</td>
+              <td>${subject.grades.length}</td>
+              <td><strong>${formatAverage(subject.average)}</strong></td>
+            </tr>`
+          )
+          .join('')
+      }</tbody></table>`;
+
+  const subjectDetails = subjects
+    .map(
+      (subject) => `<section class="el-card">
+        <h3>${subject.subjectName}</h3>
+        <table><thead><tr><th>Date</th><th>Évaluation</th><th>Coef.</th><th>Note</th><th>Appréciation</th></tr></thead><tbody>${
+          subject.grades
+            .map(
+              (grade) => `<tr>
+                <td>${grade.date}</td>
+                <td>${grade.assessment?.title || '-'}</td>
+                <td>${grade.assessment?.coefficient ?? '-'}</td>
+                <td><strong>${grade.score}</strong>/20</td>
+                <td>${grade.remark || ''}</td>
+              </tr>`
+            )
+            .join('')
+        }</tbody></table>
+        <p class="el-muted">Moyenne pondérée: <strong>${formatAverage(subject.average)}</strong></p>
+      </section>`
+    )
+    .join('');
+
+  const commentsSection = reportComments.length === 0
+    ? '<p class="el-empty-state">Aucune appréciation enregistrée pour cet élève.</p>'
+    : `<ul>${
+        reportComments
+          .map((comment) => `<li><em>${comment.created_at.slice(0, 10)}</em> — ${comment.commentText}</li>`)
+          .join('')
+      }</ul>`;
+
+  return renderDashboardLayout(
+    `Bulletin ${term.name}`,
+    session,
+    `<section class="el-card">
+      <h2>Bulletin — ${term.name}</h2>
+      ${schoolName ? `<p class="el-muted">${schoolName}</p>` : ''}
+      <p><strong>Élève:</strong> ${student.firstName} ${student.lastName} (${student.admissionNumber})</p>
+      <p><strong>Classe:</strong> <span class="el-badge">${classRoom?.name || student.classRoomId}</span></p>
+      <p><strong>Période:</strong> ${term.starts_at} → ${term.ends_at}</p>
+      <p><a href="/bulletins/students/${student.id}">← Retour aux trimestres</a></p>
+    </section>
+    <section class="el-card">
+      <h3>Synthèse</h3>
+      ${scopeNote}
+      ${subjectsTable}
+      <p class="el-muted">Matières évaluées: <strong>${evaluatedSubjectCount}</strong> · Notes prises en compte: <strong>${totalGradeCount}</strong></p>
+      <p><strong>${averageLabel}: ${formatAverage(overallAverage)}</strong></p>
+    </section>
+    ${subjectDetails}
+    <section class="el-card">
+      <h3>Appréciations</h3>
+      ${commentsSection}
     </section>`
   );
 }
@@ -1733,7 +1940,7 @@ function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoo
 function renderParentDashboard(session, dashboard) {
   const { children } = dashboard;
   const list = children.length
-    ? `<ul>${children.map((student) => `<li>${student.firstName} ${student.lastName} (${student.classRoomId})</li>`).join('')}</ul>`
+    ? `<ul>${children.map((student) => `<li>${student.firstName} ${student.lastName} (${student.classRoomId}) — <a href="/bulletins/students/${student.id}">bulletins</a></li>`).join('')}</ul>`
     : '<p>Aucun enfant lié pour le moment.</p>';
 
   return renderDashboardLayout(
@@ -2084,11 +2291,13 @@ function renderStudentGradesPage(session, student, grades) {
         `<tr><td>${entry.date}</td><td>${entry.assessment?.subjectId ?? '-'}</td><td>${entry.assessment?.title ?? '-'}</td><td>${renderStatusBadge(`${entry.score}/20`, { '': 'is-info' })}</td><td>${entry.assessment?.coefficient ?? '-'}</td><td>${entry.remark || '-'}</td></tr>`
     )
     .join('');
+  const bulletinLink = student ? `<p><a href="/bulletins/students/${student.id}">Voir mes bulletins par trimestre</a></p>` : '';
   return renderDashboardLayout(
     'Mes notes',
     session,
     `<section class="el-card">
       <p>Étudiant: ${student ? `${student.firstName} ${student.lastName}` : '-'}</p>
+      ${bulletinLink}
       <table><thead><tr><th>Date</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Coeff</th><th>Remarque</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Aucune note disponible.</td></tr>'}</tbody></table>
     </section>`
   );
@@ -2254,19 +2463,150 @@ function renderStudentsPage(session, classRooms, students, selectedClassRoomId =
   );
 }
 
-function renderStudentProfile(session, student) {
+const PARENT_RELATIONSHIP_LABELS = {
+  mother: 'Mère',
+  father: 'Père',
+  guardian: 'Responsable',
+  other: 'Autre'
+};
+
+const ATTENDANCE_STATUS_LABELS = {
+  present: 'Présent',
+  late: 'Retard',
+  absent: 'Absent',
+  excused: 'Excusé'
+};
+
+const ATTENDANCE_STATUS_TONES = {
+  present: 'is-success',
+  late: 'is-warning',
+  absent: 'is-error',
+  excused: 'is-info'
+};
+
+function renderStudentParentsSection(parentLinks) {
+  if (parentLinks.length === 0) {
+    return `<section class="el-card"><h3>Responsables liés</h3><p class="el-empty-state">Aucun responsable rattaché à cet élève.</p></section>`;
+  }
+  const rows = parentLinks
+    .map((link) => {
+      const parent = link.parent;
+      const relationLabel = PARENT_RELATIONSHIP_LABELS[link.relationship] || link.relationship;
+      const primaryBadge = link.isPrimaryContact ? '<span class="el-badge">contact principal</span>' : '';
+      return `<tr>
+        <td><a href="/admin/parents/${parent.id}">${parent.firstName} ${parent.lastName}</a> ${primaryBadge}</td>
+        <td>${relationLabel}</td>
+        <td>${parent.phone || '-'}</td>
+        <td>${parent.email || '-'}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<section class="el-card">
+    <h3>Responsables liés <span class="el-badge">${parentLinks.length}</span></h3>
+    <table><thead><tr><th>Responsable</th><th>Relation</th><th>Téléphone</th><th>Email</th></tr></thead><tbody>${rows}</tbody></table>
+  </section>`;
+}
+
+function renderStudentAttendanceSection(records, classRoomsById) {
+  if (records.length === 0) {
+    return `<section class="el-card"><h3>Présences récentes</h3><p class="el-empty-state">Aucune présence enregistrée.</p></section>`;
+  }
+  const rows = records
+    .map((record) => {
+      const label = ATTENDANCE_STATUS_LABELS[record.status] || record.status;
+      const tone = ATTENDANCE_STATUS_TONES[record.status] || 'is-info';
+      const classRoomName = classRoomsById.get(record.classRoomId)?.name || record.classRoomId;
+      return `<tr>
+        <td>${record.date}</td>
+        <td><span class="el-badge ${tone}">${label}</span></td>
+        <td>${classRoomName}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<section class="el-card">
+    <h3>Présences récentes <span class="el-badge">${records.length}</span></h3>
+    <table><thead><tr><th>Date</th><th>Statut</th><th>Classe</th></tr></thead><tbody>${rows}</tbody></table>
+  </section>`;
+}
+
+function renderStudentGradesSection(grades, subjectsById) {
+  if (grades.length === 0) {
+    return `<section class="el-card"><h3>Notes récentes</h3><p class="el-empty-state">Aucune note saisie.</p></section>`;
+  }
+  const rows = grades
+    .map((grade) => {
+      const subjectName = subjectsById.get(grade.subjectId)?.name || grade.subjectId;
+      const assessmentTitle = grade.assessment?.title || '-';
+      return `<tr>
+        <td>${grade.date}</td>
+        <td>${subjectName}</td>
+        <td>${assessmentTitle}</td>
+        <td><strong>${grade.score}</strong>/20</td>
+        <td>${grade.remark || ''}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<section class="el-card">
+    <h3>Notes récentes <span class="el-badge">${grades.length}</span></h3>
+    <table><thead><tr><th>Date</th><th>Matière</th><th>Évaluation</th><th>Note</th><th>Appréciation</th></tr></thead><tbody>${rows}</tbody></table>
+  </section>`;
+}
+
+function renderStudentProfile(session, student, classRooms = [], {
+  canManage = false,
+  errorCode = null,
+  successMessage = null,
+  parentLinks = [],
+  recentAttendance = [],
+  recentGrades = [],
+  subjects = []
+} = {}) {
+  const classRoomName = classRooms.find((room) => room.id === student.classRoomId)?.name || student.classRoomId;
+  const classRoomsById = new Map(classRooms.map((room) => [room.id, room]));
+  const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
+  const editForm = canManage
+    ? `<section class="el-card">
+        <h3>Modifier la fiche</h3>
+        <form method="POST" action="/admin/students/${student.id}/update">${csrfField(session)}
+          <label>Prénom <input name="firstName" value="${student.firstName}" required /></label><br/>
+          <label>Nom <input name="lastName" value="${student.lastName}" required /></label><br/>
+          <label>Matricule <input name="admissionNumber" value="${student.admissionNumber}" required /></label><br/>
+          <label>Date de naissance <input name="dateOfBirth" type="date" value="${student.dateOfBirth || ''}" /></label><br/>
+          <label>Classe
+            <select name="classRoomId" required>
+              ${classRooms.map((room) => `<option value="${room.id}" ${room.id === student.classRoomId ? 'selected' : ''}>${room.name}</option>`).join('')}
+            </select>
+          </label><br/>
+          <button type="submit">Enregistrer</button>
+        </form>
+      </section>`
+    : '';
+  const archiveForm = canManage && !student.archived_at
+    ? `<section class="el-card">
+        <h3>Archiver</h3>
+        <p class="el-muted">L'élève disparaît des listes actives mais reste consultable.</p>
+        <form method="POST" action="/admin/students/${student.id}/archive" data-confirm="Archiver cet élève ? Il disparaîtra des listes actives mais restera consultable.">${csrfField(session)}<button type="submit">Archiver l'élève</button></form>
+      </section>`
+    : '';
+
   return renderDashboardLayout(
     'Fiche élève',
     session,
-    `<section class="el-card">
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
       <h2>${student.firstName} ${student.lastName}</h2>
       <p><strong>Matricule:</strong> ${student.admissionNumber}</p>
-      <p><strong>Classe:</strong> <span class="el-badge">${student.classRoomId}</span></p>
+      <p><strong>Classe:</strong> <span class="el-badge">${classRoomName}</span></p>
       <p><strong>Date de naissance:</strong> ${student.dateOfBirth || '-'}</p>
       <p><strong>Statut:</strong> ${renderStatusBadge(student.archived_at ? 'archivé' : 'actif', { actif: 'is-success', archivé: 'is-warning' })}</p>
       <p><strong>ID:</strong> ${student.id}</p>
-      <p><a href="/admin/students">Retour à la liste</a></p>
-    </section>`
+      <p><a href="/admin/students">Retour à la liste</a> · <a href="/bulletins/students/${student.id}">Voir bulletins</a></p>
+    </section>
+    ${renderStudentParentsSection(parentLinks)}
+    ${renderStudentAttendanceSection(recentAttendance, classRoomsById)}
+    ${renderStudentGradesSection(recentGrades, subjectsById)}
+    ${editForm}
+    ${archiveForm}`
   );
 }
 
@@ -2327,7 +2667,7 @@ function renderParentProfile(session, parent, students, links) {
       <label>Notes <textarea name="notes">${parent.notes}</textarea></label><br/>
       <button type="submit">Enregistrer</button>
     </form>
-    <form method="POST" action="/admin/parents/${parent.id}/archive">${csrfField(session)}<button type="submit">Archiver</button></form>
+    <form method="POST" action="/admin/parents/${parent.id}/archive" data-confirm="Archiver ce responsable ? Il disparaîtra des listes actives.">${csrfField(session)}<button type="submit">Archiver</button></form>
     <h2>Lier à des élèves</h2>
     <form method="POST" action="/admin/parents/${parent.id}/links">${csrfField(session)}
       ${studentCheckboxes}
@@ -2364,6 +2704,58 @@ const ADMIN_ERROR_MESSAGES = {
   not_found: 'Ressource introuvable.',
   reference_invalid: 'Une référence (niveau ou année) est invalide ou manquante.'
 };
+
+function renderErrorPage(session, { status, title, message }) {
+  const dashboardLink = session && session.role
+    ? `<a class="el-btn-primary" href="${getDashboardPathForRole(session.role)}">Retour au tableau de bord</a>`
+    : `<a class="el-btn-primary" href="/login">Aller à la page de connexion</a>`;
+  const body = `<section class="el-card">
+      <p class="el-badge">Code ${status}</p>
+      <h2>${title}</h2>
+      <p>${message}</p>
+      <p>${dashboardLink}</p>
+    </section>`;
+  if (session && session.role) {
+    return renderDashboardLayout(title, session, body);
+  }
+  return `<!doctype html><html lang="fr"><head>${renderPageHead(`${title} — EducLink`)}</head><body><main class="el-shell">${body}</main></body></html>`;
+}
+
+function sendForbiddenPage(response, session) {
+  if (response.headersSent) return;
+  response.writeHead(403, { 'content-type': 'text/html; charset=utf-8' });
+  response.end(
+    renderErrorPage(session, {
+      status: 403,
+      title: 'Accès refusé',
+      message: "Vous n'avez pas l'autorisation d'accéder à cette section. Si vous pensez qu'il s'agit d'une erreur, contactez votre administrateur."
+    })
+  );
+}
+
+function sendNotFoundPage(response, session) {
+  if (response.headersSent) return;
+  response.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
+  response.end(
+    renderErrorPage(session, {
+      status: 404,
+      title: 'Page introuvable',
+      message: "La page que vous cherchez n'existe pas ou a été déplacée."
+    })
+  );
+}
+
+function sendServerErrorPage(response, session) {
+  if (response.headersSent) return;
+  response.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
+  response.end(
+    renderErrorPage(session, {
+      status: 500,
+      title: 'Erreur serveur',
+      message: "Une erreur inattendue est survenue. L'équipe a été notifiée. Merci de réessayer dans un instant."
+    })
+  );
+}
 
 function renderAdminErrorBanner(errorCode) {
   if (!errorCode) return '';
@@ -2446,7 +2838,7 @@ function renderTeacherProfile(session, teacher, classRooms, subjects) {
       ${subjectCheckboxes}
       <button type="submit">Enregistrer</button>
     </form>
-    <form method="POST" action="/admin/teachers/${teacher.id}/archive">${csrfField(session)}<button type="submit">Archiver</button></form>
+    <form method="POST" action="/admin/teachers/${teacher.id}/archive" data-confirm="Archiver cet enseignant ? Il disparaîtra des listes actives.">${csrfField(session)}<button type="submit">Archiver</button></form>
     </section>
     <section class="el-card">
     <h2>Affectations existantes</h2>
@@ -2550,7 +2942,7 @@ function renderSchoolYearsPage(session, years, terms, { errorCode = null, succes
             <input name="endsAt" type="date" required />
             <button type="submit">Ajouter trimestre</button>
           </form>
-          <form method="POST" action="/admin/school-years/${year.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer l'année</button></form>
+          <form method="POST" action="/admin/school-years/${year.id}/delete" style="display:inline" data-confirm="Supprimer cette année scolaire ET tous ses trimestres ? Action irréversible.">${csrfField(session)}<button type="submit">Supprimer l'année</button></form>
         </td>
       </tr>`;
     })
@@ -2596,7 +2988,7 @@ function renderClassesPage(session, gradeLevels, classRooms, { errorCode = null,
         <td>${escapeHtml(grade.name)}</td>
         <td>${Number.isFinite(Number(grade.order)) ? Number(grade.order) : '-'}</td>
         <td>
-          <form method="POST" action="/admin/grade-levels/${grade.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer</button></form>
+          <form method="POST" action="/admin/grade-levels/${grade.id}/delete" style="display:inline" data-confirm="Supprimer ce niveau ? Les classes rattachées doivent être supprimées d'abord.">${csrfField(session)}<button type="submit">Supprimer</button></form>
         </td>
       </tr>`
     )
@@ -2609,7 +3001,7 @@ function renderClassesPage(session, gradeLevels, classRooms, { errorCode = null,
         <td>${escapeHtml(classRoom.name)}</td>
         <td>${grade ? escapeHtml(grade.name) : '<span class="el-muted">niveau supprimé</span>'}</td>
         <td>${Number(classRoom.capacity) || 0}</td>
-        <td><form method="POST" action="/admin/classes/${classRoom.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer</button></form></td>
+        <td><form method="POST" action="/admin/classes/${classRoom.id}/delete" style="display:inline" data-confirm="Supprimer cette classe ?">${csrfField(session)}<button type="submit">Supprimer</button></form></td>
       </tr>`;
     })
     .join('');
@@ -2661,7 +3053,7 @@ function renderSubjectsPage(session, subjects, { errorCode = null, successMessag
       (subject) => `<tr>
         <td>${escapeHtml(subject.name)}</td>
         <td><code>${escapeHtml(subject.code)}</code></td>
-        <td><form method="POST" action="/admin/subjects/${subject.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer</button></form></td>
+        <td><form method="POST" action="/admin/subjects/${subject.id}/delete" style="display:inline" data-confirm="Supprimer cette matière ?">${csrfField(session)}<button type="submit">Supprimer</button></form></td>
       </tr>`
     )
     .join('');
@@ -2801,7 +3193,14 @@ function createServer({
   ]);
   const activeTenantStore =
     tenantStore ?? (runtimeEnv.persistenceMode === 'postgres' ? new PostgresTenantRepository({ pool: getPool() }) : inMemoryTenantStore);
-  const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms, subjects: seed.subjects });
+  const coreSchoolStore = new CoreSchoolStore({
+    classRooms: seed.classRooms,
+    subjects: seed.subjects,
+    academicYears: seed.academicYears,
+    terms: seed.terms,
+    schools: seed.schools,
+    gradeLevels: seed.gradeLevels
+  });
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
   const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
   const teacherStore = new TeacherStore({ teachers: seed.teachers, classRoomStore: coreSchoolStore });
@@ -2983,6 +3382,7 @@ function createServer({
     applySecurityHeaders(response, { isProduction: isProductionEnv });
 
     const url = new URL(request.url, 'http://localhost');
+    return requestContextStorage.run({ pathname: url.pathname }, async () => {
     const cookies = parseCookies(request.headers.cookie);
     const rawCookieValue = cookies.sessionId;
     const verifiedSessionId = rawCookieValue ? verifySignedSessionId(rawCookieValue, sessionSecret) : null;
@@ -3023,6 +3423,12 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/assets/design-system.css') {
       response.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=3600' });
       response.end(DESIGN_SYSTEM_CSS);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/assets/ux.js') {
+      response.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=3600' });
+      response.end(UX_SCRIPT_JS);
       return;
     }
 
@@ -3165,8 +3571,7 @@ function createServer({
       };
 
       if (auth.context.role !== expectedRoleByRoute[routeRoleKey]) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3264,8 +3669,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/admin/students') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canViewStudents(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3286,8 +3690,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/admin/students') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageStudents(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3368,8 +3771,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/teacher/attendance') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canTakeAttendance(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3380,8 +3782,7 @@ function createServer({
       const selectedClassRoomId = url.searchParams.get('classRoomId') || classRooms[0]?.id || '';
 
       if (selectedClassRoomId && !classRooms.some((classRoom) => classRoom.id === selectedClassRoomId)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3392,6 +3793,10 @@ function createServer({
           .map((record) => [record.studentId, record])
       );
 
+      const statusParam = url.searchParams.get('status');
+      const successMessage = statusParam === 'saved' ? 'Appel enregistré pour la classe sélectionnée.' : null;
+      const errorMessage = statusParam === 'error' ? "Impossible d'enregistrer l'appel. Vérifiez la classe et la date." : null;
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
         renderTeacherAttendancePage(auth.context, {
@@ -3400,7 +3805,9 @@ function createServer({
           selectedClassRoomId,
           selectedDate,
           students,
-          attendanceByStudentId
+          attendanceByStudentId,
+          successMessage,
+          errorMessage
         })
       );
       return;
@@ -3409,13 +3816,13 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/teacher/attendance') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canTakeAttendance(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
       let redirectDate = '';
       let redirectClass = '';
+      let statusParam = 'saved';
       try {
         const form = parseExtendedForm(await readBody(request));
         redirectDate = form.get('date');
@@ -3434,18 +3841,151 @@ function createServer({
         });
       } catch (error) {
         requestLogger.warn('Unable to persist attendance form submission', { error: serializeError(error) });
+        statusParam = 'error';
       }
 
-      response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}` });
+      response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}&status=${statusParam}` });
       response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && /^\/teacher\/students\/[^/]+$/.test(url.pathname)) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canTakeAttendance(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const studentId = url.pathname.split('/').at(-1);
+      const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      if (!teacher) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+
+      const student = studentStore.get(auth.context.tenantId, studentId);
+      if (!student || !teacher.classRoomIds.includes(student.classRoomId)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
+      const subjects = coreSchoolStore.list('subjects', auth.context.tenantId);
+      const classRoom = classRooms.find((room) => room.id === student.classRoomId) || null;
+      const teacherSubjectIds = new Set(teacher.subjectIds);
+
+      const recentAttendance = attendanceStore
+        .list(auth.context.tenantId)
+        .filter((record) => record.studentId === studentId)
+        .sort((a, b) => (a.date < b.date ? 1 : -1))
+        .slice(0, 10);
+
+      const recentGrades = gradingStore
+        .listGradesForStudent(auth.context.tenantId, studentId)
+        .filter((grade) => teacherSubjectIds.has(grade.subjectId))
+        .slice(0, 10);
+
+      const homeworks = lessonHomeworkStore
+        .listHomeworksForStudent(auth.context.tenantId, studentId)
+        .filter((homework) => teacherSubjectIds.has(homework.subjectId))
+        .slice(0, 10);
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(
+        renderTeacherStudentView(auth.context, {
+          student,
+          classRoom,
+          recentAttendance,
+          recentGrades,
+          homeworks,
+          classRooms,
+          subjects
+        })
+      );
+      return;
+    }
+
+    const bulletinIndexMatch = url.pathname.match(/^\/bulletins\/students\/([^/]+)$/);
+    if (bulletinIndexMatch && request.method === 'GET') {
+      const auth = requireAuth(session);
+      if (!auth.allowed) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const studentId = bulletinIndexMatch[1];
+      const student = studentStore.get(auth.context.tenantId, studentId);
+      if (!student) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      if (!canAccessBulletinForStudent(auth.context, student, { teacherStore, parentStore })) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const classRoom = coreSchoolStore.get('classRooms', auth.context.tenantId, student.classRoomId);
+      const terms = coreSchoolStore
+        .list('terms', auth.context.tenantId)
+        .sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1));
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderBulletinIndexPage(auth.context, { student, classRoom, terms }));
+      return;
+    }
+
+    const bulletinReportMatch = url.pathname.match(/^\/bulletins\/students\/([^/]+)\/terms\/([^/]+)$/);
+    if (bulletinReportMatch && request.method === 'GET') {
+      const auth = requireAuth(session);
+      if (!auth.allowed) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const studentId = bulletinReportMatch[1];
+      const termId = bulletinReportMatch[2];
+      const student = studentStore.get(auth.context.tenantId, studentId);
+      const term = coreSchoolStore.get('terms', auth.context.tenantId, termId);
+      if (!student || !term) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      if (!canAccessBulletinForStudent(auth.context, student, { teacherStore, parentStore })) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const classRoom = coreSchoolStore.get('classRooms', auth.context.tenantId, student.classRoomId);
+      const subjects = coreSchoolStore.list('subjects', auth.context.tenantId);
+      const allGrades = gradingStore.listGradesForStudent(auth.context.tenantId, studentId);
+
+      let scopedGrades = allGrades;
+      let limitedScope = false;
+      if (auth.context.role === ROLES.TEACHER) {
+        const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+        const teacherSubjectIds = new Set(teacher?.subjectIds ?? []);
+        scopedGrades = allGrades.filter((grade) => teacherSubjectIds.has(grade.subjectId));
+        limitedScope = true;
+      }
+
+      const studentReportComments = reportComments.filter(
+        (comment) => comment.tenant_id === auth.context.tenantId && comment.studentId === studentId
+      );
+      const school = coreSchoolStore.list('schools', auth.context.tenantId)[0] ?? null;
+      const reportCard = buildReportCard({
+        student,
+        classRoom,
+        term,
+        grades: scopedGrades,
+        subjects,
+        reportComments: studentReportComments
+      });
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderReportCardPage(auth.context, { reportCard, schoolName: school?.name ?? null, limitedScope }));
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/teacher/lesson-homework') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageLessonHomework(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3463,8 +4003,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/teacher/lesson-logs') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageLessonHomework(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3489,8 +4028,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/teacher/homeworks') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageLessonHomework(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3516,8 +4054,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/parent/homeworks') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.PARENT) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3530,8 +4067,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/student/homeworks') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.STUDENT) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3545,8 +4081,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/teacher/grades') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3588,8 +4123,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/teacher/assessments') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3614,8 +4148,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/teacher/grades') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3648,8 +4181,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/teacher/report-comments') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3673,8 +4205,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/teacher/report-comments/generate') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3703,8 +4234,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/teacher/report-comments/save') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3750,8 +4280,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/parent/grades') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.PARENT) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3764,8 +4293,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/parent/attendance') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.PARENT) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3788,8 +4316,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/student/grades') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.STUDENT) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3803,8 +4330,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/admin/finance') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageFinance(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3820,8 +4346,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/admin/finance/fee-plans') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageFinance(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3844,8 +4369,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/admin/finance/invoices') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageFinance(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3869,8 +4393,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/admin/finance/payments') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageFinance(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3894,8 +4417,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/parent/finance') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canViewParentFinance(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3908,8 +4430,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/admin/attendance') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canViewAttendanceAdmin(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3940,29 +4461,111 @@ function createServer({
     if (request.method === 'GET' && /^\/admin\/students\/[^/]+$/.test(url.pathname)) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canViewStudents(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
       const studentId = url.pathname.split('/').at(-1);
       const student = studentStore.get(auth.context.tenantId, studentId);
       if (!student) {
-        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Not found');
+        sendNotFoundPage(response, session);
         return;
       }
 
+      const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
+      const subjects = coreSchoolStore.list('subjects', auth.context.tenantId);
+      const successParam = url.searchParams.get('success');
+      const successMessage =
+        successParam === 'updated'
+          ? 'Élève mis à jour.'
+          : successParam === 'archived'
+          ? 'Élève archivé.'
+          : null;
+
+      const parentLinks = parentStore
+        .listLinksByStudent(auth.context.tenantId, studentId)
+        .map((link) => ({ ...link, parent: parentStore.get(auth.context.tenantId, link.parentId) }))
+        .filter((entry) => entry.parent);
+
+      const recentAttendance = attendanceStore
+        .list(auth.context.tenantId)
+        .filter((record) => record.studentId === studentId)
+        .sort((a, b) => (a.date < b.date ? 1 : -1))
+        .slice(0, 10);
+
+      const recentGrades = gradingStore
+        .listGradesForStudent(auth.context.tenantId, studentId)
+        .slice(0, 10);
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(renderStudentProfile(auth.context, student));
+      response.end(
+        renderStudentProfile(auth.context, student, classRooms, {
+          canManage: canManageStudents(auth.context),
+          errorCode: url.searchParams.get('error'),
+          successMessage,
+          parentLinks,
+          recentAttendance,
+          recentGrades,
+          subjects
+        })
+      );
+      return;
+    }
+
+    const adminStudentIdMatch = url.pathname.match(/^\/admin\/students\/([^/]+)\/(update|archive)$/);
+    if (adminStudentIdMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageStudents(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const studentId = adminStudentIdMatch[1];
+      const action = adminStudentIdMatch[2];
+
+      const existing = studentStore.get(auth.context.tenantId, studentId);
+      if (!existing) {
+        response.writeHead(302, { location: '/admin/students?error=not_found' });
+        response.end();
+        return;
+      }
+
+      const form = parseExtendedForm(await readBody(request));
+
+      try {
+        if (action === 'update') {
+          const updated = studentStore.update(auth.context.tenantId, studentId, {
+            firstName: form.get('firstName'),
+            lastName: form.get('lastName'),
+            admissionNumber: form.get('admissionNumber'),
+            classRoomId: form.get('classRoomId'),
+            dateOfBirth: form.get('dateOfBirth')
+          });
+          if (updated) {
+            auditWriter.writeEntityEvent(auth.context, 'student.update', 'student', updated.id);
+          }
+        } else if (action === 'archive') {
+          const archived = studentStore.archive(auth.context.tenantId, studentId);
+          if (archived) {
+            auditWriter.writeEntityEvent(auth.context, 'student.archive', 'student', archived.id);
+          }
+        }
+      } catch {
+        response.writeHead(302, { location: `/admin/students/${studentId}?error=invalid_input` });
+        response.end();
+        return;
+      }
+
+      const successCode = action === 'update' ? 'updated' : 'archived';
+      response.writeHead(302, { location: `/admin/students/${studentId}?success=${successCode}` });
+      response.end();
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/admin/parents') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageParents(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -3980,8 +4583,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/admin/parents') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageParents(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4059,16 +4661,14 @@ function createServer({
     if (request.method === 'GET' && /^\/admin\/parents\/[^/]+$/.test(url.pathname)) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageParents(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
       const parentId = url.pathname.split('/').at(-1);
       const parentWithLinks = parentStore.getParentWithLinks(auth.context.tenantId, parentId);
       if (!parentWithLinks) {
-        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Not found');
+        sendNotFoundPage(response, session);
         return;
       }
 
@@ -4081,8 +4681,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/admin/teachers') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageTeachers(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4100,8 +4699,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/admin/teachers') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageTeachers(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4180,16 +4778,14 @@ function createServer({
     if (request.method === 'GET' && /^\/admin\/teachers\/[^/]+$/.test(url.pathname)) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageTeachers(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
       const teacherId = url.pathname.split('/').at(-1);
       const teacher = teacherStore.get(auth.context.tenantId, teacherId);
       if (!teacher) {
-        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Not found');
+        sendNotFoundPage(response, session);
         return;
       }
 
@@ -4204,8 +4800,7 @@ function createServer({
     if (adminTeacherIdMatch && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageTeachers(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4240,8 +4835,7 @@ function createServer({
     if (adminParentIdMatch && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageParents(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4282,8 +4876,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/admin/users') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageUsers(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4308,8 +4901,7 @@ function createServer({
     if (adminUserActionMatch && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageUsers(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4326,8 +4918,7 @@ function createServer({
       const targetTenant = target.tenantId ?? null;
       const sessionTenant = auth.context.tenantId ?? null;
       if (targetTenant !== sessionTenant) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4374,8 +4965,7 @@ function createServer({
     if (url.pathname === '/admin/school-settings') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4429,8 +5019,7 @@ function createServer({
     if (url.pathname === '/admin/school-years' && (request.method === 'GET' || request.method === 'POST')) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4480,8 +5069,7 @@ function createServer({
     if (adminYearActionMatch && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4542,8 +5130,7 @@ function createServer({
     if (url.pathname === '/admin/classes' && (request.method === 'GET' || request.method === 'POST')) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4591,8 +5178,7 @@ function createServer({
     if (adminClassDeleteMatch && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
       const tenantId = auth.context.tenantId;
@@ -4607,8 +5193,7 @@ function createServer({
     if (url.pathname === '/admin/grade-levels' && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
       const tenantId = auth.context.tenantId;
@@ -4633,8 +5218,7 @@ function createServer({
     if (adminGradeDeleteMatch && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
       const tenantId = auth.context.tenantId;
@@ -4649,8 +5233,7 @@ function createServer({
     if (url.pathname === '/admin/subjects' && (request.method === 'GET' || request.method === 'POST')) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4693,8 +5276,7 @@ function createServer({
     if (adminSubjectDeleteMatch && request.method === 'POST') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
       const tenantId = auth.context.tenantId;
@@ -4710,8 +5292,7 @@ function createServer({
     if (url.pathname === '/admin/tenants' && (request.method === 'GET' || request.method === 'POST')) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canManageTenants(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4809,8 +5390,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/inbox') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4824,21 +5404,18 @@ function createServer({
     if (request.method === 'GET' && inboxThreadMatch) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
       const thread = messagingStore.getThreadForUser(auth.context.tenantId, inboxThreadMatch[1], auth.context.userId);
       if (!thread) {
-        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Not found');
+        sendNotFoundPage(response, session);
         return;
       }
 
       if (thread === 'forbidden') {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4851,8 +5428,7 @@ function createServer({
     if (request.method === 'POST' && inboxReplyMatch) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4871,8 +5447,7 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/admin/announcements') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canPublishAnnouncements(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -4885,8 +5460,7 @@ function createServer({
     if (request.method === 'POST' && url.pathname === '/admin/announcements') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canPublishAnnouncements(auth.context)) {
-        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Forbidden');
+        sendForbiddenPage(response, session);
         return;
       }
 
@@ -5402,16 +5976,20 @@ function createServer({
       return;
     }
 
-    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-    response.end('Not found');
+    sendNotFoundPage(response, session);
     } catch (error) {
       requestLogger.error('Unhandled request error', { error: serializeError(error) });
       if (!response.headersSent) {
-        sendApiError(response, 500, 'INTERNAL_SERVER_ERROR', 'An unexpected error occurred');
+        if (url.pathname.startsWith('/api/v1/')) {
+          sendApiError(response, 500, 'INTERNAL_SERVER_ERROR', 'An unexpected error occurred');
+        } else {
+          sendServerErrorPage(response, session);
+        }
       } else {
         response.end();
       }
     }
+    });
   });
 }
 

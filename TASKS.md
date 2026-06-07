@@ -2,7 +2,7 @@
 # Backlog complet : de l'état actuel au déploiement production
 # Mis à jour : 2026-06-07
 
-> **Progression** : Sprint 1 sécurité **terminé** (SEC-01 à SEC-08). Sprint 2 gestion utilisateurs UI **terminé pour USR-01..04** (USR-05/06 reportés au Sprint 7, dépendent du service email OPS-04). Sprint 3 structure école UI **terminé** (SCH-01..SCH-06). Prêt à attaquer Sprint 4 (CRUD métier manquants) ou Sprint 7 (déploiement Railway).
+> **Progression** : Sprint 1 sécurité **terminé** (SEC-01 à SEC-08). Sprint 2 gestion utilisateurs UI **terminé pour USR-01..04** (USR-05/06 reportés au Sprint 7, dépendent du service email OPS-04). Sprint 3 structure école UI **terminé** (SCH-01..SCH-06). Sprint 4 CRUD métier **terminé** (CRUD-01..06). Sprint 5 bulletins **terminé** pour BULL-01..03 (BULL-04 PDF reporté). Sprint 6 UX **terminé pour UX-02..05** (UX-01 responsive mobile reporté car nécessite tests visuels en navigateur). Prêt à attaquer Sprint 7 (déploiement Railway).
 
 ---
 
@@ -214,71 +214,113 @@ Toutes les structures (classes, matières, années, trimestres, école, tenants)
 
 ## SPRINT 4 — Compléter les CRUD métier manquants (PILOT)
 
-### CRUD-01 — UI : formulaire de création élève ❌ PILOT
-- La logique back existe, il manque juste le formulaire HTML côté admin
-- Champs : nom, prénom, date de naissance, classe, numéro d'admission
+### CRUD-01 — UI : formulaire de création élève ✅ PILOT
+- **Couvert par USR-03** : formulaire complet (prénom, nom, matricule, classe, date de naissance, accès optionnel) sur `/admin/students` [server.js:2199](apps/web/src/server.js#L2199)
 
-### CRUD-02 — UI : formulaire de modification élève ❌ PILOT
-- Modifier les infos d'un élève existant
+### CRUD-02 — UI : formulaire de modification élève ✅ PILOT
+- Formulaire d'édition intégré à la fiche élève (`renderStudentProfile` [server.js:2257](apps/web/src/server.js#L2257)) : prénom, nom, matricule, classe (select), date de naissance
+- Handler `POST /admin/students/:id/update` (audit `student.update`), validation via `studentStore.update` → classRoomId invalide redirige vers `?error=invalid_input`
+- Garde-fous : `canManageStudents` (school_admin uniquement), cross-tenant → `?error=not_found`
+- Tests : édition réussie + banner succès, classRoomId invalide, non-admin → 403, cross-tenant rejeté
 
-### CRUD-03 — UI : page détail élève pour l'admin ❌ PILOT
-- Vue consolidée : infos de base, responsables liés, absences récentes, notes récentes
+### CRUD-03 — UI : page détail élève pour l'admin ✅ PILOT
+- `renderStudentProfile` enrichi avec 3 sections additionnelles :
+  - **Responsables liés** : nom (lien vers fiche parent), relation (FR), contact principal badge, téléphone, email
+  - **Présences récentes** : 10 derniers enregistrements (date, statut avec badge coloré, classe)
+  - **Notes récentes** : 10 dernières notes (date, matière, évaluation, score, appréciation)
+- Empty states explicites quand aucune donnée
+- Tests : sections rendues avec données seed (student-a1), empty states (student-a5)
 
-### CRUD-04 — UI : page détail élève pour l'enseignant ❌ PILOT
-- Vue lecture seule : présences, notes de ses matières, devoirs en cours
+### CRUD-04 — UI : page détail élève pour l'enseignant ✅ PILOT
+- Route `GET /teacher/students/:id` ([server.js](apps/web/src/server.js)) + vue dédiée `renderTeacherStudentView`
+- Lien direct depuis la page d'appel `/teacher/attendance` (nom de l'élève cliquable)
+- Garde-fou : l'enseignant ne voit que les élèves de **ses classes** (`teacher.classRoomIds`) — sinon 403
+- Lecture seule (pas de formulaire, pas d'archivage)
+- Sections :
+  - **Présences récentes** : toutes les présences de l'élève (10 dernières)
+  - **Notes** : restreintes aux **matières de l'enseignant** (`teacher.subjectIds`)
+  - **Devoirs** : devoirs de la classe de l'élève, restreints aux matières de l'enseignant
+- Tests : accès autorisé, élève hors périmètre → 403, admin (non-prof) → 403, filtrage par matières du prof
 
-### CRUD-05 — UI : formulaire modification profil enseignant ❌ PILOT
-- Modifier classes assignées, matières, coordonnées
+### CRUD-05 — UI : formulaire modification profil enseignant ✅ PILOT
+- **Déjà en place** : `renderTeacherProfile` [server.js:2413](apps/web/src/server.js#L2413) + handler `POST /admin/teachers/:id/(update|archive)` [server.js:4203](apps/web/src/server.js#L4203)
 
-### CRUD-06 — UI : archivage élève depuis l'interface ❌ PILOT
-- Bouton d'archivage avec confirmation
-- L'élève reste en base mais disparaît des listes actives
+### CRUD-06 — UI : archivage élève depuis l'interface ✅ PILOT
+- Bouton « Archiver l'élève » sur la fiche détail (visible uniquement si non-archivé)
+- Handler `POST /admin/students/:id/archive` (audit `student.archive`), redirige vers `?success=archived`
+- L'élève archivé disparaît des listes actives mais la fiche reste consultable
+- Tests : archivage + disparition du listing, non-admin → 403
 
 ---
 
 ## SPRINT 5 — Moyennes et bulletins (PILOT)
 
-### BULL-01 — Calcul de la moyenne par matière ❌ PILOT
-- Par élève et par trimestre
-- Weighted average (coefficient des évaluations)
-- Affichée dans la vue notes parent et élève
+### BULL-01 — Calcul de la moyenne par matière ✅ PILOT
+- Module pur [bulletin.js](apps/web/src/modules/bulletin.js) : `computeSubjectAverage(grades)` = moyenne pondérée par `assessment.coefficient`, arrondie à 2 décimales
+- Filtre `isWithinTerm(date, term)` (inclusif sur `starts_at` / `ends_at`)
+- Coefficients invalides ignorés, retourne `null` si aucun grade évaluable
+- Tests unitaires : [bulletin.test.js](apps/web/src/modules/bulletin.test.js)
 
-### BULL-02 — Calcul de la moyenne générale ❌ PILOT
-- Agrégation de toutes les matières par trimestre
+### BULL-02 — Calcul de la moyenne générale ✅ PILOT
+- `buildReportCard({student, classRoom, term, grades, subjects, reportComments})` : groupe par matière, calcule moyenne par matière + moyenne générale (= **moyenne arithmétique** des moyennes par matière, convention scolaire FR)
+- Exclut les notes hors trimestre, trie matières alphabétiquement, trie appréciations du plus récent au plus ancien
+- Tests unitaires couvrant les cas vides, hors-période, multi-matières
 
-### BULL-03 — Page bulletin simple (vue HTML) ❌ PILOT
-- Vue par élève et par trimestre
-- Affiche : matières, notes, moyennes, appréciations IA si disponibles
-- Accessible par l'admin, l'enseignant (ses matières), le parent et l'élève
+### BULL-03 — Page bulletin simple (vue HTML) ✅ PILOT
+- Seed enrichi : 1 année scolaire `2025-2026` + 3 trimestres (T1/T2/T3) pour `school-a`
+- Routes :
+  - `GET /bulletins/students/:studentId` → index des trimestres avec lien vers chaque bulletin
+  - `GET /bulletins/students/:studentId/terms/:termId` → bulletin complet (synthèse + détail par matière + appréciations IA)
+- Permissions (`canAccessBulletinForStudent`) :
+  - `school_admin` / `director` : tout élève du tenant
+  - `teacher` : élèves de ses classes uniquement, vue **restreinte à ses matières** (libellé "Moyenne sur vos matières")
+  - `parent` : élèves liés (via `studentParentLinks`)
+  - `student` : son propre bulletin uniquement
+  - Cross-tenant → 404, trimestre/élève inexistants → 404
+- Navigation : liens "Voir bulletin(s)" depuis fiche élève admin, vue élève enseignant, dashboard parent (un lien par enfant) et `/student/grades`
+- Tests HTTP couvrant les 5 rôles + cas cross-tenant + empty state + vue restreinte enseignant
 
 ### BULL-04 — Export PDF du bulletin ❌ CONFORT
 - Génération PDF depuis la vue HTML
 - Accessible à l'admin pour impression / envoi
+- **Note** : la vue HTML actuelle est print-friendly (impression navigateur OK)
 
 ---
 
 ## SPRINT 6 — UX et polish (CONFORT mais important pour le pilot)
 
-### UX-01 — Design responsive mobile ❌ CONFORT
+### UX-01 — Design responsive mobile 🟡 CONFORT
 - L'interface actuelle est partiellement responsive
-- Vérifier et corriger les écrans clés sur mobile : login, dashboard, appel, notes
+- **Reporté** : nécessite des tests visuels en navigateur (mobile, tablet) que je ne peux pas faire en environnement sans interface graphique
+- À traiter dans une session avec accès navigateur ou via un test e2e Playwright
 
-### UX-02 — Pages d'erreur avec design ❌ CONFORT
-- Page 404 avec retour au dashboard
-- Page 403 avec message clair ("Vous n'avez pas accès à cette section")
-- Page 500 avec message utilisateur
+### UX-02 — Pages d'erreur avec design ✅ CONFORT
+- Helpers `sendForbiddenPage` / `sendNotFoundPage` / `sendServerErrorPage` ([server.js](apps/web/src/server.js))
+- 403 : « Accès refusé » + lien vers le dashboard du rôle courant
+- 404 : « Page introuvable » + catch-all sur toutes les routes inconnues (HTML, pas plain text)
+- 500 : « Erreur serveur » via handler error pour les routes HTML (les routes `/api/v1/*` gardent du JSON)
+- Sans session : lien vers `/login` au lieu du dashboard
+- 69 réponses plain text `'Forbidden'` / `'Not found'` remplacées par des pages stylées
+- Tests : 403 stylé, 404 catch-all, 404 entité inexistante, 404 sans session
 
-### UX-03 — Feedback de formulaires ❌ CONFORT
-- Erreurs inline sur les champs mal remplis
-- Message de succès après une action (ex: "Appel enregistré")
-- Actuellement les erreurs sont silencieuses ou redirigent sans message
+### UX-03 — Feedback de formulaires ✅ CONFORT (sweep ciblé)
+- Flux d'appel `/teacher/attendance` désormais avec banner succès (« Appel enregistré pour la classe sélectionnée. ») ou erreur via paramètre `?status=saved|error`
+- Banners cohérents avec le design `el-banner is-success` / `is-error`
+- Test : POST appel → redirection avec status=saved → banner visible
+- Note : la plupart des flux admin avaient déjà un feedback (Sprints 2-5). Les flux teacher/grades et /teacher/lesson-homework restent silencieux mais leurs validations remontent dans les logs
 
-### UX-04 — Confirmation avant actions destructives ❌ CONFORT
-- Archivage d'un élève / enseignant / parent
-- Suppression d'un devoir ou d'une note
+### UX-04 — Confirmation avant actions destructives ✅ CONFORT
+- Asset statique [/assets/ux.js](apps/web/src/server.js) (CSP-safe, servi via `script-src 'self'`)
+- Handler délégué `submit` lit l'attribut `data-confirm="message"` et appelle `window.confirm` ; annule la soumission si l'utilisateur refuse
+- `<script src="/assets/ux.js" defer>` injecté dans `renderPageHead` → présent sur toutes les pages
+- `data-confirm` ajouté aux 7 actions destructives : archive élève/parent/enseignant, suppression année scolaire (cascade trimestres), niveau, classe, matière
+- Tests : asset servi, script présent, pas d'inline JS, data-confirm sur archive élève et suppression année
 
-### UX-05 — Navigation active dans la sidebar ❌ CONFORT
-- Mettre en surbrillance la page actuelle dans le menu (partiel aujourd'hui)
+### UX-05 — Navigation active dans la sidebar ✅ CONFORT
+- `AsyncLocalStorage` (`requestContextStorage`) capture le `pathname` à l'entrée du handler HTTP
+- `renderDashboardLayout` lit le pathname courant depuis le store et le passe à `buildDashboardNavigation`
+- Match strict (`===`) OU préfixe (`startsWith(\`${href}/\`)`) pour que `/admin/students/:id` highlight le lien « Élèves »
+- Test : highlight correct sur `/admin/students`, sur `/admin/students/:id` (préfixe), pas de faux positif sur `/admin/teachers`
 
 ---
 
@@ -368,6 +410,12 @@ Toutes les structures (classes, matières, années, trimestres, école, tenants)
 [✅ USR-01..04]              (Sprint 2 gestion utilisateurs UI — terminé)
          ↓
 [✅ SCH-01..06]              (Sprint 3 structure école UI — terminé)
+         ↓
+[✅ CRUD-01..06]             (Sprint 4 CRUD métier — terminé)
+         ↓
+[✅ BULL-01..03]             (Sprint 5 bulletins — terminé, BULL-04 PDF reporté)
+         ↓
+[✅ UX-02..05]               (Sprint 6 UX — terminé, UX-01 responsive reporté)
          ↓
 OPS-01 → OPS-02 → OPS-03   (déploiement Railway)
          ↓

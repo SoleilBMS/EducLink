@@ -2681,6 +2681,438 @@ test('USR-03: création élève avec accès crée un compte étudiant utilisable
   });
 });
 
+test('CRUD-02: admin peut éditer la classe et le matricule d\'un élève', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students/student-a1/update', {
+      cookie,
+      fields: {
+        firstName: 'Aya',
+        lastName: 'Nadir',
+        admissionNumber: 'A-EDIT-1',
+        classRoomId: 'class-a2',
+        dateOfBirth: '2014-03-22'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students/student-a1?success=updated');
+
+    const profile = await fetch(`${baseUrl}/admin/students/student-a1?success=updated`, { headers: { cookie } });
+    const html = await profile.text();
+    assert.ok(html.includes('A-EDIT-1'), 'le nouveau matricule doit apparaître');
+    assert.ok(html.includes('Élève mis à jour.'), 'le banner de succès doit s\'afficher');
+  });
+});
+
+test('CRUD-02: classRoomId invalide redirige avec error=invalid_input', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students/student-a1/update', {
+      cookie,
+      fields: {
+        firstName: 'Aya',
+        lastName: 'Nadir',
+        admissionNumber: 'A-EDIT-2',
+        classRoomId: 'class-does-not-exist',
+        dateOfBirth: '2014-03-22'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students/student-a1?error=invalid_input');
+  });
+});
+
+test('CRUD-02: non-admin ne peut pas éditer un élève', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students/student-a1/update', {
+      cookie,
+      fields: {
+        firstName: 'Aya',
+        lastName: 'Nadir',
+        admissionNumber: 'A-EDIT-3',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-03-22'
+      }
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('CRUD-06: admin archive un élève → disparaît du listing actif', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students/student-a3/archive', {
+      cookie,
+      fields: {}
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students/student-a3?success=archived');
+
+    const listing = await fetch(`${baseUrl}/admin/students`, { headers: { cookie } });
+    const html = await listing.text();
+    assert.ok(!html.includes('student-a3'), 'l\'élève archivé ne doit plus apparaître dans la liste active');
+
+    const profile = await fetch(`${baseUrl}/admin/students/student-a3`, { headers: { cookie } });
+    assert.equal(profile.status, 200, 'la fiche archivée reste consultable');
+    const profileHtml = await profile.text();
+    assert.ok(profileHtml.includes('archivé'), 'le statut affiché doit être "archivé"');
+    assert.ok(!profileHtml.includes('Archiver l\'élève'), 'le bouton d\'archivage doit disparaître');
+  });
+});
+
+test('CRUD-06: non-admin ne peut pas archiver un élève', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students/student-a1/archive', {
+      cookie,
+      fields: {}
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('CRUD-03: la fiche élève affiche responsables liés, présences et notes récentes', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students/student-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+
+    assert.ok(html.includes('Responsables liés'), 'la section responsables est présente');
+    assert.ok(html.includes('Meryem Nadir'), 'le nom du responsable apparaît');
+    assert.ok(html.includes('contact principal'), 'le badge contact principal est rendu');
+    assert.ok(html.includes('Responsable'), 'le libellé FR de la relation est affiché');
+
+    assert.ok(html.includes('Présences récentes'), 'la section présences est présente');
+    assert.ok(html.includes('2026-04-20'), 'la date de la présence est affichée');
+    assert.ok(html.includes('Présent'), 'le statut FR de présence est affiché');
+
+    assert.ok(html.includes('Notes récentes'), 'la section notes est présente');
+    assert.ok(html.includes('Contrôle fractions'), 'le titre de l\'évaluation est affiché');
+    assert.ok(html.includes('Mathématiques'), 'le nom de la matière est affiché');
+    assert.ok(html.includes('15.5'), 'le score de la note est affiché');
+  });
+});
+
+test('CRUD-04: enseignant peut consulter une fiche élève de sa classe avec présences/notes/devoirs filtrés', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/teacher/students/student-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+
+    assert.ok(html.includes('Aya Nadir'), 'le nom de l\'élève est affiché');
+    assert.ok(html.includes('Vue lecture seule'), 'le bandeau lecture seule est rendu');
+    assert.ok(!html.includes('Modifier la fiche'), 'aucun formulaire d\'édition');
+    assert.ok(!html.includes('Archiver l\'élève'), 'aucun bouton d\'archivage');
+
+    assert.ok(html.includes('Présences récentes'), 'section présences présente');
+    assert.ok(html.includes('Présent'), 'statut FR affiché');
+
+    assert.ok(html.includes('Notes récentes'), 'section notes présente');
+    assert.ok(html.includes('Contrôle fractions'), 'évaluation de math affichée');
+    assert.ok(html.includes('15.5'), 'score affiché');
+
+    assert.ok(html.includes('Devoirs (mes matières)'), 'section devoirs présente');
+    assert.ok(html.includes('Exercices fractions p.42'), 'titre du devoir de math affiché');
+  });
+});
+
+test('CRUD-04: enseignant ne peut pas voir un élève hors de ses classes (403)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    // teacher-a1 enseigne class-a1 uniquement ; student-a2 est en class-a2
+    const response = await fetch(`${baseUrl}/teacher/students/student-a2`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('CRUD-04: admin ne peut pas accéder à la vue enseignant (403)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/teacher/students/student-a1`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('CRUD-04: les notes affichées sont restreintes aux matières de l\'enseignant', async () => {
+  await withServer(async (baseUrl) => {
+    // teacher-a2 enseigne FR/HIST/SCI sur class-a2 et class-a3 ; student-a2 est en class-a2 avec une note de sciences
+    const { cookie } = await login(baseUrl, 'teacher2@school-a.test');
+    const response = await fetch(`${baseUrl}/teacher/students/student-a2`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Salim Brahim'), 'élève visible pour son enseignant de classe');
+    assert.ok(html.includes('Quiz sciences'), 'évaluation sciences affichée (matière du prof)');
+    assert.ok(!html.includes('Contrôle fractions'), 'évaluation math NON affichée (matière hors périmètre du prof)');
+  });
+});
+
+test('CRUD-03: élève sans données affiche les empty states', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students/student-a5`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Aucun responsable rattaché'), 'empty state responsables');
+    assert.ok(html.includes('Aucune présence enregistrée'), 'empty state présences');
+    assert.ok(html.includes('Aucune note saisie'), 'empty state notes');
+  });
+});
+
+test('UX-03: POST /teacher/attendance redirige avec status=saved et affiche un banner de succès', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/teacher/attendance', {
+      cookie,
+      fields: {
+        date: '2026-05-15',
+        classRoomId: 'class-a1',
+        studentId: 'student-a1',
+        status: 'present'
+      }
+    });
+    assert.equal(response.status, 302);
+    const location = response.headers.get('location') || '';
+    assert.match(location, /status=saved/, 'paramètre status=saved');
+
+    const page = await fetch(`${baseUrl}${location}`, { headers: { cookie } });
+    const html = await page.text();
+    assert.ok(html.includes('Appel enregistré'), 'banner de succès affiché');
+  });
+});
+
+test('UX-04: /assets/ux.js est servi avec le bon content-type', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/assets/ux.js`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') || '', /application\/javascript/);
+    const body = await response.text();
+    assert.ok(body.includes('data-confirm'), 'le handler lit l\'attribut data-confirm');
+    assert.ok(body.includes('window.confirm'), 'appelle window.confirm');
+  });
+});
+
+test('UX-04: chaque page dashboard charge /assets/ux.js (CSP-safe, pas d\'inline)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students`, { headers: { cookie } });
+    const html = await response.text();
+    assert.ok(html.includes('<script src="/assets/ux.js" defer></script>'), 'script tag présent');
+    assert.ok(!html.includes('onclick='), 'aucun handler inline');
+  });
+});
+
+test('UX-04: le formulaire d\'archivage élève porte un data-confirm', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students/student-a1`, { headers: { cookie } });
+    const html = await response.text();
+    assert.match(html, /action="\/admin\/students\/student-a1\/archive"[^>]*data-confirm="[^"]+"/);
+  });
+});
+
+test('UX-04: la suppression d\'une année scolaire porte un data-confirm', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/school-years`, { headers: { cookie } });
+    const html = await response.text();
+    assert.match(html, /action="\/admin\/school-years\/[^"]+\/delete"[^>]*data-confirm="[^"]+"/);
+  });
+});
+
+test('UX-02: 403 stylée avec message FR et lien vers le dashboard', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/users`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+    const html = await response.text();
+    assert.ok(html.includes('Accès refusé'), 'titre FR');
+    assert.ok(html.includes("Vous n'avez pas l'autorisation"), 'message clair');
+    assert.ok(html.includes('/dashboard/teacher'), 'lien vers le dashboard du rôle courant');
+    assert.match(response.headers.get('content-type') || '', /text\/html/, 'content-type HTML');
+  });
+});
+
+test('UX-02: 404 stylée pour une route inconnue (catch-all)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/cette-route-nexiste-pas`, { headers: { cookie } });
+    assert.equal(response.status, 404);
+    const html = await response.text();
+    assert.ok(html.includes('Page introuvable'), 'titre 404 FR');
+    assert.ok(html.includes('/dashboard/admin'), 'lien retour dashboard admin');
+  });
+});
+
+test('UX-02: 404 stylée pour un élève inexistant (route paramétrée)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students/student-inexistant`, { headers: { cookie } });
+    assert.equal(response.status, 404);
+    const html = await response.text();
+    assert.ok(html.includes('Page introuvable'), 'titre 404 FR');
+  });
+});
+
+test('UX-02: 404 sans session redirige vers /login plutôt que dashboard', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/route-inconnue`);
+    assert.equal(response.status, 404);
+    const html = await response.text();
+    assert.ok(html.includes('/login'), 'sans session, le lien doit pointer vers /login');
+  });
+});
+
+test('UX-05: la sidebar marque le lien actif basé sur le pathname courant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const onStudents = await fetch(`${baseUrl}/admin/students`, { headers: { cookie } });
+    const htmlStudents = await onStudents.text();
+    const linkPattern = /<a class="el-nav-link ([^"]*)" href="\/admin\/students">Élèves<\/a>/;
+    const studentsMatch = htmlStudents.match(linkPattern);
+    assert.ok(studentsMatch, 'lien Élèves présent');
+    assert.ok(studentsMatch[1].includes('is-active'), 'lien Élèves actif sur /admin/students');
+
+    const onProfile = await fetch(`${baseUrl}/admin/students/student-a1`, { headers: { cookie } });
+    const htmlProfile = await onProfile.text();
+    const profileMatch = htmlProfile.match(linkPattern);
+    assert.ok(profileMatch[1].includes('is-active'), 'lien Élèves actif sur /admin/students/:id (prefix match)');
+
+    const onTeachers = await fetch(`${baseUrl}/admin/teachers`, { headers: { cookie } });
+    const htmlTeachers = await onTeachers.text();
+    const teachersMatch = htmlTeachers.match(linkPattern);
+    assert.ok(!teachersMatch[1].includes('is-active'), 'lien Élèves NON actif sur /admin/teachers');
+  });
+});
+
+test('BULL-03: admin voit le bulletin T3 d\'un élève avec moyenne par matière et moyenne générale', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a1/terms/term-a-t3`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Bulletin — Trimestre 3'), 'titre du bulletin');
+    assert.ok(html.includes('Aya Nadir'), 'nom élève');
+    assert.ok(html.includes('Mathématiques'), 'matière du seed');
+    assert.ok(html.includes('Contrôle fractions'), 'évaluation détaillée');
+    assert.ok(html.includes('Moyenne générale: 15.50/20'), 'moyenne générale calculée');
+  });
+});
+
+test('BULL-03: bulletin T1 (hors période des notes seed) → empty state', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a1/terms/term-a-t1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Aucune note enregistrée pour ce trimestre'), 'empty state notes');
+    assert.ok(html.includes('Moyenne générale: -'), 'moyenne générale absente');
+  });
+});
+
+test('BULL-03: page index liste les trois trimestres', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Trimestre 1'), 'T1 listé');
+    assert.ok(html.includes('Trimestre 2'), 'T2 listé');
+    assert.ok(html.includes('Trimestre 3'), 'T3 listé');
+    assert.ok(html.includes('/bulletins/students/student-a1/terms/term-a-t3'), 'lien vers T3');
+  });
+});
+
+test('BULL-03: enseignant accède au bulletin restreint à ses matières (vue limitée)', async () => {
+  await withServer(async (baseUrl) => {
+    // teacher-a1 enseigne maths à class-a1 ; student-a1 a une note de math en T3
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a1/terms/term-a-t3`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Vue restreinte aux matières que vous enseignez'), 'note de portée affichée');
+    assert.ok(html.includes('Moyenne sur vos matières: 15.50/20'), 'libellé moyenne adapté');
+    assert.ok(html.includes('Mathématiques'), 'matière enseignée présente');
+  });
+});
+
+test('BULL-03: enseignant n\'accède pas au bulletin d\'un élève hors de ses classes (403)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a2/terms/term-a-t3`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('BULL-03: parent accède au bulletin de son enfant', async () => {
+  await withServer(async (baseUrl) => {
+    // parent-a1 lié à student-a1 (splink-a1)
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a1/terms/term-a-t3`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Aya Nadir'), 'bulletin de l\'enfant visible');
+    assert.ok(!html.includes('Vue restreinte'), 'parent voit la vue complète');
+  });
+});
+
+test('BULL-03: parent n\'accède pas au bulletin d\'un élève non lié (403)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    // student-a4 n'est pas lié à parent-a1
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a4/terms/term-a-t3`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('BULL-03: élève accède à son propre bulletin uniquement', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'student@school-a.test');
+    const own = await fetch(`${baseUrl}/bulletins/students/student-a1/terms/term-a-t3`, { headers: { cookie } });
+    assert.equal(own.status, 200);
+
+    const other = await fetch(`${baseUrl}/bulletins/students/student-a3/terms/term-a-t3`, { headers: { cookie } });
+    assert.equal(other.status, 403);
+  });
+});
+
+test('BULL-03: bulletin cross-tenant → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-b.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a1/terms/term-a-t3`, { headers: { cookie } });
+    // student-a1 n'existe pas dans le scope tenant school-b → 404
+    assert.equal(response.status, 404);
+  });
+});
+
+test('BULL-03: trimestre inexistant → 404', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/bulletins/students/student-a1/terms/term-does-not-exist`, { headers: { cookie } });
+    assert.equal(response.status, 404);
+  });
+});
+
+test('CRUD-02: élève d\'un autre tenant → redirection error=not_found', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-b.test');
+    const response = await postForm(baseUrl, '/admin/students/student-a1/update', {
+      cookie,
+      fields: {
+        firstName: 'Hack',
+        lastName: 'Attempt',
+        admissionNumber: 'X',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-03-22'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students?error=not_found');
+  });
+});
+
 test('USR-04: GET /admin/users liste les comptes du tenant courant uniquement', async () => {
   await withServer(async (baseUrl) => {
     const { cookie: adminACookie } = await login(baseUrl, 'admin@school-a.test');
