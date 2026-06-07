@@ -2,7 +2,7 @@
 # Backlog complet : de l'état actuel au déploiement production
 # Mis à jour : 2026-06-07
 
-> **Progression** : Sprint 1 sécurité **terminé** (SEC-01 à SEC-08). Sprint 2 gestion utilisateurs UI **terminé pour USR-01..04** (USR-05/06 reportés au Sprint 7, dépendent du service email OPS-04). Prêt à attaquer Sprint 3 (structure école UI) ou Sprint 7 (déploiement Railway).
+> **Progression** : Sprint 1 sécurité **terminé** (SEC-01 à SEC-08). Sprint 2 gestion utilisateurs UI **terminé pour USR-01..04** (USR-05/06 reportés au Sprint 7, dépendent du service email OPS-04). Sprint 3 structure école UI **terminé** (SCH-01..SCH-06). Prêt à attaquer Sprint 4 (CRUD métier manquants) ou Sprint 7 (déploiement Railway).
 
 ---
 
@@ -155,32 +155,60 @@ Sans ça, pour ajouter un enseignant ou un parent il faut toucher au code.
 
 ## SPRINT 3 — Structure école depuis l'interface (PILOT)
 
-Aujourd'hui, les structures (classes, matières, années) ne peuvent pas être créées depuis l'UI.
+Toutes les structures (classes, matières, années, trimestres, école, tenants) sont désormais gérables depuis l'UI sans toucher au code.
 
-### SCH-01 — Admin : gérer les années scolaires ❌ PILOT
-- Liste, création, modification, clôture
-- Formulaire : nom (ex: "2025-2026"), date de début et fin
+### SCH-01 — Admin : gérer les années scolaires ✅ PILOT
+- Page `/admin/school-years` (sidebar « Années scolaires », rôle `school_admin`)
+- Formulaire de création : libellé (ex `2025-2026`), `startsAt`, `endsAt`, statut (`draft`/`active`/`closed`)
+- Liste avec dates et statut, action suppression (cascade sur les trimestres rattachés)
+- Validation : `startsAt < endsAt` (sinon redirect `?error=invalid_input`), permission `school_admin` (sinon 403)
+- Audit `academic_year.created` / `academic_year.deleted`
+- Tests : SCH-01 (création + listing), dates incohérentes refusées, non-admin → 403, isolation tenant
 
-### SCH-02 — Admin : gérer les trimestres / semestres ❌ PILOT
-- Rattachés à une année scolaire
-- Formulaire : nom, dates
+### SCH-02 — Admin : gérer les trimestres / semestres ✅ PILOT
+- Formulaire intégré à chaque ligne d'année dans `/admin/school-years` : nom + dates
+- Stockés rattachés à `academicYearId`, suppression individuelle par bouton
+- Validation : la référence à l'année doit exister (sinon `?error=reference_invalid`)
+- Audit `term.created` / `term.deleted`
+- Tests : SCH-02 création + listing dans la page année
 
-### SCH-03 — Admin : gérer les niveaux et classes ❌ PILOT
-- CRUD GradeLevel (6ème, 5ème, 4ème...)
-- CRUD ClassRoom (6ème A, 6ème B...) avec capacité et niveau
+### SCH-03 — Admin : gérer les niveaux et classes ✅ PILOT
+- Page `/admin/classes` (sidebar « Niveaux & classes ») : 2 sections — CRUD `gradeLevels` puis CRUD `classRooms`
+- `gradeLevels` : nom, ordre (0..30) — endpoint `POST /admin/grade-levels` et `/delete`
+- `classRooms` : nom, niveau parent (select des grade levels), capacité — endpoint `POST /admin/classes` et `/delete`
+- Validation : classe sans niveau existant rejetée → `?error=reference_invalid`
+- Audit `grade_level.created/deleted`, `class_room.created/deleted`
+- Tests : création niveau puis classe, classe sans niveau refusée
 
-### SCH-04 — Admin : gérer les matières ❌ PILOT
-- CRUD Subject (Maths, Français, Sciences...)
-- Code court et nom complet
+### SCH-04 — Admin : gérer les matières ✅ PILOT
+- Page `/admin/subjects` (sidebar « Matières ») : formulaire (nom + code court) + liste avec suppression
+- Validation : code requis (1..20 char), nom requis
+- Audit `subject.created` / `subject.deleted`
+- Tests : création + listing, code vide refusé
 
-### SCH-05 — Admin : page paramètres de l'école ❌ PILOT
-- Nom de l'établissement, logo (texte pour MVP), adresse
-- Premier écran visible après la création d'un nouveau tenant
+### SCH-05 — Admin : page paramètres de l'école ✅ PILOT
+- Page `/admin/school-settings` (sidebar « Établissement ») : 1 fiche `schools` par tenant
+- Champs : nom, code, ville, pays — POST crée ou met à jour (upsert idempotent)
+- Audit `school.updated`
+- Tests : enregistrement + relecture (nom + code visibles dans la page)
+- Note : logo et adresse étendue reportés post-MVP
 
-### SCH-06 — Super admin : créer un nouveau tenant école ❌ PILOT
-- Formulaire : nom école, slug tenant, email admin
-- Crée le tenant + le premier compte school_admin
-- **Pourquoi :** aujourd'hui il faut toucher au code pour ajouter une école
+### SCH-06 — Super admin : créer un nouveau tenant école ✅ PILOT
+- Page `/admin/tenants` réservée à `super_admin` (sidebar « Tenants », redirection post-login)
+- Formulaire : nom école, slug (`^[a-z0-9]+(?:-[a-z0-9]+)*$`, 3..60 char), email admin, mot de passe temporaire ≥ 8 char
+- Crée la ligne `tenants` puis le compte `users` (rôle `school_admin`, id = `admin-<slug>`, password bcrypt)
+- L'admin peut immédiatement se connecter et atterrit sur `/dashboard/admin`
+- Garde-fous : non-super_admin → 403, slug invalide → `?error=slug_invalid`, slug dupliqué → `?error=slug_duplicate`, email dupliqué → `?error=email_duplicate`
+- Slugs réservés : `platform`, `admin`
+- Audit `tenant.created` + `user.created`
+- Tests : création complète + login admin, refus non-super-admin, slug invalide, slug dupliqué, redirection post-login
+
+### Architecture Sprint 3
+- Migration DB `packages/database/migrations/004_school_structure_sprint3.sql` : tables `tenants`, `schools`, `academic_years`, `terms`, `grade_levels` (les tables `class_rooms`/`subjects` existaient déjà)
+- `PostgresCoreSchoolRepository` étendu avec API unifiée `list/get/create/update/delete(entity, tenantId, ...)` pour les 6 entités, validateurs locaux, contraintes de référence (terms → academic year, classRooms → grade level)
+- `InMemoryTenantStore` (apps/web/src/modules/tenants.js) + `PostgresTenantRepository` (apps/web/src/modules/persistence/postgres-tenant-repository.js)
+- En mode `memory` (par défaut tests/dev), le `coreSchoolStore` existant gère le CRUD ; en mode `postgres`, le repository postgres prend le relais via la même interface — pas de duplication de rendu dans server.js
+- 15 nouveaux tests dans `apps/web/src/server.test.js` (suite globale : 195 tests, 0 fail)
 
 ---
 
@@ -337,9 +365,9 @@ Aujourd'hui, les structures (classes, matières, années) ne peuvent pas être c
 ```
 [✅ SEC-01..08]              (Sprint 1 sécurité — terminé)
          ↓
-USR-01 → USR-02 → USR-03   (créer utilisateurs depuis l'UI)
+[✅ USR-01..04]              (Sprint 2 gestion utilisateurs UI — terminé)
          ↓
-SCH-01 → SCH-03 → SCH-04   (structure école configurable)
+[✅ SCH-01..06]              (Sprint 3 structure école UI — terminé)
          ↓
 OPS-01 → OPS-02 → OPS-03   (déploiement Railway)
          ↓

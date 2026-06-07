@@ -2766,3 +2766,281 @@ test('USR-04: admin tenant A ne peut pas agir sur les users du tenant B', async 
     assert.equal(response.status, 403);
   });
 });
+
+// =====================================================================
+// Sprint 3 — Structure école depuis l'interface (SCH-01..SCH-06)
+// =====================================================================
+
+test('SCH-01: admin crée une année scolaire visible dans la liste', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const create = await postForm(baseUrl, '/admin/school-years', {
+      cookie,
+      fields: {
+        label: '2026-2027',
+        startsAt: '2026-09-01',
+        endsAt: '2027-06-30',
+        status: 'active'
+      }
+    });
+    assert.equal(create.status, 302);
+    assert.equal(create.headers.get('location'), '/admin/school-years?success=year_created');
+
+    const listResponse = await fetch(`${baseUrl}/admin/school-years`, { headers: { cookie } });
+    assert.equal(listResponse.status, 200);
+    const html = await listResponse.text();
+    assert.ok(html.includes('2026-2027'));
+    assert.ok(html.includes('2026-09-01'));
+  });
+});
+
+test('SCH-01: dates incohérentes (start après end) renvoient une erreur', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const create = await postForm(baseUrl, '/admin/school-years', {
+      cookie,
+      fields: {
+        label: 'Erreur',
+        startsAt: '2027-06-30',
+        endsAt: '2026-09-01',
+        status: 'draft'
+      }
+    });
+    assert.equal(create.status, 302);
+    assert.equal(create.headers.get('location'), '/admin/school-years?error=invalid_input');
+  });
+});
+
+test('SCH-01: non-admin ne peut pas accéder aux années scolaires', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const listResponse = await fetch(`${baseUrl}/admin/school-years`, { headers: { cookie } });
+    assert.equal(listResponse.status, 403);
+  });
+});
+
+test('SCH-02: trimestre rattaché à une année existe et apparait dans la page', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const createYear = await postForm(baseUrl, '/admin/school-years', {
+      cookie,
+      fields: { label: '2026-2027', startsAt: '2026-09-01', endsAt: '2027-06-30', status: 'active' }
+    });
+    assert.equal(createYear.status, 302);
+
+    const listResponse = await fetch(`${baseUrl}/admin/school-years`, { headers: { cookie } });
+    const html = await listResponse.text();
+    const yearIdMatch = html.match(/\/admin\/school-years\/([^/]+)\/terms/);
+    assert.ok(yearIdMatch, 'expected an academic year id form action');
+    const yearId = yearIdMatch[1];
+
+    const createTerm = await postForm(baseUrl, `/admin/school-years/${yearId}/terms`, {
+      cookie,
+      fields: {
+        name: 'Trimestre 1',
+        startsAt: '2026-09-01',
+        endsAt: '2026-12-20'
+      }
+    });
+    assert.equal(createTerm.status, 302);
+    assert.equal(createTerm.headers.get('location'), '/admin/school-years?success=term_created');
+
+    const afterTerm = await fetch(`${baseUrl}/admin/school-years`, { headers: { cookie } });
+    const afterHtml = await afterTerm.text();
+    assert.ok(afterHtml.includes('Trimestre 1'));
+    assert.ok(afterHtml.includes('2026-12-20'));
+  });
+});
+
+test('SCH-03: admin crée un niveau puis une classe rattachée au niveau', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+
+    const createGrade = await postForm(baseUrl, '/admin/grade-levels', {
+      cookie,
+      fields: { name: '6ème', order: '6' }
+    });
+    assert.equal(createGrade.status, 302);
+
+    const listResponse = await fetch(`${baseUrl}/admin/classes`, { headers: { cookie } });
+    const html = await listResponse.text();
+    const gradeMatch = html.match(/value="(grade-[^"]+)"/);
+    assert.ok(gradeMatch, 'expected a grade-level option');
+    const gradeId = gradeMatch[1];
+
+    const createClass = await postForm(baseUrl, '/admin/classes', {
+      cookie,
+      fields: { name: '6ème C', gradeLevelId: gradeId, capacity: '28' }
+    });
+    assert.equal(createClass.status, 302);
+    assert.equal(createClass.headers.get('location'), '/admin/classes?success=class_created');
+
+    const after = await fetch(`${baseUrl}/admin/classes`, { headers: { cookie } });
+    const afterHtml = await after.text();
+    assert.ok(afterHtml.includes('6ème C'));
+    assert.ok(afterHtml.includes('6ème'));
+  });
+});
+
+test('SCH-03: classe sans niveau valide est refusée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const create = await postForm(baseUrl, '/admin/classes', {
+      cookie,
+      fields: { name: 'OrphelineX', gradeLevelId: 'grade-inexistant', capacity: '20' }
+    });
+    assert.equal(create.status, 302);
+    assert.equal(create.headers.get('location'), '/admin/classes?error=reference_invalid');
+  });
+});
+
+test('SCH-04: admin crée une matière et elle apparait dans la liste', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const create = await postForm(baseUrl, '/admin/subjects', {
+      cookie,
+      fields: { name: 'Arts plastiques', code: 'ART' }
+    });
+    assert.equal(create.status, 302);
+    assert.equal(create.headers.get('location'), '/admin/subjects?success=created');
+
+    const list = await fetch(`${baseUrl}/admin/subjects`, { headers: { cookie } });
+    const html = await list.text();
+    assert.ok(html.includes('Arts plastiques'));
+    assert.ok(html.includes('ART'));
+  });
+});
+
+test('SCH-04: matière sans code est refusée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const create = await postForm(baseUrl, '/admin/subjects', {
+      cookie,
+      fields: { name: 'IncompleteSubject', code: '' }
+    });
+    assert.equal(create.status, 302);
+    assert.equal(create.headers.get('location'), '/admin/subjects?error=invalid_input');
+  });
+});
+
+test('SCH-05: admin enregistre les paramètres école et les retrouve', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const save = await postForm(baseUrl, '/admin/school-settings', {
+      cookie,
+      fields: { name: 'Lycée Saint-Exupéry', code: 'STX', city: 'Dakar', country: 'Sénégal' }
+    });
+    assert.equal(save.status, 302);
+    assert.equal(save.headers.get('location'), '/admin/school-settings?success=saved');
+
+    const view = await fetch(`${baseUrl}/admin/school-settings`, { headers: { cookie } });
+    const html = await view.text();
+    assert.ok(html.includes('Lycée Saint-Exupéry'));
+    assert.ok(html.includes('STX'));
+    assert.ok(html.includes('Dakar'));
+  });
+});
+
+test('SCH-06: super_admin crée un tenant et son school_admin qui peut se logger', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'superadmin@platform.test');
+    const create = await postForm(baseUrl, '/admin/tenants', {
+      cookie,
+      fields: {
+        name: 'École Pilote Dakar',
+        slug: 'ecole-pilote',
+        adminEmail: 'admin@ecole-pilote.test',
+        adminPassword: 'PilotePass1!'
+      }
+    });
+    assert.equal(create.status, 302);
+    assert.equal(create.headers.get('location'), '/admin/tenants?success=created');
+
+    // L'admin peut maintenant se connecter
+    const adminLogin = await login(baseUrl, 'admin@ecole-pilote.test', 'PilotePass1!');
+    assert.equal(adminLogin.response.status, 302);
+    assert.equal(adminLogin.response.headers.get('location'), '/dashboard/admin');
+
+    // La liste des tenants montre le nouveau
+    const list = await fetch(`${baseUrl}/admin/tenants`, { headers: { cookie } });
+    const html = await list.text();
+    assert.ok(html.includes('ecole-pilote'));
+    assert.ok(html.includes('École Pilote Dakar'));
+  });
+});
+
+test('SCH-06: non-super_admin ne peut pas créer un tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const create = await postForm(baseUrl, '/admin/tenants', {
+      cookie,
+      fields: {
+        name: 'Forbidden Tenant',
+        slug: 'forbidden-tenant',
+        adminEmail: 'forbidden@school.test',
+        adminPassword: 'WhateverPass1!'
+      }
+    });
+    assert.equal(create.status, 403);
+  });
+});
+
+test('SCH-06: slug invalide refusé (avec espaces ou majuscules)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'superadmin@platform.test');
+    const create = await postForm(baseUrl, '/admin/tenants', {
+      cookie,
+      fields: {
+        name: 'Mauvais Slug',
+        slug: 'Bad Slug!!',
+        adminEmail: 'mauvais@slug.test',
+        adminPassword: 'PassValide1!'
+      }
+    });
+    assert.equal(create.status, 302);
+    const location = create.headers.get('location') || '';
+    assert.match(location, /\/admin\/tenants\?error=slug_/);
+  });
+});
+
+test('SCH-06: slug dupliqué refusé', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'superadmin@platform.test');
+    const first = await postForm(baseUrl, '/admin/tenants', {
+      cookie,
+      fields: { name: 'Premier', slug: 'tenant-unique', adminEmail: 'first@tenant.test', adminPassword: 'PassValide1!' }
+    });
+    assert.equal(first.status, 302);
+    assert.equal(first.headers.get('location'), '/admin/tenants?success=created');
+
+    const second = await postForm(baseUrl, '/admin/tenants', {
+      cookie,
+      fields: { name: 'Deuxième', slug: 'tenant-unique', adminEmail: 'second@tenant.test', adminPassword: 'PassValide1!' }
+    });
+    assert.equal(second.status, 302);
+    assert.equal(second.headers.get('location'), '/admin/tenants?error=slug_duplicate');
+  });
+});
+
+test('SCH-06: redirection super_admin après login pointe vers /admin/tenants', async () => {
+  await withServer(async (baseUrl) => {
+    const { response } = await login(baseUrl, 'superadmin@platform.test');
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/tenants');
+  });
+});
+
+test('SCH-isolation: tenant A ne voit pas l\'année scolaire du tenant B', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: cookieA } = await login(baseUrl, 'admin@school-a.test');
+    await postForm(baseUrl, '/admin/school-years', {
+      cookie: cookieA,
+      fields: { label: 'Annee-A-PrivateXYZ', startsAt: '2026-09-01', endsAt: '2027-06-30', status: 'active' }
+    });
+
+    const { cookie: cookieB } = await login(baseUrl, 'admin@school-b.test');
+    const view = await fetch(`${baseUrl}/admin/school-years`, { headers: { cookie: cookieB } });
+    const html = await view.text();
+    assert.ok(!html.includes('Annee-A-PrivateXYZ'), 'tenant B doit pas voir l\'année du tenant A');
+  });
+});

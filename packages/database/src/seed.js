@@ -252,9 +252,25 @@ async function seedUsersTable(pool) {
   }
 }
 
+async function seedTenantsTable(pool) {
+  const tenants = [
+    { id: 'school-a', slug: 'school-a', name: 'Lycée Démo A' },
+    { id: 'school-b', slug: 'school-b', name: 'Lycée Démo B' }
+  ];
+  for (const tenant of tenants) {
+    await pool.query(
+      `INSERT INTO tenants (id, slug, name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [tenant.id, tenant.slug, tenant.name]
+    );
+  }
+}
+
 async function seed() {
   const pool = getPool();
 
+  await seedTenantsTable(pool);
   await seedUsersTable(pool);
 
   await insertMany(

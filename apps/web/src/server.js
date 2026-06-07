@@ -40,6 +40,8 @@ const { PostgresGradingRepository } = require('./modules/persistence/postgres-gr
 const { PostgresMessagingRepository } = require('./modules/persistence/postgres-messaging-repository');
 const { PostgresFinanceRepository } = require('./modules/persistence/postgres-finance-repository');
 const { PostgresUserRepository } = require('./modules/persistence/postgres-user-repository');
+const { PostgresTenantRepository } = require('./modules/persistence/postgres-tenant-repository');
+const { InMemoryTenantStore } = require('./modules/tenants');
 const { buildValidationError, buildForbiddenError } = require('./modules/error-utils');
 const { InMemoryUserStore, DuplicateEmailError, buildSeedUsersWithHashedPassword, normalizeEmail } = require('../../../packages/auth/src/users/user-store');
 const { hashPassword, verifyPassword } = require('../../../packages/auth/src/password/password-hasher');
@@ -339,6 +341,14 @@ function canManageTeachers(session) {
 
 function canManageUsers(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
+}
+
+function canManageSchoolStructure(session) {
+  return session.role === ROLES.SCHOOL_ADMIN;
+}
+
+function canManageTenants(session) {
+  return session.role === ROLES.SUPER_ADMIN;
 }
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -1263,7 +1273,8 @@ function getDashboardPathForRole(role) {
     [ROLES.TEACHER]: '/dashboard/teacher',
     [ROLES.PARENT]: '/dashboard/parent',
     [ROLES.STUDENT]: '/dashboard/student',
-    [ROLES.ACCOUNTANT]: '/dashboard/accountant'
+    [ROLES.ACCOUNTANT]: '/dashboard/accountant',
+    [ROLES.SUPER_ADMIN]: '/admin/tenants'
   };
 
   return roleToPath[role] ?? '/dashboard';
@@ -1322,7 +1333,12 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Élèves', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT] },
     { label: 'Enseignants', href: '/admin/teachers', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Comptes', href: '/admin/users', roles: [ROLES.SCHOOL_ADMIN] },
-    { label: 'Classes', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
+    { label: 'Établissement', href: '/admin/school-settings', roles: [ROLES.SCHOOL_ADMIN] },
+    { label: 'Années scolaires', href: '/admin/school-years', roles: [ROLES.SCHOOL_ADMIN] },
+    { label: 'Niveaux & classes', href: '/admin/classes', roles: [ROLES.SCHOOL_ADMIN] },
+    { label: 'Matières', href: '/admin/subjects', roles: [ROLES.SCHOOL_ADMIN] },
+    { label: 'Tenants', href: '/admin/tenants', roles: [ROLES.SUPER_ADMIN] },
+    { label: 'Classes', href: '/admin/students', roles: [ROLES.DIRECTOR, ROLES.TEACHER] },
     { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
@@ -2340,7 +2356,13 @@ const ADMIN_ERROR_MESSAGES = {
   invalid_input: 'Les informations saisies sont invalides.',
   cannot_self_deactivate: 'Vous ne pouvez pas désactiver votre propre compte.',
   user_not_found: 'Compte introuvable.',
-  forbidden: 'Action non autorisée.'
+  forbidden: 'Action non autorisée.',
+  slug_required: 'Le slug du tenant est requis (lettres minuscules, chiffres, tirets).',
+  slug_invalid: 'Le slug doit contenir uniquement des lettres minuscules, chiffres et tirets (ex : ecole-pilote).',
+  slug_duplicate: 'Un tenant utilise déjà ce slug.',
+  tenant_required: 'Le nom du tenant est requis.',
+  not_found: 'Ressource introuvable.',
+  reference_invalid: 'Une référence (niveau ou année) est invalide ou manquante.'
 };
 
 function renderAdminErrorBanner(errorCode) {
@@ -2478,6 +2500,230 @@ function renderUsersPage(session, users, { errorCode = null, successMessage = nu
   );
 }
 
+function renderSchoolSettingsPage(session, school, { errorCode = null, successMessage = null } = {}) {
+  const existing = school
+    ? `<p class="el-muted">Identifiant interne : <code>${escapeHtml(school.id)}</code></p>`
+    : '<p class="el-muted">Aucune fiche établissement créée pour ce tenant.</p>';
+
+  return renderDashboardLayout(
+    'Paramètres de l\'établissement',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
+      <h2>Identité de l'établissement</h2>
+      ${existing}
+      <form method="POST" action="/admin/school-settings">${csrfField(session)}
+        <label>Nom <input name="name" required minlength="2" maxlength="120" value="${escapeHtml(school?.name ?? '')}" /></label><br/>
+        <label>Code <input name="code" required minlength="1" maxlength="30" value="${escapeHtml(school?.code ?? '')}" /></label><br/>
+        <label>Ville <input name="city" maxlength="120" value="${escapeHtml(school?.city ?? '')}" /></label><br/>
+        <label>Pays <input name="country" maxlength="80" value="${escapeHtml(school?.country ?? '')}" /></label><br/>
+        <button type="submit">${school ? 'Mettre à jour' : 'Créer la fiche école'}</button>
+      </form>
+    </section>`
+  );
+}
+
+function renderSchoolYearsPage(session, years, terms, { errorCode = null, successMessage = null } = {}) {
+  const yearsRows = years
+    .map((year) => {
+      const yearTerms = terms.filter((term) => term.academicYearId === year.id);
+      const termsList = yearTerms.length
+        ? `<ul>${yearTerms
+            .map(
+              (term) => `<li>${escapeHtml(term.name)} (${escapeHtml(term.startsAt)} → ${escapeHtml(term.endsAt)})
+                <form method="POST" action="/admin/school-years/${term.id}/term-delete" style="display:inline">${csrfField(session)}<button type="submit">supprimer</button></form>
+              </li>`
+            )
+            .join('')}</ul>`
+        : '<p class="el-muted">Aucun trimestre/semestre déclaré pour cette année.</p>';
+
+      return `<tr>
+        <td>${escapeHtml(year.label)}</td>
+        <td>${escapeHtml(year.startsAt)}</td>
+        <td>${escapeHtml(year.endsAt)}</td>
+        <td>${renderStatusBadge(year.status || 'draft', { active: 'is-success', closed: 'is-warning', draft: 'is-info' })}</td>
+        <td>
+          ${termsList}
+          <form method="POST" action="/admin/school-years/${year.id}/terms">${csrfField(session)}
+            <input name="name" placeholder="Nom (ex : Trimestre 1)" required minlength="2" maxlength="60" />
+            <input name="startsAt" type="date" required />
+            <input name="endsAt" type="date" required />
+            <button type="submit">Ajouter trimestre</button>
+          </form>
+          <form method="POST" action="/admin/school-years/${year.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer l'année</button></form>
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  return renderDashboardLayout(
+    'Années scolaires',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
+      <h2>Créer une année scolaire</h2>
+      <form method="POST" action="/admin/school-years">${csrfField(session)}
+        <label>Libellé (ex : 2025-2026) <input name="label" required minlength="2" maxlength="60" /></label><br/>
+        <label>Date de début <input name="startsAt" type="date" required /></label><br/>
+        <label>Date de fin <input name="endsAt" type="date" required /></label><br/>
+        <label>Statut
+          <select name="status">
+            <option value="draft">Brouillon</option>
+            <option value="active">Active</option>
+            <option value="closed">Clôturée</option>
+          </select>
+        </label><br/>
+        <button type="submit">Créer</button>
+      </form>
+    </section>
+    <section class="el-card">
+      <h2>Années existantes</h2>
+      <table>
+        <thead><tr><th>Libellé</th><th>Début</th><th>Fin</th><th>Statut</th><th>Trimestres / Actions</th></tr></thead>
+        <tbody>${yearsRows || '<tr><td colspan="5">Aucune année scolaire.</td></tr>'}</tbody>
+      </table>
+    </section>`
+  );
+}
+
+function renderClassesPage(session, gradeLevels, classRooms, { errorCode = null, successMessage = null } = {}) {
+  const gradeOptions = gradeLevels
+    .map((grade) => `<option value="${escapeHtml(grade.id)}">${escapeHtml(grade.name)}</option>`)
+    .join('');
+  const gradeRows = gradeLevels
+    .map(
+      (grade) => `<tr>
+        <td>${escapeHtml(grade.name)}</td>
+        <td>${Number.isFinite(Number(grade.order)) ? Number(grade.order) : '-'}</td>
+        <td>
+          <form method="POST" action="/admin/grade-levels/${grade.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer</button></form>
+        </td>
+      </tr>`
+    )
+    .join('');
+
+  const classRows = classRooms
+    .map((classRoom) => {
+      const grade = gradeLevels.find((item) => item.id === classRoom.gradeLevelId);
+      return `<tr>
+        <td>${escapeHtml(classRoom.name)}</td>
+        <td>${grade ? escapeHtml(grade.name) : '<span class="el-muted">niveau supprimé</span>'}</td>
+        <td>${Number(classRoom.capacity) || 0}</td>
+        <td><form method="POST" action="/admin/classes/${classRoom.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer</button></form></td>
+      </tr>`;
+    })
+    .join('');
+
+  const classFormFooter = gradeLevels.length === 0
+    ? '<p class="el-muted">Crée d\'abord un niveau pour pouvoir y rattacher des classes.</p>'
+    : '';
+
+  return renderDashboardLayout(
+    'Niveaux & classes',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
+      <h2>Niveaux (ex : 6ème, 5ème)</h2>
+      <form method="POST" action="/admin/grade-levels">${csrfField(session)}
+        <label>Nom <input name="name" required minlength="1" maxlength="60" /></label>
+        <label>Ordre <input name="order" type="number" min="0" max="30" value="0" /></label>
+        <button type="submit">Ajouter niveau</button>
+      </form>
+      <table>
+        <thead><tr><th>Nom</th><th>Ordre</th><th>Action</th></tr></thead>
+        <tbody>${gradeRows || '<tr><td colspan="3">Aucun niveau.</td></tr>'}</tbody>
+      </table>
+    </section>
+    <section class="el-card">
+      <h2>Classes (ex : 6ème A, 6ème B)</h2>
+      <form method="POST" action="/admin/classes">${csrfField(session)}
+        <label>Nom <input name="name" required minlength="1" maxlength="80" /></label>
+        <label>Niveau
+          <select name="gradeLevelId" required ${gradeLevels.length === 0 ? 'disabled' : ''}>
+            ${gradeOptions || '<option value="">— Aucun niveau —</option>'}
+          </select>
+        </label>
+        <label>Capacité <input name="capacity" type="number" min="0" max="200" value="30" /></label>
+        <button type="submit" ${gradeLevels.length === 0 ? 'disabled' : ''}>Ajouter classe</button>
+      </form>
+      ${classFormFooter}
+      <table>
+        <thead><tr><th>Classe</th><th>Niveau</th><th>Capacité</th><th>Action</th></tr></thead>
+        <tbody>${classRows || '<tr><td colspan="4">Aucune classe.</td></tr>'}</tbody>
+      </table>
+    </section>`
+  );
+}
+
+function renderSubjectsPage(session, subjects, { errorCode = null, successMessage = null } = {}) {
+  const rows = subjects
+    .map(
+      (subject) => `<tr>
+        <td>${escapeHtml(subject.name)}</td>
+        <td><code>${escapeHtml(subject.code)}</code></td>
+        <td><form method="POST" action="/admin/subjects/${subject.id}/delete" style="display:inline">${csrfField(session)}<button type="submit">Supprimer</button></form></td>
+      </tr>`
+    )
+    .join('');
+
+  return renderDashboardLayout(
+    'Matières',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
+      <h2>Créer une matière</h2>
+      <form method="POST" action="/admin/subjects">${csrfField(session)}
+        <label>Nom <input name="name" required minlength="1" maxlength="80" /></label>
+        <label>Code court <input name="code" required minlength="1" maxlength="20" placeholder="ex : MATH" /></label>
+        <button type="submit">Ajouter</button>
+      </form>
+    </section>
+    <section class="el-card">
+      <h2>Matières existantes</h2>
+      <table>
+        <thead><tr><th>Nom</th><th>Code</th><th>Action</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="3">Aucune matière.</td></tr>'}</tbody>
+      </table>
+    </section>`
+  );
+}
+
+function renderTenantsPage(session, tenants, { errorCode = null, successMessage = null } = {}) {
+  const rows = tenants
+    .map(
+      (tenant) => `<tr>
+        <td>${escapeHtml(tenant.name)}</td>
+        <td><code>${escapeHtml(tenant.slug)}</code></td>
+        <td>${escapeHtml(String(tenant.created_at ?? '-').slice(0, 10))}</td>
+      </tr>`
+    )
+    .join('');
+
+  return renderDashboardLayout(
+    'Tenants (établissements)',
+    session,
+    `${renderAdminErrorBanner(errorCode)}${renderAdminSuccessBanner(successMessage)}
+    <section class="el-card">
+      <h2>Créer un nouvel établissement</h2>
+      <p class="el-muted">Crée le tenant <strong>et</strong> son premier compte school_admin. L'admin pourra se connecter avec l'email fourni puis créer les autres comptes depuis l'UI.</p>
+      <form method="POST" action="/admin/tenants">${csrfField(session)}
+        <label>Nom de l'établissement <input name="name" required minlength="2" maxlength="120" /></label><br/>
+        <label>Slug (identifiant URL, lettres/chiffres/tirets) <input name="slug" required minlength="3" maxlength="60" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="ex : ecole-pilote" /></label><br/>
+        <label>Email de l'admin <input name="adminEmail" type="email" required /></label><br/>
+        <label>Mot de passe temporaire <input name="adminPassword" type="password" minlength="${MIN_PASSWORD_LENGTH}" required /></label><br/>
+        <button type="submit">Créer le tenant + admin</button>
+      </form>
+    </section>
+    <section class="el-card">
+      <h2>Tenants existants</h2>
+      <table>
+        <thead><tr><th>Nom</th><th>Slug</th><th>Créé le</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="3">Aucun tenant.</td></tr>'}</tbody>
+      </table>
+    </section>`
+  );
+}
+
 function buildTenantScope(session, params) {
   if (session.role === ROLES.SUPER_ADMIN) {
     return params.tenantId;
@@ -2530,6 +2776,7 @@ function createServer({
   runtimeEnv = loadRuntimeEnv(process.env),
   allowPublicDemoGuide = runtimeEnv.nodeEnv === 'development' || runtimeEnv.nodeEnv === 'test',
   userStore,
+  tenantStore,
   loginThrottle = new LoginThrottle()
 } = {}) {
   const sessionSecret = runtimeEnv.sessionSecret;
@@ -2548,6 +2795,12 @@ function createServer({
   const inMemoryUserStore = new InMemoryUserStore({ users: memorySeededUsers });
   const activeUserStore =
     userStore ?? (runtimeEnv.persistenceMode === 'postgres' ? new PostgresUserRepository({ pool: getPool() }) : inMemoryUserStore);
+  const inMemoryTenantStore = new InMemoryTenantStore([
+    { id: 'school-a', slug: 'school-a', name: 'Lycée Démo A', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'school-b', slug: 'school-b', name: 'Lycée Démo B', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+  ]);
+  const activeTenantStore =
+    tenantStore ?? (runtimeEnv.persistenceMode === 'postgres' ? new PostgresTenantRepository({ pool: getPool() }) : inMemoryTenantStore);
   const coreSchoolStore = new CoreSchoolStore({ classRooms: seed.classRooms, subjects: seed.subjects });
   const studentStore = new StudentStore({ students: seed.students, classRoomStore: coreSchoolStore });
   const parentStore = new ParentStore({ parents: seed.parents, links: seed.studentParentLinks, studentStore });
@@ -2625,6 +2878,7 @@ function createServer({
   let gradingApiStore = gradingStore;
   let messagingApiStore = messagingStore;
   let financeApiStore = financeStore;
+  let schoolStructureAdminStore = coreSchoolStore;
   if (runtimeEnv.persistenceMode === 'postgres') {
     const pool = getPool();
     const persistentCoreSchool = new PostgresCoreSchoolRepository({ pool });
@@ -2643,6 +2897,7 @@ function createServer({
     gradingApiStore = persistentGradingStore;
     messagingApiStore = persistentMessagingStore;
     financeApiStore = persistentFinanceStore;
+    schoolStructureAdminStore = persistentCoreSchool;
   }
 
   logger.info('Application server initialized', {
@@ -4108,6 +4363,445 @@ function createServer({
       await activeUserStore.update(target.id, { passwordHash });
       auditWriter.writeEntityEvent(auth.context, 'user.password_reset_by_admin', 'user', target.id, { email: target.email });
       response.writeHead(302, { location: '/admin/users?success=password_reset' });
+      response.end();
+      return;
+    }
+
+    // ====================================================================
+    // Sprint 3 — Structure école depuis l'interface (SCH-01..SCH-06)
+    // ====================================================================
+
+    if (url.pathname === '/admin/school-settings') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const tenantId = auth.context.tenantId;
+
+      if (request.method === 'GET') {
+        const schools = await schoolStructureAdminStore.list('schools', tenantId);
+        const school = schools[0] ?? null;
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(
+          renderSchoolSettingsPage(auth.context, school, {
+            errorCode: url.searchParams.get('error'),
+            successMessage: url.searchParams.get('success') === 'saved' ? 'Paramètres enregistrés.' : null
+          })
+        );
+        return;
+      }
+
+      if (request.method === 'POST') {
+        const form = parseExtendedForm(await readBody(request));
+        const payload = {
+          name: form.get('name'),
+          code: form.get('code'),
+          city: form.get('city'),
+          country: form.get('country')
+        };
+
+        const existingList = await schoolStructureAdminStore.list('schools', tenantId);
+        const existing = existingList[0] ?? null;
+
+        try {
+          if (existing) {
+            await schoolStructureAdminStore.update('schools', tenantId, existing.id, payload);
+          } else {
+            await schoolStructureAdminStore.create('schools', tenantId, payload);
+          }
+        } catch (error) {
+          const code = error?.code === 'VALIDATION_ERROR' ? 'invalid_input' : 'invalid_input';
+          response.writeHead(302, { location: `/admin/school-settings?error=${code}` });
+          response.end();
+          return;
+        }
+
+        auditWriter.writeEntityEvent(auth.context, 'school.updated', 'school', existing?.id ?? 'new', { name: payload.name });
+        response.writeHead(302, { location: '/admin/school-settings?success=saved' });
+        response.end();
+        return;
+      }
+    }
+
+    if (url.pathname === '/admin/school-years' && (request.method === 'GET' || request.method === 'POST')) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const tenantId = auth.context.tenantId;
+
+      if (request.method === 'GET') {
+        const [years, terms] = await Promise.all([
+          schoolStructureAdminStore.list('academicYears', tenantId),
+          schoolStructureAdminStore.list('terms', tenantId)
+        ]);
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(
+          renderSchoolYearsPage(auth.context, years, terms, {
+            errorCode: url.searchParams.get('error'),
+            successMessage:
+              url.searchParams.get('success') === 'year_created' ? 'Année scolaire créée.'
+              : url.searchParams.get('success') === 'year_deleted' ? 'Année supprimée.'
+              : url.searchParams.get('success') === 'term_created' ? 'Trimestre créé.'
+              : url.searchParams.get('success') === 'term_deleted' ? 'Trimestre supprimé.'
+              : null
+          })
+        );
+        return;
+      }
+
+      // POST: create academic year
+      const form = parseExtendedForm(await readBody(request));
+      try {
+        const created = await schoolStructureAdminStore.create('academicYears', tenantId, {
+          label: form.get('label'),
+          startsAt: form.get('startsAt'),
+          endsAt: form.get('endsAt'),
+          status: form.get('status') || 'draft'
+        });
+        auditWriter.writeEntityEvent(auth.context, 'academic_year.created', 'academic_year', created.id, { label: created.label });
+        response.writeHead(302, { location: '/admin/school-years?success=year_created' });
+        response.end();
+        return;
+      } catch {
+        response.writeHead(302, { location: '/admin/school-years?error=invalid_input' });
+        response.end();
+        return;
+      }
+    }
+
+    const adminYearActionMatch = url.pathname.match(/^\/admin\/school-years\/([^/]+)\/(delete|terms|term-delete)$/);
+    if (adminYearActionMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const tenantId = auth.context.tenantId;
+      const targetId = adminYearActionMatch[1];
+      const action = adminYearActionMatch[2];
+      const form = parseExtendedForm(await readBody(request));
+
+      if (action === 'delete') {
+        const existing = await schoolStructureAdminStore.get('academicYears', tenantId, targetId);
+        if (!existing) {
+          response.writeHead(302, { location: '/admin/school-years?error=not_found' });
+          response.end();
+          return;
+        }
+        await schoolStructureAdminStore.delete('academicYears', tenantId, targetId);
+        // delete any in-memory orphan terms (postgres cascades via FK)
+        const terms = await schoolStructureAdminStore.list('terms', tenantId);
+        for (const term of terms.filter((t) => t.academicYearId === targetId)) {
+          await schoolStructureAdminStore.delete('terms', tenantId, term.id);
+        }
+        auditWriter.writeEntityEvent(auth.context, 'academic_year.deleted', 'academic_year', targetId, {});
+        response.writeHead(302, { location: '/admin/school-years?success=year_deleted' });
+        response.end();
+        return;
+      }
+
+      if (action === 'terms') {
+        try {
+          const created = await schoolStructureAdminStore.create('terms', tenantId, {
+            academicYearId: targetId,
+            name: form.get('name'),
+            startsAt: form.get('startsAt'),
+            endsAt: form.get('endsAt')
+          });
+          auditWriter.writeEntityEvent(auth.context, 'term.created', 'term', created.id, { name: created.name });
+          response.writeHead(302, { location: '/admin/school-years?success=term_created' });
+          response.end();
+          return;
+        } catch (error) {
+          const code = String(error?.message || '').includes('academicYearId') ? 'reference_invalid' : 'invalid_input';
+          response.writeHead(302, { location: `/admin/school-years?error=${code}` });
+          response.end();
+          return;
+        }
+      }
+
+      if (action === 'term-delete') {
+        // targetId here is the term id
+        await schoolStructureAdminStore.delete('terms', tenantId, targetId);
+        auditWriter.writeEntityEvent(auth.context, 'term.deleted', 'term', targetId, {});
+        response.writeHead(302, { location: '/admin/school-years?success=term_deleted' });
+        response.end();
+        return;
+      }
+    }
+
+    if (url.pathname === '/admin/classes' && (request.method === 'GET' || request.method === 'POST')) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const tenantId = auth.context.tenantId;
+
+      if (request.method === 'GET') {
+        const [gradeLevels, classRooms] = await Promise.all([
+          schoolStructureAdminStore.list('gradeLevels', tenantId),
+          schoolStructureAdminStore.list('classRooms', tenantId)
+        ]);
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(
+          renderClassesPage(auth.context, gradeLevels, classRooms, {
+            errorCode: url.searchParams.get('error'),
+            successMessage:
+              url.searchParams.get('success') === 'class_created' ? 'Classe créée.'
+              : url.searchParams.get('success') === 'class_deleted' ? 'Classe supprimée.'
+              : null
+          })
+        );
+        return;
+      }
+
+      // POST: create classroom
+      const form = parseExtendedForm(await readBody(request));
+      try {
+        const created = await schoolStructureAdminStore.create('classRooms', tenantId, {
+          name: form.get('name'),
+          gradeLevelId: form.get('gradeLevelId'),
+          capacity: form.get('capacity')
+        });
+        auditWriter.writeEntityEvent(auth.context, 'class_room.created', 'class_room', created.id, { name: created.name });
+        response.writeHead(302, { location: '/admin/classes?success=class_created' });
+        response.end();
+        return;
+      } catch (error) {
+        const code = String(error?.message || '').includes('gradeLevelId') ? 'reference_invalid' : 'invalid_input';
+        response.writeHead(302, { location: `/admin/classes?error=${code}` });
+        response.end();
+        return;
+      }
+    }
+
+    const adminClassDeleteMatch = url.pathname.match(/^\/admin\/classes\/([^/]+)\/delete$/);
+    if (adminClassDeleteMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const targetId = adminClassDeleteMatch[1];
+      await schoolStructureAdminStore.delete('classRooms', tenantId, targetId);
+      auditWriter.writeEntityEvent(auth.context, 'class_room.deleted', 'class_room', targetId, {});
+      response.writeHead(302, { location: '/admin/classes?success=class_deleted' });
+      response.end();
+      return;
+    }
+
+    if (url.pathname === '/admin/grade-levels' && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const form = parseExtendedForm(await readBody(request));
+      try {
+        const created = await schoolStructureAdminStore.create('gradeLevels', tenantId, {
+          name: form.get('name'),
+          order: form.get('order')
+        });
+        auditWriter.writeEntityEvent(auth.context, 'grade_level.created', 'grade_level', created.id, { name: created.name });
+        response.writeHead(302, { location: '/admin/classes?success=class_created' });
+        response.end();
+        return;
+      } catch {
+        response.writeHead(302, { location: '/admin/classes?error=invalid_input' });
+        response.end();
+        return;
+      }
+    }
+
+    const adminGradeDeleteMatch = url.pathname.match(/^\/admin\/grade-levels\/([^/]+)\/delete$/);
+    if (adminGradeDeleteMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const targetId = adminGradeDeleteMatch[1];
+      await schoolStructureAdminStore.delete('gradeLevels', tenantId, targetId);
+      auditWriter.writeEntityEvent(auth.context, 'grade_level.deleted', 'grade_level', targetId, {});
+      response.writeHead(302, { location: '/admin/classes?success=class_deleted' });
+      response.end();
+      return;
+    }
+
+    if (url.pathname === '/admin/subjects' && (request.method === 'GET' || request.method === 'POST')) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      const tenantId = auth.context.tenantId;
+
+      if (request.method === 'GET') {
+        const subjects = await schoolStructureAdminStore.list('subjects', tenantId);
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(
+          renderSubjectsPage(auth.context, subjects, {
+            errorCode: url.searchParams.get('error'),
+            successMessage:
+              url.searchParams.get('success') === 'created' ? 'Matière créée.'
+              : url.searchParams.get('success') === 'deleted' ? 'Matière supprimée.'
+              : null
+          })
+        );
+        return;
+      }
+
+      // POST: create subject
+      const form = parseExtendedForm(await readBody(request));
+      try {
+        const created = await schoolStructureAdminStore.create('subjects', tenantId, {
+          name: form.get('name'),
+          code: form.get('code')
+        });
+        auditWriter.writeEntityEvent(auth.context, 'subject.created', 'subject', created.id, { name: created.name });
+        response.writeHead(302, { location: '/admin/subjects?success=created' });
+        response.end();
+        return;
+      } catch {
+        response.writeHead(302, { location: '/admin/subjects?error=invalid_input' });
+        response.end();
+        return;
+      }
+    }
+
+    const adminSubjectDeleteMatch = url.pathname.match(/^\/admin\/subjects\/([^/]+)\/delete$/);
+    if (adminSubjectDeleteMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageSchoolStructure(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const targetId = adminSubjectDeleteMatch[1];
+      await schoolStructureAdminStore.delete('subjects', tenantId, targetId);
+      auditWriter.writeEntityEvent(auth.context, 'subject.deleted', 'subject', targetId, {});
+      response.writeHead(302, { location: '/admin/subjects?success=deleted' });
+      response.end();
+      return;
+    }
+
+    // SCH-06 — Super admin: créer un nouveau tenant école
+    if (url.pathname === '/admin/tenants' && (request.method === 'GET' || request.method === 'POST')) {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageTenants(auth.context)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Forbidden');
+        return;
+      }
+
+      if (request.method === 'GET') {
+        const tenants = await activeTenantStore.list();
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(
+          renderTenantsPage(auth.context, tenants, {
+            errorCode: url.searchParams.get('error'),
+            successMessage: url.searchParams.get('success') === 'created' ? 'Tenant + compte admin créés.' : null
+          })
+        );
+        return;
+      }
+
+      const form = parseExtendedForm(await readBody(request));
+      const name = (form.get('name') || '').trim();
+      const slug = (form.get('slug') || '').trim().toLowerCase();
+      const adminEmail = normalizeEmail(form.get('adminEmail'));
+      const adminPassword = form.get('adminPassword');
+
+      if (!name) {
+        response.writeHead(302, { location: '/admin/tenants?error=tenant_required' });
+        response.end();
+        return;
+      }
+      if (!slug) {
+        response.writeHead(302, { location: '/admin/tenants?error=slug_required' });
+        response.end();
+        return;
+      }
+      if (!adminEmail || !isValidEmailFormat(adminEmail)) {
+        response.writeHead(302, { location: '/admin/tenants?error=email_invalid' });
+        response.end();
+        return;
+      }
+      if (!isValidPasswordFormat(adminPassword)) {
+        response.writeHead(302, { location: '/admin/tenants?error=password_required' });
+        response.end();
+        return;
+      }
+      const duplicateEmail = await activeUserStore.findByEmail(adminEmail);
+      if (duplicateEmail) {
+        response.writeHead(302, { location: '/admin/tenants?error=email_duplicate' });
+        response.end();
+        return;
+      }
+
+      let createdTenant;
+      try {
+        createdTenant = await activeTenantStore.create({ slug, name });
+      } catch (error) {
+        if (error?.code === 'DUPLICATE_SLUG') {
+          response.writeHead(302, { location: '/admin/tenants?error=slug_duplicate' });
+          response.end();
+          return;
+        }
+        if (String(error?.message || '').toLowerCase().includes('slug')) {
+          response.writeHead(302, { location: '/admin/tenants?error=slug_invalid' });
+          response.end();
+          return;
+        }
+        response.writeHead(302, { location: '/admin/tenants?error=invalid_input' });
+        response.end();
+        return;
+      }
+
+      try {
+        const passwordHash = await hashPassword(adminPassword);
+        const adminUserId = `admin-${createdTenant.slug}`;
+        const createdUser = await activeUserStore.create({
+          id: adminUserId,
+          tenantId: createdTenant.slug,
+          email: adminEmail,
+          role: ROLES.SCHOOL_ADMIN,
+          passwordHash
+        });
+        rememberUserIdentity({ id: createdUser.id, email: createdUser.email });
+        auditWriter.writeEntityEvent(auth.context, 'tenant.created', 'tenant', createdTenant.slug, { slug: createdTenant.slug, adminEmail });
+        auditWriter.writeEntityEvent(auth.context, 'user.created', 'user', createdUser.id, { role: ROLES.SCHOOL_ADMIN, email: adminEmail, tenantId: createdTenant.slug });
+      } catch (error) {
+        // Note: we don't roll back the tenant (idempotent create can be retried with a different email)
+        const isDuplicate = error instanceof DuplicateEmailError || error?.code === 'DUPLICATE_EMAIL';
+        const code = isDuplicate ? 'email_duplicate' : 'invalid_input';
+        response.writeHead(302, { location: `/admin/tenants?error=${code}` });
+        response.end();
+        return;
+      }
+
+      response.writeHead(302, { location: '/admin/tenants?success=created' });
       response.end();
       return;
     }
