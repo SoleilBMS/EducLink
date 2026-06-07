@@ -2772,6 +2772,127 @@ test('CRUD-06: non-admin ne peut pas archiver un élève', async () => {
   });
 });
 
+// CRUD-01 — création élève sans accès via le formulaire admin/students
+test('CRUD-01: admin crée un élève sans compte de connexion (createAccess absent)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students', {
+      cookie,
+      fields: {
+        firstName: 'CRUD01',
+        lastName: 'Sans-Acces',
+        admissionNumber: 'CRUD01-A-1',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-01-01'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students?created=1');
+
+    const list = await fetch(`${baseUrl}/admin/students`, { headers: { cookie } });
+    const html = await list.text();
+    assert.ok(html.includes('CRUD01-A-1'), 'le nouvel élève doit apparaître dans la liste');
+  });
+});
+
+test('CRUD-01: createAccess=1 sans email rejette avec error=email_required', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students', {
+      cookie,
+      fields: {
+        firstName: 'Incomplet',
+        lastName: 'Email',
+        admissionNumber: 'CRUD01-A-2',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-01-02',
+        createAccess: '1'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin/students?error=email_required');
+  });
+});
+
+test('CRUD-01: non-admin ne peut pas créer d\'élève', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/admin/students', {
+      cookie,
+      fields: {
+        firstName: 'Forbidden',
+        lastName: 'Eleve',
+        admissionNumber: 'CRUD01-A-X',
+        classRoomId: 'class-a1',
+        dateOfBirth: '2014-01-03'
+      }
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+// CRUD-05 — édition du profil enseignant (nom, classes assignées, matières)
+test('CRUD-05: admin modifie nom, classes et matières d\'un enseignant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const update = await postForm(baseUrl, '/admin/teachers/teacher-a1/update', {
+      cookie,
+      fields: {
+        firstName: 'Samira-Updated',
+        lastName: 'Alami',
+        email: 'teacher@school-a.test',
+        phone: '+1 555-9999',
+        notes: 'Mis à jour via CRUD-05',
+        // Réaffecte les classes : retire class-a1, ajoute class-a2
+        classRoomIds: 'class-a2',
+        // Ajoute une matière
+        subjectIds: 'subject-a-fr'
+      }
+    });
+    assert.equal(update.status, 302);
+    assert.equal(update.headers.get('location'), '/admin/teachers/teacher-a1');
+
+    const profile = await fetch(`${baseUrl}/admin/teachers/teacher-a1`, { headers: { cookie } });
+    const html = await profile.text();
+    assert.ok(html.includes('Samira-Updated'), 'le nouveau prénom doit apparaître');
+    assert.ok(html.includes('+1 555-9999'), 'le nouveau téléphone doit apparaître');
+    assert.ok(html.includes('Mis à jour via CRUD-05'), 'les notes doivent être mises à jour');
+  });
+});
+
+test('CRUD-05: non-admin ne peut pas éditer un profil enseignant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/admin/teachers/teacher-a1/update', {
+      cookie,
+      fields: { firstName: 'Hack', lastName: 'Hack' }
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('CRUD-05: admin archive un enseignant qui disparaît du listing actif', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const before = await fetch(`${baseUrl}/admin/teachers`, { headers: { cookie } });
+    const beforeHtml = await before.text();
+    assert.ok(beforeHtml.includes('teacher2@school-a.test'), 'teacher-a2 listé avant archivage');
+
+    const archive = await postForm(baseUrl, '/admin/teachers/teacher-a2/archive', { cookie, fields: {} });
+    assert.equal(archive.status, 302);
+    assert.equal(archive.headers.get('location'), '/admin/teachers/teacher-a2');
+
+    const after = await fetch(`${baseUrl}/admin/teachers`, { headers: { cookie } });
+    const afterHtml = await after.text();
+    assert.ok(!afterHtml.includes('teacher2@school-a.test'), 'teacher-a2 ne doit plus apparaître dans la liste active');
+
+    // La fiche reste consultable et affiche le badge archivé
+    const profile = await fetch(`${baseUrl}/admin/teachers/teacher-a2`, { headers: { cookie } });
+    const profileHtml = await profile.text();
+    assert.ok(/archiv[ée]/i.test(profileHtml), 'la fiche doit afficher le statut archivé');
+  });
+});
+
 test('CRUD-03: la fiche élève affiche responsables liés, présences et notes récentes', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'admin@school-a.test');
