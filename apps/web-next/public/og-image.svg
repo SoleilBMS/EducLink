@@ -1,0 +1,32 @@
+<svg viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22c55e"/>
+      <stop offset="55%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="t" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <radialGradient id="bg" cx="20%" cy="20%" r="80%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f9fafb"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g transform="translate(140 200) scale(3.2)">
+    <path d="M32 10 L60 22 L32 34 L4 22 Z" fill="url(#g)"/>
+    <path d="M14 28 L14 36 C14 41 22 45 32 45 C42 45 50 41 50 36 L50 28 L32 36 Z" fill="url(#g)" opacity="0.88"/>
+    <path d="M55 22 L55 38" stroke="url(#t)" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+    <circle cx="55" cy="40.5" r="3" fill="#7c3aed"/>
+    <path d="M52.5 42.5 L52 47 M55 43.5 L55 48 M57.5 42.5 L58 47" stroke="#7c3aed" stroke-width="1.4" stroke-linecap="round"/>
+  </g>
+  <text x="380" y="320" font-family="Inter, Segoe UI, sans-serif" font-weight="800" font-size="96" letter-spacing="-3">
+    <tspan fill="#22c55e">Educ</tspan><tspan fill="#7c3aed">Link</tspan>
+  </text>
+  <text x="380" y="380" font-family="Inter, Segoe UI, sans-serif" font-weight="500" font-size="32" fill="#687280">
+    L’école connectée, intelligente et simplifiée
+  </text>
+  <rect x="380" y="430" width="540" height="6" rx="3" fill="url(#g)"/>
+</svg>

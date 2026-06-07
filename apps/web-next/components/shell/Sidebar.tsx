@@ -29,10 +29,7 @@ export function Sidebar() {
   return (
     <aside className="hidden w-72 shrink-0 flex-col border-r border-line bg-white/95 px-4 py-5 backdrop-blur lg:sticky lg:top-0 lg:flex lg:h-screen">
       <div className="rounded-2xl border border-brand-blue/10 bg-brand-soft p-4">
-        <LogoWordmark className="text-lg" />
-        <p className="mt-2 text-xs leading-snug text-ink-muted">
-          ERP SaaS pour écoles privées — moderne, intelligent, accessible.
-        </p>
+        <LogoWordmark className="text-lg" withTagline />
       </div>
 
       <nav className="mt-5 grid gap-5 overflow-y-auto pb-4">

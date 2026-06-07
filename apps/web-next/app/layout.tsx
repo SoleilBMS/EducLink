@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 
@@ -13,7 +13,32 @@ export const metadata: Metadata = {
   title: 'EducLink — L’école connectée, intelligente et simplifiée',
   description:
     'EducLink est l’ERP scolaire SaaS nouvelle génération pour les écoles privées : gestion pédagogique, communication école-parents et IA intégrée.',
-  metadataBase: new URL('http://localhost:3100')
+  metadataBase: new URL('http://localhost:3100'),
+  icons: {
+    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg'
+  },
+  openGraph: {
+    title: 'EducLink — L’école connectée, intelligente et simplifiée',
+    description:
+      'ERP SaaS éducatif premium : direction, enseignants, parents et élèves dans une expérience moderne.',
+    images: ['/og-image.svg'],
+    type: 'website',
+    locale: 'fr_FR'
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'EducLink',
+    description: 'L’école connectée, intelligente et simplifiée.',
+    images: ['/og-image.svg']
+  }
+};
+
+export const viewport: Viewport = {
+  themeColor: '#2563eb',
+  width: 'device-width',
+  initialScale: 1
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
