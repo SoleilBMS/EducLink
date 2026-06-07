@@ -1,5 +1,12 @@
 # EducLink — Frontend Next.js (`apps/web-next`)
 
+> ⚠️ **Statut : preview / non déployé**
+> Ce dossier contient un prototype de frontend moderne destiné à remplacer **à terme**
+> l'UI HTML inline servie par `apps/web/src/server.js`. Il n'est **pas** dans le chemin
+> de déploiement du pilot (Railway lance uniquement `apps/web`) ni dans CI/CD.
+> Auth, sessions, CSRF ne sont pas encore alignés avec `apps/web` — usage local/dev only.
+> Voir la liste "TODO" en bas de ce fichier pour la roadmap.
+
 Frontend moderne EducLink basé sur **Next.js 14 (App Router) + TypeScript + Tailwind CSS**.
 Cible : remplacer progressivement le rendu HTML inline servi par `apps/web/src/server.js` par
 une SPA SSR moderne, mobile-first, alignée à la charte EducLink (gradient

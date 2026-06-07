@@ -26,18 +26,26 @@ This guide documents a simple, repeatable **public staging** deployment of EducL
 
 In the EducLink web service variables, set:
 
-| Variable | Value |
-| --- | --- |
-| `NODE_ENV` | `production` |
-| `EDUCLINK_PERSISTENCE` | `postgres` |
-| `LOG_FORMAT` | `json` |
-| `LOG_LEVEL` | `info` |
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| Variable | Value | Required |
+| --- | --- | --- |
+| `NODE_ENV` | `production` | ✅ |
+| `EDUCLINK_PERSISTENCE` | `postgres` | ✅ (forcé en prod) |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | ✅ |
+| `SESSION_SECRET` | sortie de `openssl rand -hex 32` (≥32 chars) | ✅ |
+| `LOG_FORMAT` | `json` | recommandé |
+| `LOG_LEVEL` | `info` | recommandé |
+| `EDUCLINK_AUTO_MIGRATE` | `1` (par défaut) ou `0` pour piloter manuellement | optionnel |
+| `PORT` | injecté automatiquement par Railway, ne pas le forcer | — |
+| `HOST` | `0.0.0.0` (déjà le défaut en prod) | — |
+
+> 📋 La référence complète des variables (avec exemples pour AI, email, monitoring)
+> est dans [.env.production.example](../.env.production.example).
 
 Notes:
 - Keep all secrets only in Railway variables (do not commit them to Git).
 - `EDUCLINK_PERSISTENCE=postgres` ensures DB-first mode.
 - `DATABASE_URL` must come from Railway Postgres service binding.
+- `SESSION_SECRET` est **bloquant** : sans lui, le serveur refuse de démarrer en prod.
 
 ## 4) Configure start command
 
@@ -59,31 +67,49 @@ Alternative (compatible) command:
 npm run start:prod
 ```
 
-## 5) Run migrations and seed for staging data
+## 5) Migrations automatiques au démarrage
 
-From Railway web service shell/CLI, run:
+Depuis Sprint 7 (OPS-03), `npm run start:railway` exécute **automatiquement** les
+migrations via [scripts/start-with-migrate.js](../scripts/start-with-migrate.js) :
+
+1. `node packages/database/src/migrate.js` (idempotent grâce à la table `schema_migrations`)
+2. Puis lance le serveur HTTP via `startServer()`
+
+En cas d'échec de migration, le serveur **ne démarre pas** (exit non-zéro) — Railway
+redémarrera selon `restartPolicyType: ON_FAILURE` (max 5 essais, voir `railway.json`).
+
+**Désactiver l'auto-migration** : positionner `EDUCLINK_AUTO_MIGRATE=0` si tu préfères
+piloter les schémas manuellement (utile pour des migrations longues / risquées que tu
+veux exécuter hors fenêtre de déploiement).
+
+### Seed de données démo (optionnel)
+
+Le seed n'est **pas** automatique. Lance-le manuellement une fois après le premier
+déploiement si tu veux les comptes/élèves de démonstration :
 
 ```bash
-npm run railway:setup
-```
-
-This runs:
-
-```bash
-npm run db:migrate
-```
-
-If you want demo/staging seed data, run:
-
-```bash
+# Depuis le shell Railway (ou via railway run)
 npm run db:seed
 ```
 
-Or one-shot migrate + seed:
+### Configuration via `railway.json`
 
-```bash
-npm run railway:setup:seed
+Le repo embarque [`railway.json`](../railway.json) à la racine, qui configure
+automatiquement Railway :
+
+```json
+{
+  "deploy": {
+    "startCommand": "npm run start:railway",
+    "healthcheckPath": "/healthz",
+    "healthcheckTimeout": 30,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5
+  }
+}
 ```
+
+→ Tu n'as plus besoin de configurer la start command ni le healthcheck dans l'UI Railway.
 
 ## 6) Manual verification checklist
 
@@ -121,13 +147,16 @@ If a Railway domain had an old/manual target port value, remove it (or set it to
 
 ## 7) Recommended first deploy sequence
 
-1. Push branch to GitHub (or merge to staging branch).
-2. Railway deploys the web service.
-3. Set/confirm variables from section 3.
-4. Run `npm run railway:setup` once.
-5. Run `npm run db:seed` if staging demo data is needed.
-6. Set start command to `npm run start:railway`.
-7. Validate `/healthz`, `/demo`, `/login`.
+1. Push branch to GitHub (`main`).
+2. Railway détecte le `railway.json` à la racine → build Nixpacks, start command et
+   healthcheck déjà configurés (pas besoin d'UI).
+3. Set/confirm variables from section 3 — **en particulier `SESSION_SECRET` et `DATABASE_URL`**.
+4. Le premier déploiement applique les migrations automatiquement (auto-migrate).
+5. Lance `npm run db:seed` depuis le shell Railway si tu veux les comptes de démo.
+6. Valide :
+   - `GET /healthz` → 200
+   - `GET /login` → page rendue
+   - Login avec un compte de démo → dashboard accessible
 
 ## 8) Current limitations for staging
 

@@ -1,0 +1,16 @@
+# Nixpacks build config pour EducLink
+# Force le builder Node.js sur apps/web et ignore apps/web-next (preview Next.js
+# non déployée — voir apps/web-next/README.md). Évite que Nixpacks détecte
+# Next.js par erreur et tente un `next build` qui échoue.
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm-9_x"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["echo 'EducLink server (apps/web) est du Node pur, aucun build step requis.'"]
+
+[start]
+cmd = "npm run start:railway"

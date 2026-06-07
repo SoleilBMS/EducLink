@@ -1,0 +1,18 @@
+# Fichiers/dossiers à exclure du contexte de build Railway
+# (équivalent .dockerignore pour Nixpacks)
+
+# Preview Next.js, non déployée — voir apps/web-next/README.md
+apps/web-next
+
+# Dépendances déjà installées par Nixpacks
+node_modules
+
+# Tests / artefacts non nécessaires au runtime
+**/*.test.js
+.github
+docs
+
+# Local env files (Railway injecte les variables via son UI)
+.env
+.env.local
+.env.staging

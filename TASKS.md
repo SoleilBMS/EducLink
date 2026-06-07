@@ -2,7 +2,7 @@
 # Backlog complet : de l'état actuel au déploiement production
 # Mis à jour : 2026-06-07
 
-> **Progression** : Sprint 1 sécurité **terminé** (SEC-01 à SEC-08). Sprint 2 gestion utilisateurs UI **terminé pour USR-01..04** (USR-05/06 reportés au Sprint 7, dépendent du service email OPS-04). Sprint 3 structure école UI **terminé** (SCH-01..SCH-06). Sprint 4 CRUD métier **terminé** (CRUD-01..06). Sprint 5 bulletins **terminé** pour BULL-01..03 (BULL-04 PDF reporté). Sprint 6 UX **terminé pour UX-02..05** (UX-01 responsive mobile reporté car nécessite tests visuels en navigateur). Prêt à attaquer Sprint 7 (déploiement Railway).
+> **Progression** : Sprint 1 sécurité **terminé** (SEC-01 à SEC-08). Sprint 2 gestion utilisateurs UI **terminé pour USR-01..04** (USR-05/06 reportés, dépendent du service email OPS-04). Sprint 3 structure école UI **terminé** (SCH-01..SCH-06). Sprint 4 CRUD métier **terminé** (CRUD-01..06). Sprint 5 bulletins **terminé** pour BULL-01..03 (BULL-04 PDF reporté). Sprint 6 UX **terminé pour UX-02..05** (UX-01 responsive reporté). Sprint 7 prêt côté code : **OPS-01/03/08 terminés**. Reste **OPS-02/04/05/06/07** qui demandent ton intervention (compte Railway, choix provider email, domaine, Sentry, backups).
 
 ---
 
@@ -326,49 +326,54 @@ Toutes les structures (classes, matières, années, trimestres, école, tenants)
 
 ## SPRINT 7 — Infrastructure et déploiement production (BLOQUANT)
 
-### OPS-01 — Configuration variables d'environnement production ❌ BLOQUANT
-- Documenter toutes les variables requises en production
-- Ajouter dans `.env.production.example` :
-  - `SESSION_SECRET` (chaîne aléatoire longue)
-  - `DATABASE_URL`
-  - `NODE_ENV=production`
-  - `EDUCLINK_PERSISTENCE=postgres`
-  - Variables AI provider (si IA activée)
-  - Variables email (si reset password activé)
+### OPS-01 — Configuration variables d'environnement production ✅ BLOQUANT
+- [.env.production.example](.env.production.example) refondu : référence complète et commentée
+  - Runtime : `NODE_ENV`, `PORT`, `HOST` (avec notes Railway vs OVH)
+  - Persistence : `EDUCLINK_PERSISTENCE`, `DATABASE_URL`
+  - Sécurité : `SESSION_SECRET` (génération `openssl rand -hex 32`)
+  - Logging : `LOG_FORMAT`, `LOG_LEVEL`
+  - Migration auto : `EDUCLINK_AUTO_MIGRATE`
+  - Optionnels commentés : provider AI (Anthropic), email (Resend), monitoring (Sentry)
+- Tableau récap des variables Railway dans [docs/deployment-railway.md](docs/deployment-railway.md) §3 avec colonnes Required
 
-### OPS-02 — Déploiement Railway initial ❌ BLOQUANT
-- Créer le projet Railway
-- Ajouter le service PostgreSQL
-- Configurer les variables d'environnement
-- Brancher le déploiement depuis GitHub (branche main)
-- Vérifier `/healthz` accessible
+### OPS-02 — Déploiement Railway initial ❌ BLOQUANT (action manuelle requise)
+- [railway.json](railway.json) prêt à la racine (start command + healthcheck + restart policy)
+- Procédure pas-à-pas dans [docs/deployment-railway.md](docs/deployment-railway.md)
+- **Reste à faire manuellement** :
+  - Créer le projet Railway depuis GitHub
+  - Ajouter le service PostgreSQL et binder `${{Postgres.DATABASE_URL}}`
+  - Setter `SESSION_SECRET` (REQUIS)
+  - Vérifier `/healthz` accessible publiquement
 
-### OPS-03 — Migration automatique au démarrage ❌ BLOQUANT
-- `npm run db:migrate` doit s'exécuter automatiquement au démarrage en production
-- Railway : ajouter dans le start command ou comme release command
-- Vérifier que c'est idempotent (peut tourner plusieurs fois sans erreur)
+### OPS-03 — Migration automatique au démarrage ✅ BLOQUANT
+- Script wrapper [scripts/start-with-migrate.js](scripts/start-with-migrate.js) :
+  exécute `packages/database/src/migrate.js` (idempotent via `schema_migrations`) puis lance `startServer()`
+- `npm run start:railway` mis à jour pour pointer vers ce wrapper
+- Échec migration → exit non-zéro → Railway redémarre (max 5 essais via `railway.json`)
+- Désactivable via `EDUCLINK_AUTO_MIGRATE=0` (si on veut piloter manuellement)
 
-### OPS-04 — Service email pour le reset de mot de passe ❌ PILOT
-- Choisir un provider : Resend, Mailgun ou SendGrid (Resend recommandé, gratuit à l'essai)
-- Configurer dans les variables Railway
-- Ajouter `SMTP_URL` ou clé API dans `.env.production.example`
+### OPS-04 — Service email pour le reset de mot de passe ❌ PILOT (manuel)
+- Variables placeholder commentées dans `.env.production.example` (Resend recommandé)
+- Reste à faire : créer compte Resend (ou SendGrid/Mailgun), vérifier domaine MAIL_FROM, brancher le code (USR-05/06 dépendent de ce service)
 
-### OPS-05 — Domaine personnalisé ❌ CONFORT
+### OPS-05 — Domaine personnalisé ❌ CONFORT (manuel)
 - Configurer un domaine `app.educlink.xyz` (ou similaire) sur Railway
 - Activer HTTPS automatique (Railway le gère)
 
-### OPS-06 — Suivi des erreurs (Sentry ou équivalent) ❌ CONFORT
+### OPS-06 — Suivi des erreurs (Sentry ou équivalent) ❌ CONFORT (manuel)
 - Intégrer Sentry pour capturer les erreurs 500 en production
+- Variables `SENTRY_DSN` / `SENTRY_ENVIRONMENT` déjà placeholder dans `.env.production.example`
 - Gratuit jusqu'à 5 000 erreurs/mois
 
-### OPS-07 — Sauvegarde PostgreSQL ❌ BLOQUANT pour production réelle
+### OPS-07 — Sauvegarde PostgreSQL ❌ BLOQUANT pour production réelle (manuel)
 - Railway ne fait pas de backup automatique sur le plan gratuit
-- Mettre en place pg_dump via un cron Railway ou un script externe
-- Tester la restauration
+- Pour OVH : runbook complet dans [docs/deployment-ovh.md](docs/deployment-ovh.md) (cron pg_dump + externalisation S3)
+- Pour le pilot Railway : Railway Pro propose des snapshots automatiques ($), sinon script externe
 
-### OPS-08 — Nettoyage apps/web-next ❌ CONFORT
-- Supprimer ou ignorer le dossier `apps/web-next` pour éviter la confusion
-- Decision : le mettre en archive ou le supprimer proprement
+### OPS-08 — Nettoyage apps/web-next ✅ CONFORT
+- Statut clarifié dans [apps/web-next/README.md](apps/web-next/README.md) : **preview / non déployé**, hors chemin Railway, hors CI
+- Le `start:railway` ne touche pas web-next, donc pas d'interférence avec le pilot
+- Conservé pour la roadmap future (remplacement progressif de l'UI HTML inline d'`apps/web`)
 
 ---
 
@@ -417,7 +422,9 @@ Toutes les structures (classes, matières, années, trimestres, école, tenants)
          ↓
 [✅ UX-02..05]               (Sprint 6 UX — terminé, UX-01 responsive reporté)
          ↓
-OPS-01 → OPS-02 → OPS-03   (déploiement Railway)
+[✅ OPS-01, ✅ OPS-03, ✅ OPS-08]  (Sprint 7 prep code — terminé)
+         ↓
+🟡 OPS-02 (deploy Railway manuel) → /healthz public → pilot live
          ↓
 TEST-01 → TEST-04           (validation pilote)
 ```

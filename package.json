@@ -16,7 +16,7 @@
     "start": "node apps/web/src/server.js",
     "start:dev": "cross-env NODE_ENV=development node apps/web/src/server.js",
     "start:staging": "node scripts/start-staging.js",
-    "start:railway": "cross-env NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json LOG_LEVEL=info node apps/web/src/server.js",
+    "start:railway": "cross-env NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json LOG_LEVEL=info node scripts/start-with-migrate.js",
     "start:prod": "cross-env NODE_ENV=production EDUCLINK_PERSISTENCE=postgres LOG_FORMAT=json node apps/web/src/server.js",
     "test:e2e:smoke": "node --test apps/web/src/e2e.smoke.test.js",
     "test:postgres": "cross-env NODE_ENV=test EDUCLINK_PERSISTENCE=postgres node --test apps/web/src/server.postgres.test.js",
@@ -30,9 +30,8 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "cross-env": "^10.1.0",
     "pg": "^8.16.0"
   },
-  "devDependencies": {
-    "cross-env": "^10.1.0"
-  }
+  "devDependencies": {}
 }
