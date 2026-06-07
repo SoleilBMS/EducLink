@@ -130,6 +130,10 @@ curl -i http://localhost:3000/healthz
 
 For a step-by-step Railway staging setup, see `docs/deployment-railway.md`.
 
+## OVHcloud (production — VPS Dakar)
+
+Pour la migration de Railway vers un VPS OVHcloud (cible production adaptée au marché Afrique francophone), voir `docs/deployment-ovh.md`.
+
 ## 8) Pilot handover quick path (non-core contributor)
 
 For pilot usage, the minimum reliable path is:
