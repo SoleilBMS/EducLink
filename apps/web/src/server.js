@@ -42,6 +42,19 @@ const {
   MEASURES_REQUIRING_SCHEDULE,
   MEASURES_REQUIRING_DURATION
 } = require('./modules/discipline');
+const {
+  AlertThresholdsStore,
+  DEFAULT_THRESHOLDS,
+  THRESHOLD_FIELD_LABELS_FR,
+  THRESHOLD_LIMITS,
+  computeStudentAbsenceStats,
+  pickTopAbsent,
+  pickTopLate,
+  pickTopDiscipline,
+  markAlerts,
+  findCurrentTermId,
+  resolveTermById
+} = require('./modules/attendance-stats');
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
@@ -497,6 +510,14 @@ function canViewDisciplineAdmin(session) {
 
 function canViewParentDiscipline(session) {
   return session.role === ROLES.PARENT;
+}
+
+function canViewAbsenceStats(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+}
+
+function canManageAlertThresholds(session) {
+  return session.role === ROLES.SCHOOL_ADMIN;
 }
 
 function canCreateThreads(session) {
@@ -1482,6 +1503,7 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: absencesAdminLabel, href: '/admin/absences', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Discipline', href: '/admin/discipline', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Discipline', href: '/parent/discipline', roles: [ROLES.PARENT] },
+    { label: 'Statistiques', href: '/admin/stats-absences', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Finance', href: session.role === ROLES.PARENT ? '/parent/finance' : '/admin/finance', roles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT, ROLES.PARENT] },
@@ -3225,6 +3247,156 @@ function renderAdminVieScolaireDashboardPage(session, {
   );
 }
 
+function renderAdminStatsAbsencesPage(session, {
+  selectedTermId,
+  selectedFrom,
+  selectedTo,
+  selectedPeriodLabel,
+  terms,
+  topAbsent,
+  topLate,
+  topDiscipline,
+  studentById,
+  classRoomById,
+  thresholds
+}) {
+  const termOptions = ['<option value="">Plage personnalisée</option>']
+    .concat(terms.map((t) => `<option value="${t.id}" ${t.id === selectedTermId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`))
+    .join('');
+
+  const formatStudent = (entry) => {
+    const s = studentById.get(entry.studentId);
+    const name = s ? `${s.firstName} ${s.lastName}` : entry.studentId;
+    const className = classRoomById.get(entry.classRoomId)?.name || entry.classRoomId;
+    return { name, className };
+  };
+
+  const absentRows = topAbsent.length === 0
+    ? '<tr><td colspan="6"><span class="el-empty-state">Aucun élève absent sur la période.</span></td></tr>'
+    : topAbsent.map((entry) => {
+        const { name, className } = formatStudent(entry);
+        return `<tr>
+          <td><a href="/admin/students/${entry.studentId}">${escapeHtml(name)}</a></td>
+          <td>${escapeHtml(className)}</td>
+          <td>${entry.absentCount}</td>
+          <td>${entry.excusedCount}</td>
+          <td><strong>${entry.totalAbsence}</strong></td>
+          <td>${entry.isAbsentAlert ? '<span class="el-badge is-error">⚠ Alerte</span>' : ''}</td>
+        </tr>`;
+      }).join('');
+
+  const lateRows = topLate.length === 0
+    ? '<tr><td colspan="4"><span class="el-empty-state">Aucun retard sur la période.</span></td></tr>'
+    : topLate.map((entry) => {
+        const { name, className } = formatStudent(entry);
+        return `<tr>
+          <td><a href="/admin/students/${entry.studentId}">${escapeHtml(name)}</a></td>
+          <td>${escapeHtml(className)}</td>
+          <td><strong>${entry.lateCount}</strong></td>
+          <td>${entry.isLateAlert ? '<span class="el-badge is-error">⚠ Alerte</span>' : ''}</td>
+        </tr>`;
+      }).join('');
+
+  const disciplineRows = topDiscipline.length === 0
+    ? '<tr><td colspan="4"><span class="el-empty-state">Aucune mesure disciplinaire sur la période.</span></td></tr>'
+    : topDiscipline.map((entry) => {
+        const { name, className } = formatStudent(entry);
+        return `<tr>
+          <td><a href="/admin/students/${entry.studentId}">${escapeHtml(name)}</a></td>
+          <td>${escapeHtml(className)}</td>
+          <td><strong>${entry.disciplineCount}</strong></td>
+          <td>${entry.isDisciplineAlert ? '<span class="el-badge is-error">⚠ Alerte</span>' : ''}</td>
+        </tr>`;
+      }).join('');
+
+  const thresholdsState = thresholds.isDefault
+    ? '<span class="el-muted">(valeurs par défaut)</span>'
+    : '<span class="el-badge is-info">Personnalisés</span>';
+
+  return renderDashboardLayout(
+    'Statistiques d\'absentéisme',
+    session,
+    `<section class="el-card">
+      <h2>Statistiques d'absentéisme — ${escapeHtml(selectedPeriodLabel)}</h2>
+      <form method="GET" action="/admin/stats-absences">
+        <label>Trimestre <select name="termId">${termOptions}</select></label>
+        <label>Du <input type="date" name="from" value="${escapeHtml(selectedFrom)}" /></label>
+        <label>Au <input type="date" name="to" value="${escapeHtml(selectedTo)}" /></label>
+        <button type="submit">Appliquer</button>
+      </form>
+    </section>
+    <section class="el-card">
+      <h3>Seuils d'alerte actifs ${thresholdsState}</h3>
+      <p>
+        <span class="el-badge">Absents ≥ ${thresholds.absentThreshold}</span>
+        <span class="el-badge">Retards ≥ ${thresholds.lateThreshold}</span>
+        <span class="el-badge">Discipline ≥ ${thresholds.disciplineThreshold}</span>
+      </p>
+      <p><a href="/admin/stats-absences/settings">Modifier les seuils</a></p>
+    </section>
+    <section class="el-card">
+      <h3>Top 10 absentéisme</h3>
+      <table>
+        <thead><tr><th>Élève</th><th>Classe</th><th>Absents</th><th>Justifiés</th><th>Total</th><th></th></tr></thead>
+        <tbody>${absentRows}</tbody>
+      </table>
+    </section>
+    <section class="el-card">
+      <h3>Top 10 retards</h3>
+      <table>
+        <thead><tr><th>Élève</th><th>Classe</th><th>Retards</th><th></th></tr></thead>
+        <tbody>${lateRows}</tbody>
+      </table>
+    </section>
+    <section class="el-card">
+      <h3>Top 5 mesures disciplinaires</h3>
+      <table>
+        <thead><tr><th>Élève</th><th>Classe</th><th>Mesures</th><th></th></tr></thead>
+        <tbody>${disciplineRows}</tbody>
+      </table>
+    </section>`
+  );
+}
+
+function renderAdminAlertThresholdsPage(session, thresholds, { canEdit, successMessage = null, errorMessage = null } = {}) {
+  const banner = successMessage
+    ? `<p class="el-success-banner">${escapeHtml(successMessage)}</p>`
+    : errorMessage
+    ? `<p class="el-error-banner">${escapeHtml(errorMessage)}</p>`
+    : '';
+  const fields = ['absentThreshold', 'lateThreshold', 'disciplineThreshold', 'windowDays'];
+  const inputs = fields
+    .map((field) => {
+      const { min, max } = THRESHOLD_LIMITS[field];
+      const label = THRESHOLD_FIELD_LABELS_FR[field];
+      const value = thresholds[field];
+      return `<label>${escapeHtml(label)} (min ${min}, max ${max})
+        <input type="number" name="${field}" min="${min}" max="${max}" value="${value}" ${canEdit ? 'required' : 'disabled readonly'} />
+      </label><br/>`;
+    })
+    .join('');
+
+  const form = canEdit
+    ? `<form method="POST" action="/admin/stats-absences/settings">${csrfField(session)}
+        ${inputs}
+        <button type="submit">Enregistrer les seuils</button>
+       </form>`
+    : `<form>${inputs}</form>
+       <p class="el-muted">Seul un administrateur de l'établissement peut modifier ces seuils.</p>`;
+
+  return renderDashboardLayout(
+    'Seuils d\'alerte',
+    session,
+    `${banner}
+    <section class="el-card">
+      <h2>Seuils d'alerte d'absentéisme</h2>
+      <p class="el-muted">Un élève est flaggé "en alerte" sur /admin/stats-absences quand l'un de ses compteurs (absents non justifiés, retards, mesures disciplinaires) atteint ou dépasse le seuil correspondant sur la période analysée.</p>
+      ${form}
+      <p><a href="/admin/stats-absences">← Retour aux statistiques</a></p>
+    </section>`
+  );
+}
+
 function renderAdminAbsencesListPage(session, notices, studentById, parentById, classRooms, {
   selectedStatus = 'pending',
   selectedClassRoomId = '',
@@ -4042,6 +4214,7 @@ function createServer({
     studentStore,
     parentStore
   });
+  const alertThresholdsStore = new AlertThresholdsStore({ rows: seed.alertThresholds || [] });
   const lessonHomeworkStore = new LessonHomeworkStore({
     lessonLogs: seed.lessonLogs,
     homeworks: seed.homeworks,
@@ -5869,6 +6042,142 @@ function createServer({
       );
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderParentDisciplineListPage(auth.context, recordsByStudent, studentById));
+      return;
+    }
+
+    // ============================================================
+    // VS-06 — Statistiques d'absentéisme + seuils d'alerte
+    // ============================================================
+
+    if (request.method === 'GET' && url.pathname === '/admin/stats-absences/settings') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewAbsenceStats(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const thresholds = alertThresholdsStore.get(auth.context.tenantId);
+      const successParam = url.searchParams.get('result');
+      const successMessage = successParam === 'updated' ? 'Seuils mis à jour.' : null;
+      const errorMessage = successParam === 'error' ? "Mise à jour impossible (valeurs hors bornes)." : null;
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminAlertThresholdsPage(auth.context, thresholds, {
+        canEdit: canManageAlertThresholds(auth.context),
+        successMessage,
+        errorMessage
+      }));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/stats-absences/settings') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canManageAlertThresholds(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const form = parseExtendedForm(await readBody(request));
+      let resultParam = 'updated';
+      try {
+        alertThresholdsStore.upsert(auth.context.tenantId, {
+          absentThreshold: form.get('absentThreshold'),
+          lateThreshold: form.get('lateThreshold'),
+          disciplineThreshold: form.get('disciplineThreshold'),
+          windowDays: form.get('windowDays')
+        });
+        auditWriter.writeEntityEvent(auth.context, 'alert_thresholds.updated', 'alert_thresholds', auth.context.tenantId);
+      } catch (error) {
+        requestLogger.warn('Unable to update alert thresholds', { error: serializeError(error) });
+        resultParam = 'error';
+      }
+      response.writeHead(302, { location: `/admin/stats-absences/settings?result=${resultParam}` });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/stats-absences') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewAbsenceStats(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const today = todayIsoDate();
+      const terms = coreSchoolStore.list('terms', tenantId);
+      const thresholds = alertThresholdsStore.get(tenantId);
+
+      let selectedTermId = url.searchParams.get('termId');
+      let selectedFrom = url.searchParams.get('from') || '';
+      let selectedTo = url.searchParams.get('to') || '';
+      let selectedPeriodLabel = '';
+
+      if (selectedTermId === null || selectedTermId === undefined) {
+        // Pas de paramètre fourni → on tente le trimestre courant
+        if (!selectedFrom && !selectedTo) {
+          selectedTermId = findCurrentTermId(terms, today);
+        } else {
+          selectedTermId = '';
+        }
+      }
+
+      if (selectedTermId) {
+        const term = resolveTermById(terms, selectedTermId);
+        if (term) {
+          selectedFrom = term.starts_at || term.start_date || '';
+          selectedTo = term.ends_at || term.end_date || '';
+          selectedPeriodLabel = `${term.name} (${selectedFrom} → ${selectedTo})`;
+        } else {
+          selectedTermId = '';
+        }
+      }
+
+      if (!selectedTermId) {
+        // Fallback : si l'utilisateur a explicitement choisi "Plage personnalisée" sans dates
+        if (!selectedFrom || !selectedTo) {
+          const winDays = thresholds.windowDays;
+          const end = new Date(today);
+          const start = new Date(end.getTime());
+          start.setUTCDate(start.getUTCDate() - winDays);
+          selectedFrom = selectedFrom || start.toISOString().slice(0, 10);
+          selectedTo = selectedTo || end.toISOString().slice(0, 10);
+        }
+        selectedPeriodLabel = `Du ${selectedFrom} au ${selectedTo}`;
+      }
+
+      const students = studentStore.list(tenantId, { includeArchived: false });
+      const studentById = new Map(
+        studentStore.list(tenantId, { includeArchived: true }).map((s) => [s.id, s])
+      );
+      const classRooms = coreSchoolStore.list('classRooms', tenantId);
+      const classRoomById = new Map(classRooms.map((c) => [c.id, c]));
+
+      const attendanceRecords = attendanceStore.list(tenantId);
+      const disciplineRecords = disciplineStore.list(tenantId, {
+        from: selectedFrom,
+        to: selectedTo
+      });
+
+      const rawStats = computeStudentAbsenceStats({
+        students,
+        attendanceRecords,
+        disciplineRecords,
+        from: selectedFrom,
+        to: selectedTo
+      });
+      const flaggedStats = markAlerts(rawStats, thresholds);
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminStatsAbsencesPage(auth.context, {
+        selectedTermId,
+        selectedFrom,
+        selectedTo,
+        selectedPeriodLabel,
+        terms,
+        topAbsent: pickTopAbsent(flaggedStats, 10),
+        topLate: pickTopLate(flaggedStats, 10),
+        topDiscipline: pickTopDiscipline(flaggedStats, 5),
+        studentById,
+        classRoomById,
+        thresholds
+      }));
       return;
     }
 

@@ -4578,3 +4578,147 @@ test('VS-05: CSRF — POST /admin/discipline sans token → 403', async () => {
     assert.equal(response.status, 403);
   });
 });
+
+// =====================================================================
+// Sprint 8 / VS-06 — Statistiques d'absentéisme + seuils d'alerte
+// =====================================================================
+// Le seed in-memory expose pour la plage 2025-09-01 → 2026-07-05 (année scolaire complète) :
+//   - attendance_records : 1 absent (student-a4 en 2026-04-20), 1 late (student-a3)
+//   - discipline_records : 3 mesures (student-a3, student-a4, student-a2)
+//   - 2 notices d'absence pending (pas excused, donc pas comptées sans approve)
+// Les tests créent des records additionnels via les routes pour valider les tops.
+
+test('VS-06: admin voit /admin/stats-absences avec 3 tableaux', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/stats-absences`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    for (const title of ['Top 10 absentéisme', 'Top 10 retards', 'Top 5 mesures disciplinaires']) {
+      assert.ok(html.includes(title), `tableau "${title}" présent`);
+    }
+    assert.ok(html.includes('Seuils d\'alerte actifs'), 'encart seuils présent');
+  });
+});
+
+test('VS-06: director voit aussi /admin/stats-absences', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/stats-absences`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+  });
+});
+
+test('VS-06: teacher → 403 sur /admin/stats-absences', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/stats-absences`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-06: parent → 403 sur /admin/stats-absences', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/stats-absences`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-06: filtre from/to restreint la fenêtre — student-a4 absent visible en 2026-04, invisible en 2025-12', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    // Plage qui inclut le seed 2026-04-20 → student-a4 doit apparaître dans top absents
+    const inRange = await fetch(`${baseUrl}/admin/stats-absences?from=2026-04-01&to=2026-04-30`, { headers: { cookie } });
+    const inHtml = await inRange.text();
+    assert.ok(inHtml.includes('Yanis') || inHtml.includes('student-a4'), 'student-a4 visible dans la plage');
+
+    // Plage en dehors → tops vides
+    const outRange = await fetch(`${baseUrl}/admin/stats-absences?from=2025-09-01&to=2025-09-30`, { headers: { cookie } });
+    const outHtml = await outRange.text();
+    assert.ok(outHtml.includes('Aucun élève absent sur la période'), 'tops vides hors plage');
+  });
+});
+
+test('VS-06: badge "Alerte" apparaît après baisse du seuil absent', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    // Baisse le seuil d'absence à 1 → student-a4 (1 absent) doit être flaggé
+    await postForm(baseUrl, '/admin/stats-absences/settings', {
+      cookie,
+      fields: { absentThreshold: '1', lateThreshold: '1', disciplineThreshold: '1', windowDays: '30' }
+    });
+    const response = await fetch(`${baseUrl}/admin/stats-absences?from=2026-04-01&to=2026-04-30`, { headers: { cookie } });
+    const html = await response.text();
+    assert.ok(html.includes('⚠ Alerte'), 'au moins un badge alerte présent');
+    assert.ok(html.includes('Personnalisés'), 'badge "Personnalisés" sur l\'encart seuils');
+  });
+});
+
+test('VS-06: settings — director peut consulter mais POST refusé', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const get = await fetch(`${baseUrl}/admin/stats-absences/settings`, { headers: { cookie } });
+    assert.equal(get.status, 200);
+    const html = await get.text();
+    assert.ok(html.includes('Seul un administrateur'), 'message lecture seule visible');
+
+    const post = await postForm(baseUrl, '/admin/stats-absences/settings', {
+      cookie,
+      fields: { absentThreshold: '10', lateThreshold: '5', disciplineThreshold: '5', windowDays: '60' }
+    });
+    assert.equal(post.status, 403);
+  });
+});
+
+test('VS-06: settings — admin POST valide → redirect result=updated', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/stats-absences/settings', {
+      cookie,
+      fields: { absentThreshold: '8', lateThreshold: '4', disciplineThreshold: '2', windowDays: '45' }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /result=updated/);
+
+    // Vérifier que la page stats reflète les nouveaux seuils
+    const stats = await fetch(`${baseUrl}/admin/stats-absences`, { headers: { cookie } });
+    const html = await stats.text();
+    assert.ok(html.includes('Absents ≥ 8'), 'nouveau seuil absent visible');
+    assert.ok(html.includes('Retards ≥ 4'), 'nouveau seuil retards visible');
+  });
+});
+
+test('VS-06: settings — POST hors bornes → redirect error', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/stats-absences/settings', {
+      cookie,
+      fields: { absentThreshold: '0', lateThreshold: '4', disciplineThreshold: '2', windowDays: '45' }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /result=error/);
+  });
+});
+
+test('VS-06: cross-tenant — admin-b voit ses seuils par défaut (pas ceux modifiés en school-a)', async () => {
+  await withServer(async (baseUrl) => {
+    // Modifier les seuils en school-a
+    const { cookie: cookieA } = await login(baseUrl, 'admin@school-a.test');
+    await postForm(baseUrl, '/admin/stats-absences/settings', {
+      cookie: cookieA,
+      fields: { absentThreshold: '20', lateThreshold: '20', disciplineThreshold: '20', windowDays: '90' }
+    });
+
+    // school-b doit garder les défauts
+    const { cookie: cookieB } = await login(baseUrl, 'admin@school-b.test');
+    const stats = await fetch(`${baseUrl}/admin/stats-absences`, { headers: { cookie: cookieB } });
+    const html = await stats.text();
+    assert.ok(html.includes('Absents ≥ 5'), 'seuil par défaut absent pour school-b');
+    assert.ok(html.includes('valeurs par défaut'), 'mention valeurs par défaut');
+    // Aucun élève school-a visible
+    for (const name of ['Aya', 'Salim', 'Lina', 'Yanis']) {
+      assert.ok(!html.includes(name), `pas de fuite cross-tenant ${name}`);
+    }
+  });
+});
