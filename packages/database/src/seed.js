@@ -162,6 +162,12 @@ const attendanceRecords = [
   { id: 'att-b1-1', tenantId: 'school-b', date: '2026-03-17', classRoomId: 'class-b1', studentId: 'student-b1', teacherId: 'teacher-b1', status: 'present' }
 ];
 
+const attendanceEvents = [
+  { id: 'evt-a1-1', tenantId: 'school-a', date: '2026-03-17', classRoomId: 'class-a1', studentId: 'student-a1', recordedByUserId: 'teacher-a1', recordedByRole: 'teacher', eventType: 'encouragement', comment: 'Excellente participation en début de séance.' },
+  { id: 'evt-a1-2', tenantId: 'school-a', date: '2026-03-17', classRoomId: 'class-a1', studentId: 'student-a2', recordedByUserId: 'teacher-a1', recordedByRole: 'teacher', eventType: 'observation', comment: 'Arrivé en retard sans justificatif.' },
+  { id: 'evt-a2-1', tenantId: 'school-a', date: '2026-03-17', classRoomId: 'class-a2', studentId: 'student-a3', recordedByUserId: 'teacher-a3', recordedByRole: 'teacher', eventType: 'infirmary', comment: 'Maux de tête, envoyé à l\'infirmerie 10h.' }
+];
+
 const announcements = [
   {
     id: 'announcement-a1',
@@ -352,6 +358,15 @@ async function seed() {
      ON CONFLICT (id) DO NOTHING`,
     attendanceRecords,
     (row) => [row.id, row.tenantId, row.date, row.classRoomId, row.studentId, row.teacherId, row.status]
+  );
+
+  await insertMany(
+    pool,
+    `INSERT INTO attendance_events (id, tenant_id, date, class_room_id, student_id, recorded_by_user_id, recorded_by_role, event_type, comment)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (id) DO NOTHING`,
+    attendanceEvents,
+    (row) => [row.id, row.tenantId, row.date, row.classRoomId, row.studentId, row.recordedByUserId, row.recordedByRole, row.eventType, row.comment]
   );
 
   await insertMany(

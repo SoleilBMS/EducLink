@@ -16,6 +16,13 @@ const { StudentStore } = require('./modules/student');
 const { ParentStore } = require('./modules/parent');
 const { TeacherStore } = require('./modules/teacher');
 const { AttendanceStore, ATTENDANCE_STATUSES, requireDateString } = require('./modules/attendance');
+const {
+  AttendanceEventsStore,
+  ATTENDANCE_EVENT_TYPES,
+  ATTENDANCE_EVENT_TYPE_LABELS_FR,
+  ATTENDANCE_EVENT_TYPE_BADGES,
+  MAX_COMMENT_LENGTH: ATTENDANCE_EVENT_MAX_COMMENT_LENGTH
+} = require('./modules/attendance-events');
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
@@ -40,6 +47,7 @@ const { PostgresStudentRepository } = require('./modules/persistence/postgres-st
 const { PostgresParentRepository } = require('./modules/persistence/postgres-parent-repository');
 const { PostgresTeacherRepository } = require('./modules/persistence/postgres-teacher-repository');
 const { PostgresAttendanceRepository } = require('./modules/persistence/postgres-attendance-repository');
+const { PostgresAttendanceEventsRepository } = require('./modules/persistence/postgres-attendance-events-repository');
 const { PostgresGradingRepository } = require('./modules/persistence/postgres-grading-repository');
 const { PostgresMessagingRepository } = require('./modules/persistence/postgres-messaging-repository');
 const { PostgresFinanceRepository } = require('./modules/persistence/postgres-finance-repository');
@@ -281,6 +289,11 @@ function createSeedData() {
       { id: 'attendance-a2-2026-04-20-s2', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a2', studentId: 'student-a2', teacherId: 'teacher-a2', status: 'present', created_at: now, updated_at: now },
       { id: 'attendance-a2-2026-04-20-s4', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a2', studentId: 'student-a4', teacherId: 'teacher-a2', status: 'absent', created_at: now, updated_at: now }
     ],
+    attendanceEvents: [
+      { id: 'attendance-event-demo-1', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a1', studentId: 'student-a1', recordedByUserId: 'teacher-a1', recordedByRole: ROLES.TEACHER, eventType: 'encouragement', comment: 'Très bonne participation orale ce matin.', created_at: now, updated_at: now },
+      { id: 'attendance-event-demo-2', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a1', studentId: 'student-a3', recordedByUserId: 'teacher-a1', recordedByRole: ROLES.TEACHER, eventType: 'observation', comment: 'Arrivé 15 minutes en retard sans justificatif.', created_at: now, updated_at: now },
+      { id: 'attendance-event-demo-3', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a2', studentId: 'student-a2', recordedByUserId: 'teacher-a2', recordedByRole: ROLES.TEACHER, eventType: 'infirmary', comment: 'Maux de tête, envoyé à l\'infirmerie 10h30, retour 11h.', created_at: now, updated_at: now }
+    ],
     lessonLogs: [
       { id: 'lesson-a1-math-2026-04-18', tenant_id: 'school-a', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', date: '2026-04-18', content: 'Fractions équivalentes et exercices guidés.', created_at: now, updated_at: now },
       { id: 'lesson-a2-sci-2026-04-17', tenant_id: 'school-a', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', date: '2026-04-17', content: 'Cycle de l’eau + schéma à compléter.', created_at: now, updated_at: now }
@@ -403,6 +416,10 @@ function canTakeAttendance(session) {
 
 function canViewAttendanceAdmin(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
+}
+
+function canRecordAttendanceEvent(session) {
+  return session.role === ROLES.TEACHER || session.role === ROLES.SCHOOL_ADMIN;
 }
 
 function canManageLessonHomework(session) {
@@ -1675,16 +1692,24 @@ function renderTeacherReportCommentsPage(session, { teacher, students, selectedS
   </body></html>`;
 }
 
-function renderTeacherAttendancePage(session, { teacher, classRooms, selectedClassRoomId, selectedDate, students, attendanceByStudentId, successMessage = null, errorMessage = null }) {
+function renderAttendanceEventBadge(event) {
+  const label = ATTENDANCE_EVENT_TYPE_LABELS_FR[event.eventType] || event.eventType;
+  const tone = ATTENDANCE_EVENT_TYPE_BADGES[event.eventType] || 'is-info';
+  return `<span class="el-badge ${tone}">${label}</span>`;
+}
+
+function renderTeacherAttendancePage(session, { teacher, classRooms, selectedClassRoomId, selectedDate, students, attendanceByStudentId, eventsByStudentId = new Map(), successMessage = null, errorMessage = null }) {
   const options = classRooms
     .map((classRoom) => `<option value="${classRoom.id}" ${classRoom.id === selectedClassRoomId ? 'selected' : ''}>${classRoom.name}</option>`)
     .join('');
+
+  const statusLabel = (status) => ATTENDANCE_STATUS_LABELS[status] || status;
 
   const rows = students
     .map((student) => {
       const selectedStatus = attendanceByStudentId.get(student.id)?.status ?? 'present';
       const statusOptions = ATTENDANCE_STATUSES
-        .map((status) => `<option value="${status}" ${selectedStatus === status ? 'selected' : ''}>${status}</option>`)
+        .map((status) => `<option value="${status}" ${selectedStatus === status ? 'selected' : ''}>${statusLabel(status)}</option>`)
         .join('');
       return `<tr>
         <td><a href="/teacher/students/${student.id}">${student.firstName} ${student.lastName}</a></td>
@@ -1700,6 +1725,47 @@ function renderTeacherAttendancePage(session, { teacher, classRooms, selectedCla
   const banner =
     (successMessage ? `<div class="el-banner is-success" role="status">${successMessage}</div>` : '') +
     (errorMessage ? `<div class="el-banner is-error" role="alert">${errorMessage}</div>` : '');
+
+  const eventTypeOptions = ATTENDANCE_EVENT_TYPES
+    .map((type) => `<option value="${type}">${ATTENDANCE_EVENT_TYPE_LABELS_FR[type] || type}</option>`)
+    .join('');
+
+  const eventsBlock = selectedClassRoomId
+    ? `<section class="el-card">
+        <h2>Événements du jour</h2>
+        <p class="el-muted">Consignez en marge de l'appel les passages infirmerie, observations, encouragements ou sanctions. Les événements s'enregistrent un par un.</p>
+        ${students.map((student) => {
+          const events = eventsByStudentId.get(student.id) || [];
+          const eventsList = events.length === 0
+            ? '<p class="el-empty-state">Aucun événement pour ce jour.</p>'
+            : `<ul class="el-event-list">${events
+                .map((event) => {
+                  const isOwner = event.recordedByUserId === session.userId;
+                  const deleteBtn = isOwner
+                    ? `<form method="POST" action="/teacher/attendance/events/${event.id}/delete" style="display:inline" data-confirm="Supprimer cet événement ?">${csrfField(session)}<input type="hidden" name="date" value="${selectedDate}" /><input type="hidden" name="classRoomId" value="${selectedClassRoomId}" /><button type="submit" class="el-button-link">Supprimer</button></form>`
+                    : '';
+                  return `<li>${renderAttendanceEventBadge(event)} ${event.comment ? escapeHtml(event.comment) : '<span class="el-muted">(sans commentaire)</span>'} ${deleteBtn}</li>`;
+                })
+                .join('')}</ul>`;
+          return `<details class="el-event-block">
+            <summary><strong>${student.firstName} ${student.lastName}</strong> ${events.length ? `<span class="el-badge">${events.length}</span>` : ''}</summary>
+            ${eventsList}
+            <form method="POST" action="/teacher/attendance/events" class="el-form-inline">${csrfField(session)}
+              <input type="hidden" name="date" value="${selectedDate}" />
+              <input type="hidden" name="classRoomId" value="${selectedClassRoomId}" />
+              <input type="hidden" name="studentId" value="${student.id}" />
+              <label>Type
+                <select name="eventType" required>${eventTypeOptions}</select>
+              </label>
+              <label>Commentaire (optionnel, ${ATTENDANCE_EVENT_MAX_COMMENT_LENGTH} car. max)
+                <textarea name="comment" maxlength="${ATTENDANCE_EVENT_MAX_COMMENT_LENGTH}" rows="2"></textarea>
+              </label>
+              <button type="submit">Ajouter un événement</button>
+            </form>
+          </details>`;
+        }).join('')}
+      </section>`
+    : '';
 
   return renderDashboardLayout(
     'Appel enseignant',
@@ -1734,7 +1800,8 @@ function renderTeacherAttendancePage(session, { teacher, classRooms, selectedCla
     </form>`
           : '<p class="el-empty-state">Sélectionnez une classe autorisée pour commencer.</p>'
       }
-    </section>`
+    </section>
+    ${eventsBlock}`
   );
 }
 
@@ -1759,7 +1826,7 @@ function renderTeacherStudentHomeworkSection(homeworks, subjectsById) {
   </section>`;
 }
 
-function renderTeacherStudentView(session, { student, classRoom, recentAttendance, recentGrades, homeworks, classRooms, subjects }) {
+function renderTeacherStudentView(session, { student, classRoom, recentAttendance, recentGrades, recentEvents = [], homeworks, classRooms, subjects }) {
   const classRoomsById = new Map(classRooms.map((room) => [room.id, room]));
   const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
   const classRoomName = classRoom?.name || student.classRoomId;
@@ -1775,6 +1842,7 @@ function renderTeacherStudentView(session, { student, classRoom, recentAttendanc
       <p><a href="/teacher/attendance">Retour à l'appel</a> · <a href="/bulletins/students/${student.id}">Voir bulletin</a></p>
     </section>
     ${renderStudentAttendanceSection(recentAttendance, classRoomsById)}
+    ${renderStudentEventsSection(recentEvents)}
     ${renderStudentGradesSection(recentGrades, subjectsById)}
     ${renderTeacherStudentHomeworkSection(homeworks, subjectsById)}`
   );
@@ -1892,7 +1960,7 @@ function renderReportCardPage(session, { reportCard, schoolName, limitedScope = 
   );
 }
 
-function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoomId, records, studentsById, teachersById }) {
+function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoomId, records, studentsById, teachersById, events = [] }) {
   const options = ['<option value="">Toutes les classes</option>']
     .concat(
       classRooms.map(
@@ -1936,6 +2004,25 @@ function renderAdminAttendancePage(session, { date, classRooms, selectedClassRoo
     </section>
     <section class="el-card">
       <table><thead><tr><th>Date</th><th>Classe</th><th>Élève</th><th>Statut</th><th>Saisi par</th></tr></thead><tbody>${rows || '<tr><td colspan="5">Aucune présence enregistrée pour ce filtre.</td></tr>'}</tbody></table>
+    </section>
+    <section class="el-card">
+      <h3>Événements de vie scolaire <span class="el-badge">${events.length}</span></h3>
+      ${events.length === 0
+        ? '<p class="el-empty-state">Aucun événement (infirmerie, observation, sanction, encouragement) consigné pour ce filtre.</p>'
+        : `<table><thead><tr><th>Date</th><th>Classe</th><th>Élève</th><th>Type</th><th>Commentaire</th></tr></thead><tbody>${events
+            .map((event) => {
+              const student = studentsById.get(event.studentId);
+              const label = ATTENDANCE_EVENT_TYPE_LABELS_FR[event.eventType] || event.eventType;
+              const tone = ATTENDANCE_EVENT_TYPE_BADGES[event.eventType] || 'is-info';
+              return `<tr>
+                <td>${event.date}</td>
+                <td>${event.classRoomId}</td>
+                <td>${student ? `${student.firstName} ${student.lastName}` : event.studentId}</td>
+                <td><span class="el-badge ${tone}">${label}</span></td>
+                <td>${event.comment ? escapeHtml(event.comment) : '<span class="el-muted">—</span>'}</td>
+              </tr>`;
+            })
+            .join('')}</tbody></table>`}
     </section>`
   );
 }
@@ -2571,6 +2658,28 @@ function renderStudentGradesSection(grades, subjectsById) {
   </section>`;
 }
 
+function renderStudentEventsSection(events, { title = 'Événements récents' } = {}) {
+  if (!events || events.length === 0) {
+    return `<section class="el-card"><h3>${title}</h3><p class="el-empty-state">Aucun événement consigné pour cet élève.</p></section>`;
+  }
+  const rows = events
+    .map((event) => {
+      const label = ATTENDANCE_EVENT_TYPE_LABELS_FR[event.eventType] || event.eventType;
+      const tone = ATTENDANCE_EVENT_TYPE_BADGES[event.eventType] || 'is-info';
+      const comment = event.comment ? escapeHtml(event.comment) : '<span class="el-muted">—</span>';
+      return `<tr>
+        <td>${event.date}</td>
+        <td><span class="el-badge ${tone}">${label}</span></td>
+        <td>${comment}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<section class="el-card">
+    <h3>${title} <span class="el-badge">${events.length}</span></h3>
+    <table><thead><tr><th>Date</th><th>Type</th><th>Commentaire</th></tr></thead><tbody>${rows}</tbody></table>
+  </section>`;
+}
+
 function renderStudentProfile(session, student, classRooms = [], {
   canManage = false,
   errorCode = null,
@@ -2578,6 +2687,7 @@ function renderStudentProfile(session, student, classRooms = [], {
   parentLinks = [],
   recentAttendance = [],
   recentGrades = [],
+  recentEvents = [],
   subjects = []
 } = {}) {
   const classRoomName = classRooms.find((room) => room.id === student.classRoomId)?.name || student.classRoomId;
@@ -2623,6 +2733,7 @@ function renderStudentProfile(session, student, classRooms = [], {
     </section>
     ${renderStudentParentsSection(parentLinks)}
     ${renderStudentAttendanceSection(recentAttendance, classRoomsById)}
+    ${renderStudentEventsSection(recentEvents)}
     ${renderStudentGradesSection(recentGrades, subjectsById)}
     ${editForm}
     ${archiveForm}`
@@ -3240,6 +3351,11 @@ function createServer({
     teacherStore,
     classRoomStore: coreSchoolStore
   });
+  const attendanceEventsStore = new AttendanceEventsStore({
+    events: seed.attendanceEvents || [],
+    studentStore,
+    classRoomStore: coreSchoolStore
+  });
   const lessonHomeworkStore = new LessonHomeworkStore({
     lessonLogs: seed.lessonLogs,
     homeworks: seed.homeworks,
@@ -3298,7 +3414,7 @@ function createServer({
   const studentService = new StudentService({ studentStore, coreSchoolService });
   const parentService = new ParentService({ parentStore, studentStore, buildValidationError });
   const teacherService = new TeacherService({ teacherStore });
-  const attendanceService = new AttendanceService({ attendanceStore, requireDateString });
+  const attendanceService = new AttendanceService({ attendanceStore, attendanceEventsStore, requireDateString });
 
   let studentApiService = studentService;
   let parentApiService = parentService;
@@ -3315,6 +3431,7 @@ function createServer({
     const persistentParentStore = new PostgresParentRepository({ pool, studentStore: persistentStudentStore });
     const persistentTeacherStore = new PostgresTeacherRepository({ pool, classRoomStore: persistentCoreSchool });
     const persistentAttendanceStore = new PostgresAttendanceRepository({ pool, studentStore: persistentStudentStore, teacherStore: persistentTeacherStore, classRoomStore: persistentCoreSchool });
+    const persistentAttendanceEventsStore = new PostgresAttendanceEventsRepository({ pool, studentStore: persistentStudentStore, classRoomStore: persistentCoreSchool });
     const persistentGradingStore = new PostgresGradingRepository({ pool, classRoomStore: persistentCoreSchool, teacherStore: persistentTeacherStore, studentStore: persistentStudentStore, parentStore: persistentParentStore });
     const persistentMessagingStore = new PostgresMessagingRepository({ pool });
     const persistentFinanceStore = new PostgresFinanceRepository({ pool, studentStore: persistentStudentStore, parentStore: persistentParentStore });
@@ -3322,7 +3439,7 @@ function createServer({
     studentApiService = new StudentService({ studentStore: persistentStudentStore, coreSchoolService: persistentCoreSchoolService });
     parentApiService = new ParentService({ parentStore: persistentParentStore, studentStore: persistentStudentStore, buildValidationError });
     teacherApiService = new TeacherService({ teacherStore: persistentTeacherStore });
-    attendanceApiService = new AttendanceService({ attendanceStore: persistentAttendanceStore, requireDateString });
+    attendanceApiService = new AttendanceService({ attendanceStore: persistentAttendanceStore, attendanceEventsStore: persistentAttendanceEventsStore, requireDateString });
     gradingApiStore = persistentGradingStore;
     messagingApiStore = persistentMessagingStore;
     financeApiStore = persistentFinanceStore;
@@ -3823,9 +3940,29 @@ function createServer({
           .map((record) => [record.studentId, record])
       );
 
+      const eventsByStudentId = new Map();
+      if (selectedClassRoomId) {
+        for (const event of attendanceEventsStore.list(auth.context.tenantId, { date: selectedDate, classRoomId: selectedClassRoomId })) {
+          if (!eventsByStudentId.has(event.studentId)) {
+            eventsByStudentId.set(event.studentId, []);
+          }
+          eventsByStudentId.get(event.studentId).push(event);
+        }
+      }
+
       const statusParam = url.searchParams.get('status');
-      const successMessage = statusParam === 'saved' ? 'Appel enregistré pour la classe sélectionnée.' : null;
-      const errorMessage = statusParam === 'error' ? "Impossible d'enregistrer l'appel. Vérifiez la classe et la date." : null;
+      const successMessage = statusParam === 'saved'
+        ? 'Appel enregistré pour la classe sélectionnée.'
+        : statusParam === 'event_saved'
+        ? 'Événement enregistré.'
+        : statusParam === 'event_deleted'
+        ? 'Événement supprimé.'
+        : null;
+      const errorMessage = statusParam === 'error'
+        ? "Impossible d'enregistrer l'appel. Vérifiez la classe et la date."
+        : statusParam === 'event_error'
+        ? "Impossible d'enregistrer l'événement. Vérifiez le type et l'élève."
+        : null;
 
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
@@ -3836,6 +3973,7 @@ function createServer({
           selectedDate,
           students,
           attendanceByStudentId,
+          eventsByStudentId,
           successMessage,
           errorMessage
         })
@@ -3879,6 +4017,84 @@ function createServer({
       return;
     }
 
+    if (request.method === 'POST' && url.pathname === '/teacher/attendance/events') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canRecordAttendanceEvent(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const form = parseExtendedForm(await readBody(request));
+      const redirectDate = form.get('date') || '';
+      const redirectClass = form.get('classRoomId') || '';
+      let statusParam = 'event_saved';
+
+      try {
+        const classRoomId = form.get('classRoomId');
+        const isTeacher = auth.context.role === ROLES.TEACHER;
+        if (isTeacher) {
+          const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+          if (!teacher || !teacher.classRoomIds.includes(classRoomId)) {
+            sendForbiddenPage(response, session);
+            return;
+          }
+        }
+        const created = attendanceEventsStore.create(auth.context.tenantId, {
+          date: form.get('date'),
+          classRoomId,
+          studentId: form.get('studentId'),
+          recordedByUserId: auth.context.userId,
+          recordedByRole: auth.context.role,
+          eventType: form.get('eventType'),
+          comment: form.get('comment') || ''
+        });
+        auditWriter.writeEntityEvent(auth.context, 'attendance_event.created', 'attendance_event', created.id);
+      } catch (error) {
+        requestLogger.warn('Unable to persist attendance event', { error: serializeError(error) });
+        statusParam = 'event_error';
+      }
+
+      response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}&status=${statusParam}` });
+      response.end();
+      return;
+    }
+
+    const teacherAttendanceEventDeleteMatch = url.pathname.match(/^\/teacher\/attendance\/events\/([^/]+)\/delete$/);
+    if (teacherAttendanceEventDeleteMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canRecordAttendanceEvent(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const eventId = teacherAttendanceEventDeleteMatch[1];
+      const form = parseExtendedForm(await readBody(request));
+      const redirectDate = form.get('date') || '';
+      const redirectClass = form.get('classRoomId') || '';
+      let statusParam = 'event_deleted';
+
+      try {
+        const existing = attendanceEventsStore.get(auth.context.tenantId, eventId);
+        if (!existing) {
+          response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}&status=event_error` });
+          response.end();
+          return;
+        }
+        attendanceEventsStore.delete(auth.context.tenantId, eventId, {
+          actorUserId: auth.context.userId,
+          actorRole: auth.context.role
+        });
+        auditWriter.writeEntityEvent(auth.context, 'attendance_event.deleted', 'attendance_event', eventId);
+      } catch (error) {
+        requestLogger.warn('Unable to delete attendance event', { error: serializeError(error) });
+        statusParam = 'event_error';
+      }
+
+      response.writeHead(302, { location: `/teacher/attendance?date=${encodeURIComponent(redirectDate)}&classRoomId=${encodeURIComponent(redirectClass)}&status=${statusParam}` });
+      response.end();
+      return;
+    }
+
     if (request.method === 'GET' && /^\/teacher\/students\/[^/]+$/.test(url.pathname)) {
       const auth = requireAuth(session);
       if (!auth.allowed || !canTakeAttendance(auth.context)) {
@@ -3915,6 +4131,10 @@ function createServer({
         .filter((grade) => teacherSubjectIds.has(grade.subjectId))
         .slice(0, 10);
 
+      const recentEvents = attendanceEventsStore
+        .list(auth.context.tenantId, { studentId })
+        .slice(0, 10);
+
       const homeworks = lessonHomeworkStore
         .listHomeworksForStudent(auth.context.tenantId, studentId)
         .filter((homework) => teacherSubjectIds.has(homework.subjectId))
@@ -3927,6 +4147,7 @@ function createServer({
           classRoom,
           recentAttendance,
           recentGrades,
+          recentEvents,
           homeworks,
           classRooms,
           subjects
@@ -4471,6 +4692,10 @@ function createServer({
         date: selectedDate,
         classRoomId: selectedClassRoomId || undefined
       });
+      const events = attendanceEventsStore.list(auth.context.tenantId, {
+        date: selectedDate,
+        classRoomId: selectedClassRoomId || undefined
+      });
       const studentsById = new Map(studentStore.list(auth.context.tenantId, { includeArchived: true }).map((student) => [student.id, student]));
       const teachersById = new Map(teacherStore.list(auth.context.tenantId, { includeArchived: true }).map((teacher) => [teacher.id, teacher]));
 
@@ -4482,7 +4707,8 @@ function createServer({
           selectedClassRoomId,
           records,
           studentsById,
-          teachersById
+          teachersById,
+          events
         })
       );
       return;
@@ -4527,6 +4753,10 @@ function createServer({
         .listGradesForStudent(auth.context.tenantId, studentId)
         .slice(0, 10);
 
+      const recentEvents = attendanceEventsStore
+        .list(auth.context.tenantId, { studentId })
+        .slice(0, 10);
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
         renderStudentProfile(auth.context, student, classRooms, {
@@ -4536,6 +4766,7 @@ function createServer({
           parentLinks,
           recentAttendance,
           recentGrades,
+          recentEvents,
           subjects
         })
       );

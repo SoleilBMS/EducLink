@@ -2,7 +2,13 @@ const crypto = require('node:crypto');
 
 const { buildValidationError } = require('./error-utils');
 
-const ATTENDANCE_STATUSES = ['present', 'absent', 'late'];
+const ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'excused'];
+const ATTENDANCE_STATUS_LABELS_FR = {
+  present: 'Présent',
+  absent: 'Absent',
+  late: 'En retard',
+  excused: 'Absent justifié'
+};
 
 function requireString(value, fieldName, min = 1, max = 120) {
   if (typeof value !== 'string') {
@@ -92,7 +98,7 @@ class AttendanceStore {
     for (const entry of records) {
       const normalized = normalizeRecordInput(entry);
       if (!ATTENDANCE_STATUSES.includes(normalized.status)) {
-        throw buildValidationError('status must be one of: present, absent, late');
+        throw buildValidationError('status must be one of: present, absent, late, excused');
       }
 
       if (!allowedStudentIds.has(normalized.studentId)) {
@@ -140,6 +146,8 @@ class AttendanceStore {
 module.exports = {
   AttendanceStore,
   ATTENDANCE_STATUSES,
+  ATTENDANCE_STATUS_LABELS_FR,
   buildValidationError,
-  requireDateString
+  requireDateString,
+  requireString
 };

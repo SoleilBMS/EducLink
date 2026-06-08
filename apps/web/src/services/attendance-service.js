@@ -1,6 +1,7 @@
 class AttendanceService {
-  constructor({ attendanceStore, requireDateString }) {
+  constructor({ attendanceStore, attendanceEventsStore = null, requireDateString }) {
     this.attendanceStore = attendanceStore;
+    this.attendanceEventsStore = attendanceEventsStore;
     this.requireDateString = requireDateString;
   }
 
@@ -17,6 +18,32 @@ class AttendanceService {
       date: payload.date,
       records: payload.records
     });
+  }
+
+  async listEvents(tenantId, { date, classRoomId, studentId } = {}) {
+    if (!this.attendanceEventsStore) {
+      return [];
+    }
+    const normalizedDate = date ? this.requireDateString(date, 'date') : undefined;
+    return this.attendanceEventsStore.list(tenantId, {
+      date: normalizedDate,
+      classRoomId: classRoomId || undefined,
+      studentId: studentId || undefined
+    });
+  }
+
+  async createEvent(tenantId, payload) {
+    if (!this.attendanceEventsStore) {
+      throw new Error('attendanceEventsStore is not configured');
+    }
+    return this.attendanceEventsStore.create(tenantId, payload);
+  }
+
+  async deleteEvent(tenantId, eventId, context) {
+    if (!this.attendanceEventsStore) {
+      throw new Error('attendanceEventsStore is not configured');
+    }
+    return this.attendanceEventsStore.delete(tenantId, eventId, context);
   }
 }
 

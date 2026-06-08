@@ -3707,3 +3707,177 @@ test('SCH-isolation: tenant A ne voit pas l\'année scolaire du tenant B', async
     assert.ok(!html.includes('Annee-A-PrivateXYZ'), 'tenant B doit pas voir l\'année du tenant A');
   });
 });
+
+// =====================================================================
+// Sprint 8 / VS-01 — Feuille d'appel enrichie (événements vie scolaire)
+// =====================================================================
+
+test('VS-01: statut excused est désormais accepté par l\'appel enseignant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/teacher/attendance', {
+      cookie,
+      fields: {
+        date: '2026-05-12',
+        classRoomId: 'class-a1',
+        studentId: 'student-a1',
+        status: 'excused'
+      }
+    });
+    assert.equal(response.status, 302);
+    const location = response.headers.get('location') || '';
+    assert.match(location, /status=saved/, 'statut excused accepté → status=saved');
+  });
+});
+
+test('VS-01: enseignant crée un événement (encouragement) sur sa classe', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/teacher/attendance/events', {
+      cookie,
+      fields: {
+        date: '2026-05-12',
+        classRoomId: 'class-a1',
+        studentId: 'student-a1',
+        eventType: 'encouragement',
+        comment: 'Belle prise de parole en début de cours.'
+      }
+    });
+    assert.equal(response.status, 302);
+    const location = response.headers.get('location') || '';
+    assert.match(location, /status=event_saved/, 'banner event_saved');
+
+    const page = await fetch(`${baseUrl}${location}`, { headers: { cookie } });
+    const html = await page.text();
+    assert.ok(html.includes('Belle prise de parole'), 'commentaire visible sur la feuille d\'appel');
+    assert.ok(html.includes('Encouragement'), 'libellé FR du type d\'événement');
+    assert.ok(html.includes('Événement enregistré.'), 'banner succès');
+  });
+});
+
+test('VS-01: enseignant ne peut PAS créer un événement sur une classe non assignée', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    // teacher-a1 enseigne class-a1, pas class-a2
+    const response = await postForm(baseUrl, '/teacher/attendance/events', {
+      cookie,
+      fields: {
+        date: '2026-05-12',
+        classRoomId: 'class-a2',
+        studentId: 'student-a2',
+        eventType: 'observation',
+        comment: 'Test'
+      }
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-01: type d\'événement invalide → redirection avec status=event_error', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/teacher/attendance/events', {
+      cookie,
+      fields: {
+        date: '2026-05-12',
+        classRoomId: 'class-a1',
+        studentId: 'student-a1',
+        eventType: 'inconnu',
+        comment: 'Test'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /status=event_error/);
+  });
+});
+
+test('VS-01: événements visibles dans la fiche élève admin', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students/student-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Événements récents'), 'section événements présente');
+    assert.ok(html.includes('Encouragement'), 'événement seedé visible (encouragement student-a1)');
+  });
+});
+
+test('VS-01: événements visibles dans /admin/attendance avec filtre date+classe', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/attendance?date=2026-04-20&classRoomId=class-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Événements de vie scolaire'), 'section événements admin');
+    assert.ok(html.includes('Belle participation') || html.includes('Très bonne participation'), 'commentaire seed visible');
+  });
+});
+
+test('VS-01: enseignant supprime un événement qu\'il a créé', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+
+    // créer puis récupérer l'id depuis le HTML
+    await postForm(baseUrl, '/teacher/attendance/events', {
+      cookie,
+      fields: {
+        date: '2026-05-13',
+        classRoomId: 'class-a1',
+        studentId: 'student-a1',
+        eventType: 'observation',
+        comment: 'À-supprimer-marker-VS01'
+      }
+    });
+    const pageBefore = await fetch(`${baseUrl}/teacher/attendance?date=2026-05-13&classRoomId=class-a1`, { headers: { cookie } });
+    const htmlBefore = await pageBefore.text();
+    assert.ok(htmlBefore.includes('À-supprimer-marker-VS01'), 'événement présent avant suppression');
+    const match = htmlBefore.match(/action="\/teacher\/attendance\/events\/(attendance-event-[^/]+)\/delete"/);
+    assert.ok(match, 'bouton supprimer présent');
+    const eventId = match[1];
+
+    const deleteResponse = await postForm(baseUrl, `/teacher/attendance/events/${eventId}/delete`, {
+      cookie,
+      fields: { date: '2026-05-13', classRoomId: 'class-a1' }
+    });
+    assert.equal(deleteResponse.status, 302);
+    assert.match(deleteResponse.headers.get('location') || '', /status=event_deleted/);
+
+    const pageAfter = await fetch(`${baseUrl}/teacher/attendance?date=2026-05-13&classRoomId=class-a1`, { headers: { cookie } });
+    const htmlAfter = await pageAfter.text();
+    assert.ok(!htmlAfter.includes('À-supprimer-marker-VS01'), 'événement disparu après suppression');
+  });
+});
+
+test('VS-01: CSRF — POST événement sans token → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/teacher/attendance/events`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        date: '2026-05-12',
+        classRoomId: 'class-a1',
+        studentId: 'student-a1',
+        eventType: 'observation'
+      }).toString(),
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-01: parent ne peut PAS créer d\'événement (rôle interdit)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await postForm(baseUrl, '/teacher/attendance/events', {
+      cookie,
+      fields: {
+        date: '2026-05-12',
+        classRoomId: 'class-a1',
+        studentId: 'student-a1',
+        eventType: 'observation'
+      }
+    });
+    assert.equal(response.status, 403);
+  });
+});
