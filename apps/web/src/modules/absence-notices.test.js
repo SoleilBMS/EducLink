@@ -11,7 +11,8 @@ const {
   ABSENCE_STATUSES,
   ALLOWED_DOCUMENT_MIME_TYPES,
   MAX_DOCUMENT_SIZE_BYTES,
-  MAX_COMMENT_LENGTH
+  MAX_COMMENT_LENGTH,
+  enumerateDateRange
 } = require('./absence-notices');
 
 function buildFixture() {
@@ -207,4 +208,83 @@ test('getDocument() renvoie le buffer + mime + filename complet', () => {
   assert.equal(doc.fileName, 'photo.png');
   assert.equal(doc.mimeType, 'image/png');
   assert.equal(doc.sizeBytes, png.length);
+});
+
+// =====================================================================
+// VS-04 — review() + enumerateDateRange()
+// =====================================================================
+
+test('VS-04: review() approve passe la notice à approved + renseigne reviewedBy/At + datesToSync', () => {
+  const { store } = buildFixture();
+  const created = store.create('school-a', VALID_PAYLOAD);
+  const result = store.review('school-a', created.id, {
+    reviewerUserId: 'admin-a',
+    decision: 'approve'
+  });
+  assert.equal(result.notice.status, 'approved');
+  assert.equal(result.notice.reviewedByUserId, 'admin-a');
+  assert.ok(result.notice.reviewedAt);
+  assert.equal(result.notice.reviewComment, null);
+  assert.deepEqual(result.datesToSync, ['2026-05-10', '2026-05-11', '2026-05-12']);
+});
+
+test('VS-04: review() reject avec motif passe à rejected, datesToSync vide', () => {
+  const { store } = buildFixture();
+  const created = store.create('school-a', VALID_PAYLOAD);
+  const result = store.review('school-a', created.id, {
+    reviewerUserId: 'admin-a',
+    decision: 'reject',
+    comment: 'Justificatif illisible, merci de re-scanner.'
+  });
+  assert.equal(result.notice.status, 'rejected');
+  assert.equal(result.notice.reviewComment, 'Justificatif illisible, merci de re-scanner.');
+  assert.deepEqual(result.datesToSync, []);
+});
+
+test('VS-04: review() reject sans motif lève une erreur', () => {
+  const { store } = buildFixture();
+  const created = store.create('school-a', VALID_PAYLOAD);
+  assert.throws(
+    () => store.review('school-a', created.id, { reviewerUserId: 'admin-a', decision: 'reject' }),
+    /review comment is required/
+  );
+  assert.throws(
+    () => store.review('school-a', created.id, { reviewerUserId: 'admin-a', decision: 'reject', comment: '   ' }),
+    /review comment is required/
+  );
+});
+
+test('VS-04: review() une notice déjà reviewed lève une erreur', () => {
+  const { store } = buildFixture();
+  const created = store.create('school-a', VALID_PAYLOAD);
+  store.review('school-a', created.id, { reviewerUserId: 'admin-a', decision: 'approve' });
+  assert.throws(
+    () => store.review('school-a', created.id, { reviewerUserId: 'admin-a', decision: 'approve' }),
+    /already been reviewed/
+  );
+});
+
+test('VS-04: review() decision invalide lève une erreur', () => {
+  const { store } = buildFixture();
+  const created = store.create('school-a', VALID_PAYLOAD);
+  assert.throws(
+    () => store.review('school-a', created.id, { reviewerUserId: 'admin-a', decision: 'maybe' }),
+    /decision must be one of/
+  );
+});
+
+test('VS-04: review() cross-tenant renvoie null (n\'altère pas la notice)', () => {
+  const { store } = buildFixture();
+  const created = store.create('school-a', VALID_PAYLOAD);
+  const result = store.review('other-tenant', created.id, { reviewerUserId: 'admin-x', decision: 'approve' });
+  assert.equal(result, null);
+  assert.equal(store.get('school-a', created.id).status, 'pending');
+});
+
+test('VS-04: enumerateDateRange() inclusive sur 3 jours', () => {
+  assert.deepEqual(enumerateDateRange('2026-05-10', '2026-05-12'), ['2026-05-10', '2026-05-11', '2026-05-12']);
+});
+
+test('VS-04: enumerateDateRange() 1 seul jour', () => {
+  assert.deepEqual(enumerateDateRange('2026-05-10', '2026-05-10'), ['2026-05-10']);
 });

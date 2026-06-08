@@ -37,6 +37,10 @@ const MAX_COMMENT_LENGTH = 500;
 
 const MAX_FILE_NAME_LENGTH = 180;
 
+const MAX_REVIEW_COMMENT_LENGTH = 500;
+
+const REVIEW_DECISIONS = ['approve', 'reject'];
+
 function normalizeOptionalComment(value) {
   if (value === undefined || value === null) {
     return '';
@@ -100,9 +104,47 @@ function shapeNotice(record) {
     documentFileName: hasDocument ? record.documentFileName : null,
     documentMimeType: hasDocument ? record.documentMimeType : null,
     documentSizeBytes: hasDocument ? record.documentSizeBytes : null,
+    reviewedByUserId: record.reviewedByUserId ?? null,
+    reviewedAt: record.reviewedAt ?? null,
+    reviewComment: record.reviewComment ?? null,
     created_at: record.created_at,
     updated_at: record.updated_at
   };
+}
+
+function enumerateDateRange(startDate, endDate) {
+  // Both inputs are YYYY-MM-DD strings already validated upstream.
+  // We iterate calendar days inclusive on both ends. Weekend / holiday
+  // skipping is intentionally out of scope (improvement tracked for VS-06).
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  const dates = [];
+  const cursor = new Date(start.getTime());
+  while (cursor.getTime() <= end.getTime()) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function normalizeReviewComment(value, { required }) {
+  if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) {
+    if (required) {
+      throw buildValidationError('review comment is required when rejecting a notice');
+    }
+    return '';
+  }
+  if (typeof value !== 'string') {
+    throw buildValidationError('review comment must be a string');
+  }
+  const trimmed = value.trim();
+  if (trimmed.length < 2 && required) {
+    throw buildValidationError('review comment must be at least 2 characters');
+  }
+  if (trimmed.length > MAX_REVIEW_COMMENT_LENGTH) {
+    throw buildValidationError(`review comment must be at most ${MAX_REVIEW_COMMENT_LENGTH} characters`);
+  }
+  return trimmed;
 }
 
 class AbsenceNoticesStore {
@@ -216,11 +258,51 @@ class AbsenceNoticesStore {
       documentMimeType: normalizedDocument?.mimeType ?? null,
       documentData: normalizedDocument?.data ?? null,
       documentSizeBytes: normalizedDocument?.sizeBytes ?? null,
+      reviewedByUserId: null,
+      reviewedAt: null,
+      reviewComment: null,
       created_at: now,
       updated_at: now
     };
     this.notices.push(created);
     return shapeNotice(created);
+  }
+
+  review(tenantId, noticeId, { reviewerUserId, decision, comment } = {}) {
+    const normalizedReviewerId = requireString(reviewerUserId, 'reviewerUserId', 2, 120);
+    if (!REVIEW_DECISIONS.includes(decision)) {
+      throw buildValidationError(`decision must be one of: ${REVIEW_DECISIONS.join(', ')}`);
+    }
+
+    const index = this.notices.findIndex(
+      (notice) => notice.tenant_id === tenantId && notice.id === noticeId
+    );
+    if (index < 0) {
+      return null;
+    }
+    const current = this.notices[index];
+    if (current.status !== 'pending') {
+      throw buildValidationError('This notice has already been reviewed');
+    }
+
+    const normalizedComment = normalizeReviewComment(comment, { required: decision === 'reject' });
+    const now = new Date().toISOString();
+    const nextStatus = decision === 'approve' ? 'approved' : 'rejected';
+    const updated = {
+      ...current,
+      status: nextStatus,
+      reviewedByUserId: normalizedReviewerId,
+      reviewedAt: now,
+      reviewComment: normalizedComment || null,
+      updated_at: now
+    };
+    this.notices[index] = updated;
+
+    const datesToSync = decision === 'approve'
+      ? enumerateDateRange(current.startDate, current.endDate)
+      : [];
+
+    return { notice: shapeNotice(updated), datesToSync };
   }
 }
 
@@ -235,7 +317,11 @@ module.exports = {
   MAX_DOCUMENT_SIZE_BYTES,
   MAX_COMMENT_LENGTH,
   MAX_FILE_NAME_LENGTH,
+  MAX_REVIEW_COMMENT_LENGTH,
+  REVIEW_DECISIONS,
   normalizeOptionalComment,
   normalizeDocument,
-  shapeNotice
+  normalizeReviewComment,
+  shapeNotice,
+  enumerateDateRange
 };

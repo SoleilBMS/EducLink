@@ -461,6 +461,10 @@ function canDeclareAbsence(session) {
   return session.role === ROLES.PARENT;
 }
 
+function canReviewAbsenceNotice(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+}
+
 function canCreateThreads(session) {
   return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.TEACHER;
 }
@@ -1424,6 +1428,10 @@ function isNavLinkActive(currentPath, href) {
 }
 
 function buildDashboardNavigation(session, currentPath = '') {
+  const pendingAbsenceCount = requestContextStorage.getStore()?.pendingAbsenceCount ?? 0;
+  const absencesAdminLabel = pendingAbsenceCount > 0
+    ? `Absences <span class="el-badge is-warning">${pendingAbsenceCount}</span>`
+    : 'Absences';
   const navItems = [
     { label: 'Dashboard', href: getDashboardPathForRole(session.role), roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT, ROLES.ACCOUNTANT] },
     { label: 'Élèves', href: '/admin/students', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
@@ -1436,6 +1444,7 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Tenants', href: '/admin/tenants', roles: [ROLES.SUPER_ADMIN] },
     { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
     { label: 'Absences', href: '/parent/absences', roles: [ROLES.PARENT] },
+    { label: absencesAdminLabel, href: '/admin/absences', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Finance', href: session.role === ROLES.PARENT ? '/parent/finance' : '/admin/finance', roles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT, ROLES.PARENT] },
@@ -2824,6 +2833,16 @@ function renderParentAbsenceDetailPage(session, notice, student) {
   const documentBlock = notice.hasDocument
     ? `<p><a href="/parent/absences/${notice.id}/document" target="_blank">Voir le justificatif (${escapeHtml(notice.documentFileName)}, ${Math.round((notice.documentSizeBytes || 0) / 1024)} Ko)</a></p>`
     : '<p class="el-muted">Aucun justificatif joint.</p>';
+  const reviewedAtDisplay = notice.reviewedAt ? notice.reviewedAt.slice(0, 10) : null;
+  const reviewBlock = notice.status === 'pending'
+    ? '<p class="el-muted">L\'école n\'a pas encore traité cette déclaration.</p>'
+    : `<section class="el-card">
+        <h3>Décision de l'école</h3>
+        <p><strong>Date :</strong> ${escapeHtml(reviewedAtDisplay || '—')}</p>
+        ${notice.reviewComment
+          ? `<p><strong>Motif :</strong> ${escapeHtml(notice.reviewComment)}</p>`
+          : '<p class="el-muted">Aucun motif communiqué.</p>'}
+      </section>`;
   return renderDashboardLayout(
     'Détail de l\'absence',
     session,
@@ -2836,7 +2855,130 @@ function renderParentAbsenceDetailPage(session, notice, student) {
       <p><strong>Commentaire :</strong> ${notice.comment ? escapeHtml(notice.comment) : '<span class="el-muted">—</span>'}</p>
       ${documentBlock}
       <p><a href="/parent/absences">← Retour à la liste</a></p>
+    </section>
+    ${reviewBlock}`
+  );
+}
+
+function renderAdminAbsencesListPage(session, notices, studentById, parentById, classRooms, {
+  selectedStatus = 'pending',
+  selectedClassRoomId = '',
+  successMessage = null,
+  errorMessage = null
+} = {}) {
+  const banner = successMessage
+    ? `<p class="el-success-banner">${escapeHtml(successMessage)}</p>`
+    : errorMessage
+    ? `<p class="el-error-banner">${escapeHtml(errorMessage)}</p>`
+    : '';
+
+  const statusOptions = [
+    { value: 'pending', label: 'En attente' },
+    { value: 'approved', label: 'Validées' },
+    { value: 'rejected', label: 'Refusées' },
+    { value: '', label: 'Toutes' }
+  ]
+    .map((opt) => `<option value="${opt.value}" ${opt.value === selectedStatus ? 'selected' : ''}>${opt.label}</option>`)
+    .join('');
+
+  const classOptions = ['<option value="">Toutes les classes</option>']
+    .concat(classRooms.map((c) => `<option value="${c.id}" ${c.id === selectedClassRoomId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`))
+    .join('');
+
+  const rows = notices
+    .map((notice) => {
+      const student = studentById.get(notice.studentId);
+      const parent = parentById.get(notice.createdByUserId);
+      const studentLabel = student ? `${student.firstName} ${student.lastName}` : notice.studentId;
+      const parentLabel = parent ? `${parent.firstName} ${parent.lastName}` : notice.createdByUserId;
+      const period = notice.startDate === notice.endDate ? notice.startDate : `${notice.startDate} → ${notice.endDate}`;
+      const reasonLabel = ABSENCE_REASON_LABELS_FR[notice.reason] || notice.reason;
+      const doc = notice.hasDocument ? '<span class="el-badge is-info">PDF/Image</span>' : '<span class="el-muted">—</span>';
+      return `<tr>
+        <td>${notice.created_at?.slice(0, 10) || ''}</td>
+        <td>${period}</td>
+        <td>${escapeHtml(studentLabel)}</td>
+        <td>${escapeHtml(parentLabel)}</td>
+        <td>${reasonLabel}</td>
+        <td>${doc}</td>
+        <td>${renderAbsenceNoticeStatusBadge(notice.status)}</td>
+        <td><a href="/admin/absences/${notice.id}">Traiter</a></td>
+      </tr>`;
+    })
+    .join('');
+
+  return renderDashboardLayout(
+    'Absences déclarées par les parents',
+    session,
+    `${banner}
+    <section class="el-card">
+      <h2>Notices d'absence</h2>
+      <form method="GET" action="/admin/absences">
+        <label>Statut <select name="status">${statusOptions}</select></label>
+        <label>Classe <select name="classRoomId">${classOptions}</select></label>
+        <button type="submit">Filtrer</button>
+      </form>
+      <table>
+        <thead><tr><th>Déclarée</th><th>Période</th><th>Élève</th><th>Parent</th><th>Motif</th><th>Justif.</th><th>Statut</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="8">Aucune notice pour ces filtres.</td></tr>'}</tbody>
+      </table>
     </section>`
+  );
+}
+
+function renderAdminAbsenceDetailPage(session, notice, student, parent, classRoom, {
+  errorMessage = null
+} = {}) {
+  const studentLabel = student ? `${student.firstName} ${student.lastName}` : notice.studentId;
+  const parentLabel = parent ? `${parent.firstName} ${parent.lastName}` : notice.createdByUserId;
+  const classRoomLabel = classRoom?.name || (student?.classRoomId ?? '—');
+  const period = notice.startDate === notice.endDate ? notice.startDate : `${notice.startDate} → ${notice.endDate}`;
+  const reasonLabel = ABSENCE_REASON_LABELS_FR[notice.reason] || notice.reason;
+  const documentBlock = notice.hasDocument
+    ? `<p><a href="/admin/absences/${notice.id}/document" target="_blank">Voir le justificatif (${escapeHtml(notice.documentFileName)}, ${Math.round((notice.documentSizeBytes || 0) / 1024)} Ko)</a></p>`
+    : '<p class="el-muted">Aucun justificatif joint.</p>';
+  const banner = errorMessage ? `<p class="el-error-banner">${escapeHtml(errorMessage)}</p>` : '';
+
+  const actionForms = notice.status === 'pending'
+    ? `<section class="el-card">
+        <h3>Approuver</h3>
+        <p class="el-muted">Met à jour ${period} en "Absent justifié" pour cet élève (un record par jour).</p>
+        <form method="POST" action="/admin/absences/${notice.id}/approve">${csrfField(session)}
+          <button type="submit">✓ Approuver cette absence</button>
+        </form>
+      </section>
+      <section class="el-card">
+        <h3>Refuser</h3>
+        <p class="el-muted">Le motif sera visible par le parent dans son espace.</p>
+        <form method="POST" action="/admin/absences/${notice.id}/reject">${csrfField(session)}
+          <label>Motif du refus (obligatoire, max 500 car.)
+            <textarea name="comment" rows="3" maxlength="500" required></textarea>
+          </label><br/>
+          <button type="submit">✗ Refuser cette absence</button>
+        </form>
+      </section>`
+    : `<section class="el-card">
+        <h3>Déjà traitée</h3>
+        <p>Statut : ${renderAbsenceNoticeStatusBadge(notice.status)}</p>
+        <p><strong>Décision par :</strong> ${escapeHtml(notice.reviewedByUserId || '—')} le ${notice.reviewedAt?.slice(0, 10) || '—'}</p>
+        ${notice.reviewComment ? `<p><strong>Motif :</strong> ${escapeHtml(notice.reviewComment)}</p>` : ''}
+      </section>`;
+
+  return renderDashboardLayout(
+    'Traiter une absence',
+    session,
+    `${banner}
+    <section class="el-card">
+      <h2>${escapeHtml(studentLabel)} — ${period}</h2>
+      <p><strong>Classe :</strong> ${escapeHtml(classRoomLabel)}</p>
+      <p><strong>Parent émetteur :</strong> ${escapeHtml(parentLabel)}</p>
+      <p><strong>Motif :</strong> ${reasonLabel}</p>
+      <p><strong>Statut :</strong> ${renderAbsenceNoticeStatusBadge(notice.status)}</p>
+      <p><strong>Commentaire parent :</strong> ${notice.comment ? escapeHtml(notice.comment) : '<span class="el-muted">—</span>'}</p>
+      ${documentBlock}
+      <p><a href="/admin/absences">← Retour à la liste</a></p>
+    </section>
+    ${actionForms}`
   );
 }
 
@@ -3702,6 +3844,14 @@ function createServer({
     const verifiedSessionId = rawCookieValue ? verifySignedSessionId(rawCookieValue, sessionSecret) : null;
     const session = sessionStore.get(verifiedSessionId);
     const hasStaleSessionCookie = Boolean(rawCookieValue && !session);
+    // VS-04: expose le compteur "absences en attente" à la nav (admin/director only).
+    // Calcul O(n) sur le tenant — acceptable pour MVP, à indexer côté Postgres si la liste grossit.
+    const navContext = requestContextStorage.getStore();
+    if (navContext) {
+      navContext.pendingAbsenceCount = (session && canReviewAbsenceNotice(session))
+        ? absenceNoticesStore.list(session.tenantId, { status: 'pending' }).length
+        : 0;
+    }
     const rawSessionId = verifiedSessionId;
     const requestLogger = logger.child(
       {
@@ -4918,6 +5068,176 @@ function createServer({
       const student = studentStore.get(auth.context.tenantId, notice.studentId, { includeArchived: true });
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderParentAbsenceDetailPage(auth.context, notice, student));
+      return;
+    }
+
+    // ============================================================
+    // VS-04 — Validation des notices d'absence (admin / director)
+    // ============================================================
+
+    if (request.method === 'GET' && url.pathname === '/admin/absences') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canReviewAbsenceNotice(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const selectedStatus = (() => {
+        const raw = url.searchParams.get('status');
+        if (raw === null) return 'pending';
+        return ['pending', 'approved', 'rejected', ''].includes(raw) ? raw : 'pending';
+      })();
+      const selectedClassRoomId = url.searchParams.get('classRoomId') || '';
+
+      const allTenantNotices = absenceNoticesStore.list(auth.context.tenantId,
+        selectedStatus ? { status: selectedStatus } : {});
+      // class filter applied here (in-memory; trivial scale)
+      const filteredNotices = selectedClassRoomId
+        ? allTenantNotices.filter((n) => {
+            const s = studentStore.get(auth.context.tenantId, n.studentId, { includeArchived: true });
+            return s && s.classRoomId === selectedClassRoomId;
+          })
+        : allTenantNotices;
+
+      const studentById = new Map(
+        studentStore.list(auth.context.tenantId, { includeArchived: true }).map((s) => [s.id, s])
+      );
+      const parentById = new Map(
+        parentStore.list(auth.context.tenantId, { includeArchived: true }).map((p) => [p.id, p])
+      );
+      const classRooms = coreSchoolStore.list('classRooms', auth.context.tenantId);
+
+      const statusParam = url.searchParams.get('result');
+      const successMessage =
+        statusParam === 'approved' ? 'Absence approuvée. Les présences ont été mises à jour.' :
+        statusParam === 'rejected' ? 'Absence refusée. Le motif est visible par le parent.' : null;
+      const errorMessage =
+        statusParam === 'error' ? "Action impossible. Vérifiez le motif ou le statut de la notice." : null;
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminAbsencesListPage(auth.context, filteredNotices, studentById, parentById, classRooms, {
+        selectedStatus,
+        selectedClassRoomId,
+        successMessage,
+        errorMessage
+      }));
+      return;
+    }
+
+    const adminAbsenceDocMatch = url.pathname.match(/^\/admin\/absences\/([^/]+)\/document$/);
+    if (adminAbsenceDocMatch && request.method === 'GET') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canReviewAbsenceNotice(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const noticeId = adminAbsenceDocMatch[1];
+      const notice = absenceNoticesStore.get(auth.context.tenantId, noticeId);
+      if (!notice) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      const doc = absenceNoticesStore.getDocument(auth.context.tenantId, noticeId);
+      if (!doc) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      response.writeHead(200, {
+        'content-type': doc.mimeType,
+        'content-length': doc.sizeBytes,
+        'content-disposition': `inline; filename="${doc.fileName.replace(/"/g, '')}"`
+      });
+      response.end(doc.data);
+      return;
+    }
+
+    const adminAbsenceActionMatch = url.pathname.match(/^\/admin\/absences\/([^/]+)\/(approve|reject)$/);
+    if (adminAbsenceActionMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canReviewAbsenceNotice(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const noticeId = adminAbsenceActionMatch[1];
+      const action = adminAbsenceActionMatch[2];
+      const form = parseExtendedForm(await readBody(request));
+      const decision = action === 'approve' ? 'approve' : 'reject';
+      const comment = form.get('comment') || '';
+
+      try {
+        const reviewResult = absenceNoticesStore.review(auth.context.tenantId, noticeId, {
+          reviewerUserId: auth.context.userId,
+          decision,
+          comment
+        });
+        if (!reviewResult) {
+          sendNotFoundPage(response, session);
+          return;
+        }
+        const { notice, datesToSync } = reviewResult;
+        auditWriter.writeEntityEvent(
+          auth.context,
+          decision === 'approve' ? 'absence_notice.approved' : 'absence_notice.rejected',
+          'absence_notice',
+          notice.id
+        );
+
+        if (decision === 'approve' && datesToSync.length > 0) {
+          const student = studentStore.get(auth.context.tenantId, notice.studentId, { includeArchived: true });
+          if (!student) {
+            throw buildValidationError('Élève introuvable, impossible de synchroniser les présences');
+          }
+          const teachersForClass = teacherStore.list(auth.context.tenantId)
+            .filter((t) => t.classRoomIds.includes(student.classRoomId));
+          if (teachersForClass.length === 0) {
+            throw buildValidationError('Aucun enseignant assigné à la classe, contactez l\'administration');
+          }
+          const teacherForSync = teachersForClass[0];
+          for (const date of datesToSync) {
+            attendanceStore.upsertForClass(auth.context.tenantId, {
+              teacherId: teacherForSync.id,
+              classRoomId: student.classRoomId,
+              date,
+              records: [{ studentId: student.id, status: 'excused' }]
+            });
+          }
+        }
+      } catch (error) {
+        requestLogger.warn('Unable to review absence notice', { error: serializeError(error) });
+        response.writeHead(302, { location: `/admin/absences/${noticeId}?error=review_failed` });
+        response.end();
+        return;
+      }
+
+      const resultParam = decision === 'approve' ? 'approved' : 'rejected';
+      response.writeHead(302, { location: `/admin/absences?result=${resultParam}` });
+      response.end();
+      return;
+    }
+
+    const adminAbsenceDetailMatch = url.pathname.match(/^\/admin\/absences\/([^/]+)$/);
+    if (adminAbsenceDetailMatch && request.method === 'GET') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canReviewAbsenceNotice(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const noticeId = adminAbsenceDetailMatch[1];
+      const notice = absenceNoticesStore.get(auth.context.tenantId, noticeId);
+      if (!notice) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      const student = studentStore.get(auth.context.tenantId, notice.studentId, { includeArchived: true });
+      const parent = parentStore.get(auth.context.tenantId, notice.createdByUserId, { includeArchived: true });
+      const classRoom = student
+        ? coreSchoolStore.get('classRooms', auth.context.tenantId, student.classRoomId)
+        : null;
+      const errorParam = url.searchParams.get('error');
+      const errorMessage = errorParam === 'review_failed'
+        ? "Action impossible : notice déjà traitée, motif manquant ou enseignant absent de la classe."
+        : null;
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminAbsenceDetailPage(auth.context, notice, student, parent, classRoom, { errorMessage }));
       return;
     }
 

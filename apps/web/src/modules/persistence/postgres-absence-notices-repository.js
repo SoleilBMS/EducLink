@@ -7,8 +7,11 @@ const {
 } = require('../attendance');
 const {
   ABSENCE_REASONS,
+  REVIEW_DECISIONS,
   normalizeOptionalComment,
-  normalizeDocument
+  normalizeDocument,
+  normalizeReviewComment,
+  enumerateDateRange
 } = require('../absence-notices');
 
 const SELECT_META_COLUMNS = `
@@ -24,6 +27,9 @@ const SELECT_META_COLUMNS = `
   document_file_name AS "documentFileName",
   document_mime_type AS "documentMimeType",
   document_size_bytes AS "documentSizeBytes",
+  reviewed_by_user_id AS "reviewedByUserId",
+  reviewed_at AS "reviewedAt",
+  review_comment AS "reviewComment",
   created_at,
   updated_at
 `;
@@ -45,6 +51,9 @@ function mapMetaRow(row) {
     documentFileName: hasDocument ? row.documentFileName : null,
     documentMimeType: hasDocument ? row.documentMimeType : null,
     documentSizeBytes: hasDocument ? row.documentSizeBytes : null,
+    reviewedByUserId: row.reviewedByUserId ?? null,
+    reviewedAt: row.reviewedAt ?? null,
+    reviewComment: row.reviewComment ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -180,6 +189,44 @@ class PostgresAbsenceNoticesRepository {
       ]
     );
     return mapMetaRow(result.rows[0]);
+  }
+
+  async review(tenantId, noticeId, { reviewerUserId, decision, comment } = {}) {
+    const normalizedReviewerId = requireString(reviewerUserId, 'reviewerUserId', 2, 120);
+    if (!REVIEW_DECISIONS.includes(decision)) {
+      throw buildValidationError(`decision must be one of: ${REVIEW_DECISIONS.join(', ')}`);
+    }
+    const normalizedComment = normalizeReviewComment(comment, { required: decision === 'reject' });
+
+    const current = await this.get(tenantId, noticeId);
+    if (!current) {
+      return null;
+    }
+    if (current.status !== 'pending') {
+      throw buildValidationError('This notice has already been reviewed');
+    }
+
+    const nextStatus = decision === 'approve' ? 'approved' : 'rejected';
+    // The WHERE status='pending' clause acts as a soft guard against concurrent reviews.
+    const result = await this.pool.query(
+      `UPDATE absence_notices
+         SET status = $1,
+             reviewed_by_user_id = $2,
+             reviewed_at = NOW(),
+             review_comment = $3,
+             updated_at = NOW()
+       WHERE tenant_id = $4 AND id = $5 AND status = 'pending'
+       RETURNING ${SELECT_META_COLUMNS}`,
+      [nextStatus, normalizedReviewerId, normalizedComment || null, tenantId, noticeId]
+    );
+    if (result.rows.length === 0) {
+      throw buildValidationError('This notice has already been reviewed');
+    }
+    const updated = mapMetaRow(result.rows[0]);
+    const datesToSync = decision === 'approve'
+      ? enumerateDateRange(updated.startDate, updated.endDate)
+      : [];
+    return { notice: updated, datesToSync };
   }
 }
 

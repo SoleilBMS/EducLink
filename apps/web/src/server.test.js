@@ -4103,3 +4103,177 @@ test('VS-03: dates invalides (end < start) → redirect error=invalid_dates', as
     assert.match(response.headers.get('location') || '', /error=invalid_dates/);
   });
 });
+
+// =====================================================================
+// Sprint 8 / VS-04 — Validation des notices d'absence (admin / director)
+// =====================================================================
+// Le seed in-memory expose deux notices "pending" exploitables :
+//   - absence-notice-demo-1 : parent-a1 / student-a1 (class-a1, teacher-a1), 1 jour 2026-05-02
+//   - absence-notice-demo-2 : parent-a2 / student-a4 (class-a2, teacher-a2), 3 jours 2026-04-22→24
+
+test('VS-04: admin approuve une notice pending → status approved + attendance_records excused créés', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/approve', {
+      cookie,
+      fields: {}
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /\/admin\/absences\?result=approved/);
+
+    // Vérification : la notice est passée à approved
+    const detail = await fetch(`${baseUrl}/admin/absences/absence-notice-demo-1`, { headers: { cookie } });
+    const html = await detail.text();
+    assert.ok(html.includes('Validée') || html.includes('approved'), 'badge "Validée" présent');
+
+    // Vérification : attendance_records contient un record excused pour student-a1 le 2026-05-02
+    const att = await fetch(`${baseUrl}/admin/attendance?date=2026-05-02&classRoomId=class-a1`, { headers: { cookie } });
+    const attHtml = await att.text();
+    assert.ok(attHtml.includes('student-a1') || attHtml.includes('Aya'), 'élève visible dans l\'appel');
+    assert.ok(attHtml.includes('excused') || attHtml.includes('Absent justifié'), 'statut excused affiché');
+  });
+});
+
+test('VS-04: director peut aussi approuver (mêmes droits que admin)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/approve', {
+      cookie,
+      fields: {}
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /result=approved/);
+  });
+});
+
+test('VS-04: teacher ne peut PAS approuver → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/approve', {
+      cookie,
+      fields: {}
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-04: parent ne peut PAS approuver → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/approve', {
+      cookie,
+      fields: {}
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-04: admin reject avec motif → status rejected + motif visible côté parent', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const motif = 'Justificatif illisible, merci de re-scanner le document.';
+    const response = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/reject', {
+      cookie: adminCookie,
+      fields: { comment: motif }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /result=rejected/);
+
+    // Côté parent : la notice doit afficher le motif
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+    const parentDetail = await fetch(`${baseUrl}/parent/absences/absence-notice-demo-1`, { headers: { cookie: parentCookie } });
+    const html = await parentDetail.text();
+    assert.ok(html.includes('Refusée'), 'statut Refusée visible');
+    assert.ok(html.includes('illisible'), 'motif communiqué au parent');
+  });
+});
+
+test('VS-04: admin reject sans motif → redirect error=review_failed', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/reject', {
+      cookie,
+      fields: { comment: '' }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /error=review_failed/);
+  });
+});
+
+test('VS-04: re-review d\'une notice déjà traitée → redirect error=review_failed (idempotence)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const first = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/approve', { cookie, fields: {} });
+    assert.match(first.headers.get('location') || '', /result=approved/);
+
+    const second = await postForm(baseUrl, '/admin/absences/absence-notice-demo-1/approve', { cookie, fields: {} });
+    assert.equal(second.status, 302);
+    assert.match(second.headers.get('location') || '', /error=review_failed/);
+  });
+});
+
+test('VS-04: cross-tenant : admin school-a ne voit pas une notice school-b → 404', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    // Aucune notice de school-b dans le seed → un id inventé retourne 404
+    const response = await fetch(`${baseUrl}/admin/absences/absence-notice-from-school-b`, { headers: { cookie } });
+    assert.equal(response.status, 404);
+  });
+});
+
+test('VS-04: CSRF — POST /admin/absences/:id/approve sans token → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/absences/absence-notice-demo-1/approve`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: '',
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-04: sync multi-jours : 2026-04-22 → 24 (3 jours) → 3 attendance_records excused', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/absences/absence-notice-demo-2/approve', {
+      cookie,
+      fields: {}
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /result=approved/);
+
+    for (const date of ['2026-04-22', '2026-04-23', '2026-04-24']) {
+      const att = await fetch(`${baseUrl}/admin/attendance?date=${date}&classRoomId=class-a2`, { headers: { cookie } });
+      const html = await att.text();
+      assert.ok(
+        html.includes('excused') || html.includes('Absent justifié'),
+        `record excused attendu le ${date}`
+      );
+    }
+  });
+});
+
+test('VS-04: nav admin contient "Absences" + badge "2" (count seed pending)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/absences`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('href="/admin/absences"'), 'lien nav vers /admin/absences présent');
+    assert.ok(html.match(/Absences\s*<span[^>]*>\s*2\s*</), 'badge "2" sur "Absences" (2 notices pending dans le seed)');
+  });
+});
+
+test('VS-04: admin télécharge le justificatif via /admin/absences/:id/document', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    // demo-2 a un PDF joint dans le seed
+    const response = await fetch(`${baseUrl}/admin/absences/absence-notice-demo-2/document`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'application/pdf');
+    const body = Buffer.from(await response.arrayBuffer());
+    assert.ok(body.toString('utf8').startsWith('%PDF-'), 'contenu PDF du seed');
+  });
+});
