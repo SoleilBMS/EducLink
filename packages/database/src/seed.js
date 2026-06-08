@@ -173,6 +173,12 @@ const absenceNotices = [
   { id: 'abs-notice-a-2', tenantId: 'school-a', studentId: 'student-a2', createdByUserId: 'parent-a2', startDate: '2026-03-22', endDate: '2026-03-24', reason: 'maladie', comment: 'Grippe avec fièvre, certificat médical joint.', status: 'pending', documentFileName: 'certif-medecin.pdf', documentMimeType: 'application/pdf', documentData: Buffer.from('%PDF-1.4 demo certif content'), documentSizeBytes: 28 }
 ];
 
+const disciplineRecords = [
+  { id: 'disc-a-1', tenantId: 'school-a', studentId: 'student-a3', recordedByUserId: 'teacher-a1', recordedByRole: 'teacher', measureType: 'observation', occurredOn: '2026-03-15', scheduledFor: null, durationMinutes: null, description: 'Bavardages répétés malgré les avertissements.' },
+  { id: 'disc-a-2', tenantId: 'school-a', studentId: 'student-a4', recordedByUserId: 'teacher-a3', recordedByRole: 'teacher', measureType: 'detention', occurredOn: '2026-03-16', scheduledFor: '2026-03-18', durationMinutes: 60, description: 'Devoir non rendu pour la 3e fois.' },
+  { id: 'disc-a-3', tenantId: 'school-a', studentId: 'student-a2', recordedByUserId: 'admin-school-a', recordedByRole: 'school_admin', measureType: 'parent_meeting', occurredOn: '2026-03-17', scheduledFor: '2026-03-22', durationMinutes: null, description: 'Suite à plusieurs incidents, RDV demandé avec les responsables.' }
+];
+
 const announcements = [
   {
     id: 'announcement-a1',
@@ -381,6 +387,15 @@ async function seed() {
      ON CONFLICT (id) DO NOTHING`,
     absenceNotices,
     (row) => [row.id, row.tenantId, row.studentId, row.createdByUserId, row.startDate, row.endDate, row.reason, row.comment, row.status, row.documentFileName, row.documentMimeType, row.documentData, row.documentSizeBytes]
+  );
+
+  await insertMany(
+    pool,
+    `INSERT INTO discipline_records (id, tenant_id, student_id, recorded_by_user_id, recorded_by_role, measure_type, occurred_on, scheduled_for, duration_minutes, description)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (id) DO NOTHING`,
+    disciplineRecords,
+    (row) => [row.id, row.tenantId, row.studentId, row.recordedByUserId, row.recordedByRole, row.measureType, row.occurredOn, row.scheduledFor, row.durationMinutes, row.description]
   );
 
   await insertMany(

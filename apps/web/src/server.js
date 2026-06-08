@@ -33,6 +33,15 @@ const {
   MAX_DOCUMENT_SIZE_BYTES,
   MAX_COMMENT_LENGTH: ABSENCE_NOTICE_MAX_COMMENT_LENGTH
 } = require('./modules/absence-notices');
+const {
+  DisciplineStore,
+  DISCIPLINE_MEASURE_TYPES,
+  DISCIPLINE_MEASURE_LABELS_FR,
+  DISCIPLINE_MEASURE_BADGES,
+  MAX_DESCRIPTION_LENGTH: DISCIPLINE_MAX_DESCRIPTION_LENGTH,
+  MEASURES_REQUIRING_SCHEDULE,
+  MEASURES_REQUIRING_DURATION
+} = require('./modules/discipline');
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
@@ -309,6 +318,11 @@ function createSeedData() {
       { id: 'absence-notice-demo-1', tenant_id: 'school-a', studentId: 'student-a1', createdByUserId: 'parent-a1', startDate: '2026-05-02', endDate: '2026-05-02', reason: 'rdv-medical', comment: 'Rendez-vous orthodontiste prévu le matin.', status: 'pending', documentFileName: null, documentMimeType: null, documentData: null, documentSizeBytes: null, created_at: now, updated_at: now },
       { id: 'absence-notice-demo-2', tenant_id: 'school-a', studentId: 'student-a4', createdByUserId: 'parent-a2', startDate: '2026-04-22', endDate: '2026-04-24', reason: 'maladie', comment: 'Grippe avec fièvre, certificat médical joint.', status: 'pending', documentFileName: 'certif-medecin.pdf', documentMimeType: 'application/pdf', documentData: Buffer.from('%PDF-1.4 demo certif content'), documentSizeBytes: 28, created_at: now, updated_at: now }
     ],
+    disciplineRecords: [
+      { id: 'discipline-demo-1', tenant_id: 'school-a', studentId: 'student-a3', recordedByUserId: 'teacher-a1', recordedByRole: ROLES.TEACHER, measureType: 'observation', occurredOn: '2026-04-18', scheduledFor: null, durationMinutes: null, description: 'Bavardages répétés malgré les avertissements.', created_at: now, updated_at: now },
+      { id: 'discipline-demo-2', tenant_id: 'school-a', studentId: 'student-a4', recordedByUserId: 'teacher-a2', recordedByRole: ROLES.TEACHER, measureType: 'detention', occurredOn: '2026-04-19', scheduledFor: '2026-04-22', durationMinutes: 60, description: 'Devoir non rendu pour la 3e fois.', created_at: now, updated_at: now },
+      { id: 'discipline-demo-3', tenant_id: 'school-a', studentId: 'student-a2', recordedByUserId: 'admin-a', recordedByRole: ROLES.SCHOOL_ADMIN, measureType: 'parent_meeting', occurredOn: '2026-04-20', scheduledFor: '2026-04-25', durationMinutes: null, description: 'RDV demandé avec les responsables suite à incidents.', created_at: now, updated_at: now }
+    ],
     lessonLogs: [
       { id: 'lesson-a1-math-2026-04-18', tenant_id: 'school-a', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', date: '2026-04-18', content: 'Fractions équivalentes et exercices guidés.', created_at: now, updated_at: now },
       { id: 'lesson-a2-sci-2026-04-17', tenant_id: 'school-a', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', date: '2026-04-17', content: 'Cycle de l’eau + schéma à compléter.', created_at: now, updated_at: now }
@@ -467,6 +481,22 @@ function canReviewAbsenceNotice(session) {
 
 function canViewVieScolaireDashboard(session) {
   return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+}
+
+function canRecordDisciplineMeasure(session) {
+  return (
+    session.role === ROLES.TEACHER ||
+    session.role === ROLES.SCHOOL_ADMIN ||
+    session.role === ROLES.DIRECTOR
+  );
+}
+
+function canViewDisciplineAdmin(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+}
+
+function canViewParentDiscipline(session) {
+  return session.role === ROLES.PARENT;
 }
 
 function canCreateThreads(session) {
@@ -1450,6 +1480,8 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Vie scolaire', href: '/admin/vie-scolaire', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Absences', href: '/parent/absences', roles: [ROLES.PARENT] },
     { label: absencesAdminLabel, href: '/admin/absences', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
+    { label: 'Discipline', href: '/admin/discipline', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
+    { label: 'Discipline', href: '/parent/discipline', roles: [ROLES.PARENT] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Finance', href: session.role === ROLES.PARENT ? '/parent/finance' : '/admin/finance', roles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT, ROLES.PARENT] },
@@ -1867,14 +1899,40 @@ function renderTeacherStudentHomeworkSection(homeworks, subjectsById) {
   </section>`;
 }
 
-function renderTeacherStudentView(session, { student, classRoom, recentAttendance, recentGrades, recentEvents = [], homeworks, classRooms, subjects }) {
+function renderTeacherStudentView(session, { student, classRoom, recentAttendance, recentGrades, recentEvents = [], recentDisciplineRecords = [], homeworks, classRooms, subjects, disciplineFlash = null }) {
   const classRoomsById = new Map(classRooms.map((room) => [room.id, room]));
   const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
   const classRoomName = classRoom?.name || student.classRoomId;
+  const banner = disciplineFlash === 'created'
+    ? '<p class="el-success-banner">Mesure disciplinaire enregistrée.</p>'
+    : disciplineFlash === 'deleted'
+    ? '<p class="el-success-banner">Mesure supprimée.</p>'
+    : disciplineFlash === 'error'
+    ? '<p class="el-error-banner">Action discipline impossible (vérifiez le type, les dates et la durée).</p>'
+    : '';
+  const teacherDisciplineForm = `<section class="el-card">
+      <h3>Saisir une mesure disciplinaire</h3>
+      <p class="el-muted">Pour observation : laisser "Prévu le" et "Durée" vides. Pour retenue/exclusion : durée requise (60 = 1h, 1440 = 1 jour).</p>
+      <form method="POST" action="/teacher/discipline">${csrfField(session)}
+        <input type="hidden" name="studentId" value="${student.id}" />
+        <input type="hidden" name="returnTo" value="${student.id}" />
+        <label>Type
+          <select name="measureType" required>${DISCIPLINE_MEASURE_TYPES.map((t) => `<option value="${t}">${DISCIPLINE_MEASURE_LABELS_FR[t]}</option>`).join('')}</select>
+        </label><br/>
+        <label>Date des faits <input type="date" name="occurredOn" value="${todayIsoDate()}" required /></label>
+        <label>Prévu le <input type="date" name="scheduledFor" /></label><br/>
+        <label>Durée en minutes <input type="number" name="durationMinutes" min="1" max="${7 * 24 * 60}" /></label><br/>
+        <label>Description (obligatoire, max ${DISCIPLINE_MAX_DESCRIPTION_LENGTH} car.)
+          <textarea name="description" rows="3" maxlength="${DISCIPLINE_MAX_DESCRIPTION_LENGTH}" required></textarea>
+        </label><br/>
+        <button type="submit">Enregistrer la mesure</button>
+      </form>
+    </section>`;
   return renderDashboardLayout(
     'Fiche élève',
     session,
-    `<section class="el-card">
+    `${banner}
+    <section class="el-card">
       <h2>${student.firstName} ${student.lastName}</h2>
       <p><strong>Matricule:</strong> ${student.admissionNumber}</p>
       <p><strong>Classe:</strong> <span class="el-badge">${classRoomName}</span></p>
@@ -1884,6 +1942,13 @@ function renderTeacherStudentView(session, { student, classRoom, recentAttendanc
     </section>
     ${renderStudentAttendanceSection(recentAttendance, classRoomsById)}
     ${renderStudentEventsSection(recentEvents)}
+    ${renderStudentDisciplineSection(recentDisciplineRecords, {
+      title: 'Mesures disciplinaires récentes',
+      session,
+      deleteAction: '/discipline/:id/delete',
+      ownerIdForDelete: student.id
+    })}
+    ${teacherDisciplineForm}
     ${renderStudentGradesSection(recentGrades, subjectsById)}
     ${renderTeacherStudentHomeworkSection(homeworks, subjectsById)}`
   );
@@ -2721,6 +2786,199 @@ function renderStudentEventsSection(events, { title = 'Événements récents' } 
   </section>`;
 }
 
+function renderDisciplineMeasureBadge(measureType) {
+  const label = DISCIPLINE_MEASURE_LABELS_FR[measureType] || measureType;
+  const tone = DISCIPLINE_MEASURE_BADGES[measureType] || 'is-info';
+  return `<span class="el-badge ${tone}">${label}</span>`;
+}
+
+function formatDisciplineDuration(measureType, durationMinutes) {
+  if (!durationMinutes) return '<span class="el-muted">—</span>';
+  if (measureType === 'exclusion' && durationMinutes % 1440 === 0) {
+    const days = durationMinutes / 1440;
+    return `${days} jour${days > 1 ? 's' : ''}`;
+  }
+  if (durationMinutes < 60) return `${durationMinutes} min`;
+  const hours = Math.floor(durationMinutes / 60);
+  const mins = durationMinutes % 60;
+  return mins ? `${hours}h${String(mins).padStart(2, '0')}` : `${hours}h`;
+}
+
+function renderStudentDisciplineSection(records, {
+  title = 'Mesures disciplinaires',
+  session = null,
+  deleteAction = null,
+  ownerIdForDelete = null
+} = {}) {
+  if (!records || records.length === 0) {
+    return `<section class="el-card"><h3>${title}</h3><p class="el-empty-state">Aucune mesure consignée pour cet élève.</p></section>`;
+  }
+  const rows = records
+    .map((r) => {
+      const canDelete = session && deleteAction && (
+        r.recordedByUserId === session.userId ||
+        session.role === ROLES.SCHOOL_ADMIN ||
+        session.role === ROLES.DIRECTOR
+      );
+      const deleteBtn = canDelete
+        ? `<form method="POST" action="${deleteAction.replace(':id', r.id)}" style="display:inline" data-confirm="Supprimer cette mesure ?">${csrfField(session)}${ownerIdForDelete ? `<input type="hidden" name="returnTo" value="${escapeHtml(ownerIdForDelete)}" />` : ''}<button type="submit" class="el-button-link">Supprimer</button></form>`
+        : '';
+      return `<tr>
+        <td>${r.occurredOn}</td>
+        <td>${renderDisciplineMeasureBadge(r.measureType)}</td>
+        <td>${r.scheduledFor ? escapeHtml(r.scheduledFor) : '<span class="el-muted">—</span>'}</td>
+        <td>${formatDisciplineDuration(r.measureType, r.durationMinutes)}</td>
+        <td>${escapeHtml(r.description)}</td>
+        <td>${deleteBtn}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<section class="el-card">
+    <h3>${title} <span class="el-badge">${records.length}</span></h3>
+    <table>
+      <thead><tr><th>Faits le</th><th>Type</th><th>Prévu le</th><th>Durée</th><th>Description</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </section>`;
+}
+
+function renderDisciplineCreateForm(session, { studentOptions, prefill = {}, action }) {
+  const typeOptions = DISCIPLINE_MEASURE_TYPES
+    .map((t) => `<option value="${t}" ${prefill.measureType === t ? 'selected' : ''}>${DISCIPLINE_MEASURE_LABELS_FR[t]}</option>`)
+    .join('');
+  const today = todayIsoDate();
+  return `<section class="el-card">
+    <h3>Saisir une mesure disciplinaire</h3>
+    <p class="el-muted">Pour observation : laisser "Prévu le" et "Durée" vides. Pour retenue/exclusion : durée requise (60 min, 1440 min = 1 jour, etc.).</p>
+    <form method="POST" action="${action}">${csrfField(session)}
+      ${studentOptions ? `<label>Élève <select name="studentId" required>${studentOptions}</select></label><br/>` : ''}
+      <label>Type
+        <select name="measureType" required>${typeOptions}</select>
+      </label><br/>
+      <label>Date des faits <input type="date" name="occurredOn" value="${escapeHtml(prefill.occurredOn || today)}" required /></label>
+      <label>Prévu le (retenue / exclusion / convocation) <input type="date" name="scheduledFor" /></label><br/>
+      <label>Durée en minutes (60 = 1h, 1440 = 1 jour) <input type="number" name="durationMinutes" min="1" max="${7 * 24 * 60}" /></label><br/>
+      <label>Description (obligatoire, max ${DISCIPLINE_MAX_DESCRIPTION_LENGTH} car.)
+        <textarea name="description" rows="3" maxlength="${DISCIPLINE_MAX_DESCRIPTION_LENGTH}" required></textarea>
+      </label><br/>
+      <button type="submit">Enregistrer la mesure</button>
+    </form>
+  </section>`;
+}
+
+function renderAdminDisciplineListPage(session, records, studentById, classRooms, students, {
+  selectedClassRoomId = '',
+  selectedMeasureType = '',
+  selectedFrom = '',
+  selectedTo = '',
+  selectedStudentId = '',
+  successMessage = null,
+  errorMessage = null
+} = {}) {
+  const banner = successMessage
+    ? `<p class="el-success-banner">${escapeHtml(successMessage)}</p>`
+    : errorMessage
+    ? `<p class="el-error-banner">${escapeHtml(errorMessage)}</p>`
+    : '';
+  const typeFilterOptions = ['<option value="">Tous types</option>']
+    .concat(DISCIPLINE_MEASURE_TYPES.map((t) => `<option value="${t}" ${t === selectedMeasureType ? 'selected' : ''}>${DISCIPLINE_MEASURE_LABELS_FR[t]}</option>`))
+    .join('');
+  const classOptions = ['<option value="">Toutes les classes</option>']
+    .concat(classRooms.map((c) => `<option value="${c.id}" ${c.id === selectedClassRoomId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`))
+    .join('');
+  const studentOptionsForCreate = students
+    .map((s) => `<option value="${s.id}">${escapeHtml(`${s.firstName} ${s.lastName} (${s.classRoomId})`)}</option>`)
+    .join('');
+
+  const rows = records.length === 0
+    ? '<tr><td colspan="6"><span class="el-empty-state">Aucune mesure pour ce filtre.</span></td></tr>'
+    : records.map((r) => {
+        const student = studentById.get(r.studentId);
+        const name = student ? `${student.firstName} ${student.lastName}` : r.studentId;
+        const canDelete = r.recordedByUserId === session.userId || session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+        const deleteBtn = canDelete
+          ? `<form method="POST" action="/discipline/${r.id}/delete" style="display:inline" data-confirm="Supprimer cette mesure ?">${csrfField(session)}<button type="submit" class="el-button-link">Supprimer</button></form>`
+          : '';
+        return `<tr>
+          <td>${r.occurredOn}</td>
+          <td><a href="/admin/students/${r.studentId}">${escapeHtml(name)}</a></td>
+          <td>${renderDisciplineMeasureBadge(r.measureType)}</td>
+          <td>${r.scheduledFor ? escapeHtml(r.scheduledFor) : '<span class="el-muted">—</span>'}</td>
+          <td>${escapeHtml(r.description)}</td>
+          <td>${deleteBtn}</td>
+        </tr>`;
+      }).join('');
+
+  return renderDashboardLayout(
+    'Discipline — vue admin',
+    session,
+    `${banner}
+    <section class="el-card">
+      <h2>Mesures disciplinaires</h2>
+      <form method="GET" action="/admin/discipline">
+        <label>Type <select name="measureType">${typeFilterOptions}</select></label>
+        <label>Classe <select name="classRoomId">${classOptions}</select></label>
+        <label>Du <input type="date" name="from" value="${escapeHtml(selectedFrom)}" /></label>
+        <label>Au <input type="date" name="to" value="${escapeHtml(selectedTo)}" /></label>
+        <label>Élève (id) <input type="text" name="studentId" value="${escapeHtml(selectedStudentId)}" placeholder="student-aX" /></label>
+        <button type="submit">Filtrer</button>
+      </form>
+      <table>
+        <thead><tr><th>Faits le</th><th>Élève</th><th>Type</th><th>Prévu le</th><th>Description</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </section>
+    ${renderDisciplineCreateForm(session, {
+      studentOptions: studentOptionsForCreate,
+      action: '/admin/discipline'
+    })}`
+  );
+}
+
+function renderParentDisciplineListPage(session, recordsByStudent, studentById) {
+  if (recordsByStudent.size === 0) {
+    return renderDashboardLayout(
+      'Discipline — mes enfants',
+      session,
+      `<section class="el-card">
+        <h2>Mesures disciplinaires</h2>
+        <p class="el-empty-state">Aucune mesure consignée pour vos enfants pour le moment.</p>
+      </section>`
+    );
+  }
+  const blocks = [...recordsByStudent.entries()]
+    .map(([studentId, records]) => {
+      const student = studentById.get(studentId);
+      const name = student ? `${student.firstName} ${student.lastName}` : studentId;
+      const rows = records
+        .map((r) => `<tr>
+          <td>${r.occurredOn}</td>
+          <td>${renderDisciplineMeasureBadge(r.measureType)}</td>
+          <td>${r.scheduledFor ? escapeHtml(r.scheduledFor) : '<span class="el-muted">—</span>'}</td>
+          <td>${formatDisciplineDuration(r.measureType, r.durationMinutes)}</td>
+          <td>${escapeHtml(r.description)}</td>
+        </tr>`)
+        .join('');
+      return `<section class="el-card">
+        <h3>${escapeHtml(name)} <span class="el-badge">${records.length}</span></h3>
+        <table>
+          <thead><tr><th>Faits le</th><th>Type</th><th>Prévu le</th><th>Durée</th><th>Description</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </section>`;
+    })
+    .join('');
+  return renderDashboardLayout(
+    'Discipline — mes enfants',
+    session,
+    `<section class="el-card">
+      <h2>Mesures disciplinaires</h2>
+      <p class="el-muted">Liste des observations, retenues, exclusions et convocations remontées par l'école.</p>
+    </section>
+    ${blocks}`
+  );
+}
+
 function renderAbsenceNoticeStatusBadge(status) {
   const label = ABSENCE_STATUS_LABELS_FR[status] || status;
   const tone = ABSENCE_STATUS_BADGES[status] || 'is-info';
@@ -2874,6 +3132,7 @@ function renderAdminVieScolaireDashboardPage(session, {
   classesWithoutAttendance,
   pendingNoticesCount,
   eventsToday,
+  disciplineToday = [],
   studentById
 }) {
   const classOptions = ['<option value="">Toutes les classes</option>']
@@ -2938,6 +3197,7 @@ function renderAdminVieScolaireDashboardPage(session, {
         ${renderMetricCard('Appels non faits', `<a href="#appels-non-faits">${classesWithoutAttendance.length}</a>`)}
         ${renderMetricCard('Notices à valider', `<a href="/admin/absences?status=pending">${pendingNoticesCount}</a>`)}
         ${renderMetricCard('Événements du jour', `<a href="#evenements-jour">${eventsToday.length}</a>`)}
+        ${renderMetricCard('Mesures discipline', `<a href="/admin/discipline?from=${encodeURIComponent(selectedDate)}&to=${encodeURIComponent(selectedDate)}">${disciplineToday.length}</a>`)}
       </div>
     </section>
     <section class="el-card" id="absents-jour">
@@ -3096,6 +3356,7 @@ function renderStudentProfile(session, student, classRooms = [], {
   recentGrades = [],
   recentEvents = [],
   recentAbsenceNotices = [],
+  recentDisciplineRecords = [],
   subjects = []
 } = {}) {
   const classRoomName = classRooms.find((room) => room.id === student.classRoomId)?.name || student.classRoomId;
@@ -3143,6 +3404,12 @@ function renderStudentProfile(session, student, classRooms = [], {
     ${renderStudentAttendanceSection(recentAttendance, classRoomsById)}
     ${renderStudentEventsSection(recentEvents)}
     ${renderStudentAbsenceNoticesSection(recentAbsenceNotices)}
+    ${renderStudentDisciplineSection(recentDisciplineRecords, {
+      title: 'Mesures disciplinaires récentes',
+      session,
+      deleteAction: '/discipline/:id/delete',
+      ownerIdForDelete: student.id
+    })}
     ${renderStudentGradesSection(recentGrades, subjectsById)}
     ${editForm}
     ${archiveForm}`
@@ -3769,6 +4036,11 @@ function createServer({
     notices: seed.absenceNotices || [],
     parentStore,
     studentStore
+  });
+  const disciplineStore = new DisciplineStore({
+    records: seed.disciplineRecords || [],
+    studentStore,
+    parentStore
   });
   const lessonHomeworkStore = new LessonHomeworkStore({
     lessonLogs: seed.lessonLogs,
@@ -4557,10 +4829,17 @@ function createServer({
         .list(auth.context.tenantId, { studentId })
         .slice(0, 10);
 
+      const recentDisciplineRecords = disciplineStore
+        .listForStudent(auth.context.tenantId, studentId)
+        .slice(0, 10);
+
       const homeworks = lessonHomeworkStore
         .listHomeworksForStudent(auth.context.tenantId, studentId)
         .filter((homework) => teacherSubjectIds.has(homework.subjectId))
         .slice(0, 10);
+
+      const discRaw = url.searchParams.get('disc');
+      const disciplineFlash = ['created', 'deleted', 'error'].includes(discRaw) ? discRaw : null;
 
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
@@ -4570,9 +4849,11 @@ function createServer({
           recentAttendance,
           recentGrades,
           recentEvents,
+          recentDisciplineRecords,
           homeworks,
           classRooms,
-          subjects
+          subjects,
+          disciplineFlash
         })
       );
       return;
@@ -5217,6 +5498,11 @@ function createServer({
         date: selectedDate,
         classRoomId: selectedClassRoomId || undefined
       });
+      const disciplineToday = disciplineStore.list(tenantId, {
+        from: selectedDate,
+        to: selectedDate,
+        classRoomId: selectedClassRoomId || undefined
+      });
 
       const studentById = new Map(
         studentStore.list(tenantId, { includeArchived: true }).map((s) => [s.id, s])
@@ -5232,6 +5518,7 @@ function createServer({
         classesWithoutAttendance,
         pendingNoticesCount,
         eventsToday,
+        disciplineToday,
         studentById
       }));
       return;
@@ -5404,6 +5691,184 @@ function createServer({
         : null;
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderAdminAbsenceDetailPage(auth.context, notice, student, parent, classRoom, { errorMessage }));
+      return;
+    }
+
+    // ============================================================
+    // VS-05 — Module discipline (admin / teacher / parent)
+    // ============================================================
+
+    if (request.method === 'GET' && url.pathname === '/admin/discipline') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewDisciplineAdmin(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const selectedMeasureType = url.searchParams.get('measureType') || '';
+      const selectedClassRoomId = url.searchParams.get('classRoomId') || '';
+      const selectedStudentId = url.searchParams.get('studentId') || '';
+      const selectedFrom = url.searchParams.get('from') || '';
+      const selectedTo = url.searchParams.get('to') || '';
+
+      const records = disciplineStore.list(tenantId, {
+        measureType: selectedMeasureType || undefined,
+        classRoomId: selectedClassRoomId || undefined,
+        studentId: selectedStudentId || undefined,
+        from: selectedFrom || undefined,
+        to: selectedTo || undefined
+      });
+
+      const students = studentStore.list(tenantId, { includeArchived: false });
+      const studentById = new Map(
+        studentStore.list(tenantId, { includeArchived: true }).map((s) => [s.id, s])
+      );
+      const classRooms = coreSchoolStore.list('classRooms', tenantId);
+
+      const resultParam = url.searchParams.get('result');
+      const successMessage =
+        resultParam === 'created' ? 'Mesure enregistrée.' :
+        resultParam === 'deleted' ? 'Mesure supprimée.' : null;
+      const errorMessage = resultParam === 'error'
+        ? "Action impossible. Vérifiez les champs (type, dates, durée pour retenue/exclusion)."
+        : null;
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminDisciplineListPage(auth.context, records, studentById, classRooms, students, {
+        selectedMeasureType,
+        selectedClassRoomId,
+        selectedFrom,
+        selectedTo,
+        selectedStudentId,
+        successMessage,
+        errorMessage
+      }));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/discipline') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canRecordDisciplineMeasure(auth.context) || auth.context.role === ROLES.TEACHER) {
+        // /admin/discipline POST réservé à admin/director ; teacher passe par /teacher/discipline
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const form = parseExtendedForm(await readBody(request));
+      let resultParam = 'created';
+      try {
+        const created = disciplineStore.create(auth.context.tenantId, {
+          studentId: form.get('studentId'),
+          recordedByUserId: auth.context.userId,
+          recordedByRole: auth.context.role,
+          measureType: form.get('measureType'),
+          occurredOn: form.get('occurredOn'),
+          scheduledFor: form.get('scheduledFor') || null,
+          durationMinutes: form.get('durationMinutes') || null,
+          description: form.get('description') || ''
+        });
+        auditWriter.writeEntityEvent(auth.context, 'discipline_record.created', 'discipline_record', created.id);
+      } catch (error) {
+        requestLogger.warn('Unable to record discipline measure', { error: serializeError(error) });
+        resultParam = 'error';
+      }
+      response.writeHead(302, { location: `/admin/discipline?result=${resultParam}` });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/teacher/discipline') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || auth.context.role !== ROLES.TEACHER) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const form = parseExtendedForm(await readBody(request));
+      const studentId = form.get('studentId') || '';
+      const returnTo = form.get('returnTo') || studentId;
+
+      // Ownership : student doit être dans une classe du teacher
+      const teacher = teacherStore.get(auth.context.tenantId, auth.context.userId, { includeArchived: false });
+      const student = studentId ? studentStore.get(auth.context.tenantId, studentId, { includeArchived: false }) : null;
+      if (!teacher || !student || !teacher.classRoomIds.includes(student.classRoomId)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      let resultParam = 'created';
+      try {
+        const created = disciplineStore.create(auth.context.tenantId, {
+          studentId,
+          recordedByUserId: auth.context.userId,
+          recordedByRole: auth.context.role,
+          measureType: form.get('measureType'),
+          occurredOn: form.get('occurredOn'),
+          scheduledFor: form.get('scheduledFor') || null,
+          durationMinutes: form.get('durationMinutes') || null,
+          description: form.get('description') || ''
+        });
+        auditWriter.writeEntityEvent(auth.context, 'discipline_record.created', 'discipline_record', created.id);
+      } catch (error) {
+        requestLogger.warn('Unable to record discipline measure (teacher)', { error: serializeError(error) });
+        resultParam = 'error';
+      }
+      response.writeHead(302, { location: `/teacher/students/${encodeURIComponent(returnTo)}?disc=${resultParam}` });
+      response.end();
+      return;
+    }
+
+    const disciplineDeleteMatch = url.pathname.match(/^\/discipline\/([^/]+)\/delete$/);
+    if (disciplineDeleteMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canRecordDisciplineMeasure(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const recordId = disciplineDeleteMatch[1];
+      const form = parseExtendedForm(await readBody(request));
+      const returnTo = form.get('returnTo') || '';
+      try {
+        const existing = disciplineStore.get(auth.context.tenantId, recordId);
+        if (!existing) {
+          sendNotFoundPage(response, session);
+          return;
+        }
+        disciplineStore.delete(auth.context.tenantId, recordId, {
+          actorUserId: auth.context.userId,
+          actorRole: auth.context.role
+        });
+        auditWriter.writeEntityEvent(auth.context, 'discipline_record.deleted', 'discipline_record', recordId);
+      } catch (error) {
+        requestLogger.warn('Unable to delete discipline measure', { error: serializeError(error) });
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const redirect = returnTo
+        ? (auth.context.role === ROLES.TEACHER
+            ? `/teacher/students/${encodeURIComponent(returnTo)}?disc=deleted`
+            : `/admin/students/${encodeURIComponent(returnTo)}?disc=deleted`)
+        : '/admin/discipline?result=deleted';
+      response.writeHead(302, { location: redirect });
+      response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/parent/discipline') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewParentDiscipline(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const records = disciplineStore.listForParent(auth.context.tenantId, auth.context.userId);
+      const recordsByStudent = new Map();
+      for (const r of records) {
+        if (!recordsByStudent.has(r.studentId)) recordsByStudent.set(r.studentId, []);
+        recordsByStudent.get(r.studentId).push(r);
+      }
+      const studentById = new Map(
+        studentStore.list(auth.context.tenantId, { includeArchived: true }).map((s) => [s.id, s])
+      );
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentDisciplineListPage(auth.context, recordsByStudent, studentById));
       return;
     }
 
@@ -5604,6 +6069,10 @@ function createServer({
         .listForStudent(auth.context.tenantId, studentId)
         .slice(0, 10);
 
+      const recentDisciplineRecords = disciplineStore
+        .listForStudent(auth.context.tenantId, studentId)
+        .slice(0, 10);
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
         renderStudentProfile(auth.context, student, classRooms, {
@@ -5615,6 +6084,7 @@ function createServer({
           recentGrades,
           recentEvents,
           recentAbsenceNotices,
+          recentDisciplineRecords,
           subjects
         })
       );

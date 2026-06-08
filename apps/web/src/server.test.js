@@ -4372,3 +4372,209 @@ test('VS-02: cross-tenant — admin-b ne voit aucune donnée school-a', async ()
     }
   });
 });
+
+// =====================================================================
+// Sprint 8 / VS-05 — Module discipline (observations, retenues, exclusions, convocations)
+// =====================================================================
+// Seed in-memory : 3 records discipline pour school-a :
+//   - discipline-demo-1 : teacher-a1 → student-a3 → observation (2026-04-18)
+//   - discipline-demo-2 : teacher-a2 → student-a4 → retenue (2026-04-19, 1h)
+//   - discipline-demo-3 : admin-a → student-a2 → convocation parents (2026-04-20)
+
+test('VS-05: teacher crée observation pour son élève → 302 + visible fiche élève', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    // teacher-a1 enseigne class-a1 → student-a1
+    const response = await postForm(baseUrl, '/teacher/discipline', {
+      cookie,
+      fields: {
+        studentId: 'student-a1',
+        returnTo: 'student-a1',
+        measureType: 'observation',
+        occurredOn: '2026-05-10',
+        description: 'Marker-VS05-test1'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /\/teacher\/students\/student-a1\?disc=created/);
+
+    const fiche = await fetch(`${baseUrl}/teacher/students/student-a1`, { headers: { cookie } });
+    const html = await fiche.text();
+    assert.ok(html.includes('Marker-VS05-test1'), 'mesure visible dans fiche élève');
+    assert.ok(html.includes('Observation'), 'badge type visible');
+  });
+});
+
+test('VS-05: teacher ne peut PAS créer pour élève hors de ses classes → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    // teacher-a1 n'enseigne pas class-a2 → student-a4 inaccessible
+    const response = await postForm(baseUrl, '/teacher/discipline', {
+      cookie,
+      fields: {
+        studentId: 'student-a4',
+        returnTo: 'student-a4',
+        measureType: 'observation',
+        occurredOn: '2026-05-10',
+        description: 'Test interdit'
+      }
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-05: admin crée retenue depuis /admin/discipline POST → visible liste', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/discipline', {
+      cookie,
+      fields: {
+        studentId: 'student-a3',
+        measureType: 'detention',
+        occurredOn: '2026-05-12',
+        scheduledFor: '2026-05-15',
+        durationMinutes: '120',
+        description: 'Marker-VS05-retenue-admin'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /result=created/);
+
+    const list = await fetch(`${baseUrl}/admin/discipline`, { headers: { cookie } });
+    const html = await list.text();
+    assert.ok(html.includes('Marker-VS05-retenue-admin'), 'retenue visible dans la liste admin');
+    assert.ok(html.includes('Retenue'), 'label FR Retenue');
+  });
+});
+
+test('VS-05: director crée aussi (même perm que admin)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await postForm(baseUrl, '/admin/discipline', {
+      cookie,
+      fields: {
+        studentId: 'student-a1',
+        measureType: 'parent_meeting',
+        occurredOn: '2026-05-13',
+        scheduledFor: '2026-05-20',
+        description: 'Convocation par director'
+      }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /result=created/);
+  });
+});
+
+test('VS-05: parent ne peut PAS créer (ni via /admin ni via /teacher)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const r1 = await postForm(baseUrl, '/admin/discipline', { cookie, fields: { studentId: 'student-a1', measureType: 'observation', occurredOn: '2026-05-10', description: 'X' } });
+    assert.equal(r1.status, 403);
+    const r2 = await postForm(baseUrl, '/teacher/discipline', { cookie, fields: { studentId: 'student-a1', measureType: 'observation', occurredOn: '2026-05-10', description: 'X' } });
+    assert.equal(r2.status, 403);
+  });
+});
+
+test('VS-05: parent voit ses enfants dans /parent/discipline (et pas les autres)', async () => {
+  await withServer(async (baseUrl) => {
+    // parent-a1 est lié à student-a1 et student-a2 (cf seed studentParentLinks)
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await fetch(`${baseUrl}/parent/discipline`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    // Le seed contient discipline-demo-3 pour student-a2 (convocation parents)
+    assert.ok(html.includes('Salim'), 'student-a2 (Salim, lié à parent-a1) visible');
+    // student-a3 (Lina) et student-a4 (Yanis) ne sont PAS liés à parent-a1
+    assert.ok(!html.includes('Lina'), 'student-a3 (Lina) NON liée à parent-a1 ne doit pas apparaître');
+    assert.ok(!html.includes('Yanis'), 'student-a4 (Yanis) NON liée à parent-a1 ne doit pas apparaître');
+  });
+});
+
+test('VS-05: cross-tenant : parent school-a ne voit pas mesures school-b', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await fetch(`${baseUrl}/parent/discipline`, { headers: { cookie } });
+    const html = await response.text();
+    assert.ok(!html.includes('school-b'), 'pas de fuite cross-tenant');
+    assert.ok(!html.includes('student-b'), 'pas d\'élève school-b');
+  });
+});
+
+test('VS-05: teacher supprime sa propre mesure', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    // créer une mesure marker
+    await postForm(baseUrl, '/teacher/discipline', {
+      cookie,
+      fields: {
+        studentId: 'student-a1',
+        returnTo: 'student-a1',
+        measureType: 'observation',
+        occurredOn: '2026-05-11',
+        description: 'Marker-supprime-VS05'
+      }
+    });
+    // récupérer l'id depuis la fiche
+    const fiche = await fetch(`${baseUrl}/teacher/students/student-a1`, { headers: { cookie } });
+    const html = await fiche.text();
+    const match = html.match(/action="\/discipline\/(discipline-[a-z0-9-]+)\/delete"/);
+    assert.ok(match, 'bouton supprimer présent');
+    const recordId = match[1];
+
+    const del = await postForm(baseUrl, `/discipline/${recordId}/delete`, {
+      cookie,
+      fields: { returnTo: 'student-a1' }
+    });
+    assert.equal(del.status, 302);
+    assert.match(del.headers.get('location') || '', /disc=deleted/);
+
+    const after = await fetch(`${baseUrl}/teacher/students/student-a1`, { headers: { cookie } });
+    const afterHtml = await after.text();
+    assert.ok(!afterHtml.includes('Marker-supprime-VS05'), 'mesure disparue');
+  });
+});
+
+test('VS-05: teacher ne peut PAS supprimer la mesure d\'un autre teacher', async () => {
+  await withServer(async (baseUrl) => {
+    // teacher-a2 essaie de supprimer discipline-demo-1 créée par teacher-a1
+    const { cookie } = await login(baseUrl, 'teacher2@school-a.test');
+    const response = await postForm(baseUrl, '/discipline/discipline-demo-1/delete', { cookie, fields: {} });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-05: admin peut supprimer n\'importe quelle mesure du tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/discipline/discipline-demo-1/delete', { cookie, fields: {} });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /(result=deleted|disc=deleted)/);
+  });
+});
+
+test('VS-05: nav admin contient "Discipline" + nav parent contient "Discipline"', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie: adminCookie } = await login(baseUrl, 'admin@school-a.test');
+    const adminPage = await fetch(`${baseUrl}/admin/discipline`, { headers: { cookie: adminCookie } });
+    const adminHtml = await adminPage.text();
+    assert.ok(adminHtml.includes('href="/admin/discipline"'), 'lien admin nav');
+
+    const { cookie: parentCookie } = await login(baseUrl, 'parent@school-a.test');
+    const parentPage = await fetch(`${baseUrl}/parent/discipline`, { headers: { cookie: parentCookie } });
+    const parentHtml = await parentPage.text();
+    assert.ok(parentHtml.includes('href="/parent/discipline"'), 'lien parent nav');
+  });
+});
+
+test('VS-05: CSRF — POST /admin/discipline sans token → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/discipline`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ studentId: 'student-a1', measureType: 'observation', occurredOn: '2026-05-10', description: 'no csrf' }).toString(),
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 403);
+  });
+});
