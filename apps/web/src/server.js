@@ -23,6 +23,16 @@ const {
   ATTENDANCE_EVENT_TYPE_BADGES,
   MAX_COMMENT_LENGTH: ATTENDANCE_EVENT_MAX_COMMENT_LENGTH
 } = require('./modules/attendance-events');
+const {
+  AbsenceNoticesStore,
+  ABSENCE_REASONS,
+  ABSENCE_REASON_LABELS_FR,
+  ABSENCE_STATUS_LABELS_FR,
+  ABSENCE_STATUS_BADGES,
+  ALLOWED_DOCUMENT_MIME_TYPES,
+  MAX_DOCUMENT_SIZE_BYTES,
+  MAX_COMMENT_LENGTH: ABSENCE_NOTICE_MAX_COMMENT_LENGTH
+} = require('./modules/absence-notices');
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
@@ -40,6 +50,7 @@ const { StudentService } = require('./services/student-service');
 const { ParentService } = require('./services/parent-service');
 const { TeacherService } = require('./services/teacher-service');
 const { AttendanceService } = require('./services/attendance-service');
+const { parseMultipart } = require('./routes/multipart');
 const { getPool, closePool } = require('../../../packages/database/src/client');
 const { loadRuntimeEnv } = require('../../../packages/core/src/runtime-env');
 const { PostgresCoreSchoolRepository } = require('./modules/persistence/postgres-core-school-repository');
@@ -294,6 +305,10 @@ function createSeedData() {
       { id: 'attendance-event-demo-2', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a1', studentId: 'student-a3', recordedByUserId: 'teacher-a1', recordedByRole: ROLES.TEACHER, eventType: 'observation', comment: 'Arrivé 15 minutes en retard sans justificatif.', created_at: now, updated_at: now },
       { id: 'attendance-event-demo-3', tenant_id: 'school-a', date: '2026-04-20', classRoomId: 'class-a2', studentId: 'student-a2', recordedByUserId: 'teacher-a2', recordedByRole: ROLES.TEACHER, eventType: 'infirmary', comment: 'Maux de tête, envoyé à l\'infirmerie 10h30, retour 11h.', created_at: now, updated_at: now }
     ],
+    absenceNotices: [
+      { id: 'absence-notice-demo-1', tenant_id: 'school-a', studentId: 'student-a1', createdByUserId: 'parent-a1', startDate: '2026-05-02', endDate: '2026-05-02', reason: 'rdv-medical', comment: 'Rendez-vous orthodontiste prévu le matin.', status: 'pending', documentFileName: null, documentMimeType: null, documentData: null, documentSizeBytes: null, created_at: now, updated_at: now },
+      { id: 'absence-notice-demo-2', tenant_id: 'school-a', studentId: 'student-a4', createdByUserId: 'parent-a2', startDate: '2026-04-22', endDate: '2026-04-24', reason: 'maladie', comment: 'Grippe avec fièvre, certificat médical joint.', status: 'pending', documentFileName: 'certif-medecin.pdf', documentMimeType: 'application/pdf', documentData: Buffer.from('%PDF-1.4 demo certif content'), documentSizeBytes: 28, created_at: now, updated_at: now }
+    ],
     lessonLogs: [
       { id: 'lesson-a1-math-2026-04-18', tenant_id: 'school-a', classRoomId: 'class-a1', subjectId: 'subject-a-math', teacherId: 'teacher-a1', date: '2026-04-18', content: 'Fractions équivalentes et exercices guidés.', created_at: now, updated_at: now },
       { id: 'lesson-a2-sci-2026-04-17', tenant_id: 'school-a', classRoomId: 'class-a2', subjectId: 'subject-a-sci', teacherId: 'teacher-a2', date: '2026-04-17', content: 'Cycle de l’eau + schéma à compléter.', created_at: now, updated_at: now }
@@ -442,6 +457,10 @@ function canViewParentFinance(session) {
   return session.role === ROLES.PARENT;
 }
 
+function canDeclareAbsence(session) {
+  return session.role === ROLES.PARENT;
+}
+
 function canCreateThreads(session) {
   return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.TEACHER;
 }
@@ -579,6 +598,13 @@ function extractCsrfTokenFromBody(bodyText, contentType) {
 
 async function enforceCsrf({ request, response, session }) {
   if (request.method !== 'POST') {
+    return true;
+  }
+  // VS-03: multipart/form-data POSTs cannot have their body consumed here
+  // (busboy must stream it). Such handlers are responsible for validating
+  // the CSRF token themselves after parsing the form.
+  const contentType = String(request.headers['content-type'] || '').toLowerCase();
+  if (contentType.startsWith('multipart/form-data')) {
     return true;
   }
   const headerToken = request.headers['x-csrf-token'];
@@ -1409,6 +1435,7 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Matières', href: '/admin/subjects', roles: [ROLES.SCHOOL_ADMIN] },
     { label: 'Tenants', href: '/admin/tenants', roles: [ROLES.SUPER_ADMIN] },
     { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
+    { label: 'Absences', href: '/parent/absences', roles: [ROLES.PARENT] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Finance', href: session.role === ROLES.PARENT ? '/parent/finance' : '/admin/finance', roles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT, ROLES.PARENT] },
@@ -2680,6 +2707,139 @@ function renderStudentEventsSection(events, { title = 'Événements récents' } 
   </section>`;
 }
 
+function renderAbsenceNoticeStatusBadge(status) {
+  const label = ABSENCE_STATUS_LABELS_FR[status] || status;
+  const tone = ABSENCE_STATUS_BADGES[status] || 'is-info';
+  return `<span class="el-badge ${tone}">${label}</span>`;
+}
+
+function renderStudentAbsenceNoticesSection(notices, { title = 'Absences déclarées par les parents' } = {}) {
+  if (!notices || notices.length === 0) {
+    return `<section class="el-card"><h3>${title}</h3><p class="el-empty-state">Aucune absence déclarée par les parents.</p></section>`;
+  }
+  const rows = notices
+    .map((notice) => {
+      const reasonLabel = ABSENCE_REASON_LABELS_FR[notice.reason] || notice.reason;
+      const period = notice.startDate === notice.endDate ? notice.startDate : `${notice.startDate} → ${notice.endDate}`;
+      const doc = notice.hasDocument ? '<span class="el-badge is-info">PDF/Image</span>' : '<span class="el-muted">—</span>';
+      const comment = notice.comment ? escapeHtml(notice.comment) : '<span class="el-muted">—</span>';
+      return `<tr>
+        <td>${period}</td>
+        <td>${reasonLabel}</td>
+        <td>${comment}</td>
+        <td>${doc}</td>
+        <td>${renderAbsenceNoticeStatusBadge(notice.status)}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<section class="el-card">
+    <h3>${title} <span class="el-badge">${notices.length}</span></h3>
+    <p class="el-muted">Déclarations transmises par les responsables (validation à venir en VS-04).</p>
+    <table><thead><tr><th>Période</th><th>Motif</th><th>Commentaire</th><th>Justificatif</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>
+  </section>`;
+}
+
+function renderParentAbsencesListPage(session, notices, studentById, { successMessage = null, errorMessage = null } = {}) {
+  const rows = notices
+    .map((notice) => {
+      const student = studentById.get(notice.studentId);
+      const studentName = student ? `${student.firstName} ${student.lastName}` : notice.studentId;
+      const reasonLabel = ABSENCE_REASON_LABELS_FR[notice.reason] || notice.reason;
+      const period = notice.startDate === notice.endDate ? notice.startDate : `${notice.startDate} → ${notice.endDate}`;
+      return `<tr>
+        <td>${period}</td>
+        <td>${escapeHtml(studentName)}</td>
+        <td>${reasonLabel}</td>
+        <td>${renderAbsenceNoticeStatusBadge(notice.status)}</td>
+        <td>${notice.hasDocument ? '✓' : '—'}</td>
+        <td><a href="/parent/absences/${notice.id}">Voir</a></td>
+      </tr>`;
+    })
+    .join('');
+  const banner = successMessage
+    ? `<p class="el-success-banner">${escapeHtml(successMessage)}</p>`
+    : errorMessage
+    ? `<p class="el-error-banner">${escapeHtml(errorMessage)}</p>`
+    : '';
+  return renderDashboardLayout(
+    'Absences déclarées',
+    session,
+    `${banner}
+    <section class="el-card">
+      <h2>Mes déclarations d'absence</h2>
+      <p class="el-muted">Prévenez l'école d'une absence à venir et joignez un justificatif (PDF, PNG ou JPG, 3 Mo max).</p>
+      <p><a href="/parent/absences/new" class="el-button">Déclarer une nouvelle absence</a></p>
+      <table>
+        <thead><tr><th>Période</th><th>Élève</th><th>Motif</th><th>Statut</th><th>Justif.</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6">Aucune absence déclarée pour le moment.</td></tr>'}</tbody>
+      </table>
+    </section>`
+  );
+}
+
+function renderParentAbsenceFormPage(session, students, { errorMessage = null, prefill = {} } = {}) {
+  const studentOptions = students
+    .map((s) => `<option value="${s.id}" ${prefill.studentId === s.id ? 'selected' : ''}>${escapeHtml(`${s.firstName} ${s.lastName}`)}</option>`)
+    .join('');
+  const reasonOptions = ABSENCE_REASONS
+    .map((r) => `<option value="${r}" ${prefill.reason === r ? 'selected' : ''}>${ABSENCE_REASON_LABELS_FR[r]}</option>`)
+    .join('');
+  const allowedAccept = ALLOWED_DOCUMENT_MIME_TYPES.join(',');
+  const banner = errorMessage ? `<p class="el-error-banner">${escapeHtml(errorMessage)}</p>` : '';
+  const today = todayIsoDate();
+
+  return renderDashboardLayout(
+    'Déclarer une absence',
+    session,
+    `${banner}
+    <section class="el-card">
+      <h2>Déclarer une absence</h2>
+      <p class="el-muted">Cette déclaration sera transmise à l'administration. Statut initial : "En attente". L'école pourra valider ou demander un complément.</p>
+      <form method="POST" action="/parent/absences" enctype="multipart/form-data">${csrfField(session)}
+        <label>Élève
+          <select name="studentId" required>${studentOptions}</select>
+        </label><br/>
+        <label>Du <input type="date" name="startDate" min="${today}" value="${escapeHtml(prefill.startDate || today)}" required /></label>
+        <label>Au <input type="date" name="endDate" min="${today}" value="${escapeHtml(prefill.endDate || today)}" required /></label><br/>
+        <label>Motif
+          <select name="reason" required>${reasonOptions}</select>
+        </label><br/>
+        <label>Commentaire (optionnel, ${ABSENCE_NOTICE_MAX_COMMENT_LENGTH} car. max)
+          <textarea name="comment" rows="3" maxlength="${ABSENCE_NOTICE_MAX_COMMENT_LENGTH}">${escapeHtml(prefill.comment || '')}</textarea>
+        </label><br/>
+        <label>Justificatif (optionnel, PDF / PNG / JPG, ${Math.round(MAX_DOCUMENT_SIZE_BYTES / 1024 / 1024)} Mo max)
+          <input type="file" name="document" accept="${allowedAccept}" />
+        </label><br/>
+        <button type="submit">Envoyer la déclaration</button>
+        <a href="/parent/absences">Annuler</a>
+      </form>
+    </section>`
+  );
+}
+
+function renderParentAbsenceDetailPage(session, notice, student) {
+  const studentName = student ? `${student.firstName} ${student.lastName}` : notice.studentId;
+  const reasonLabel = ABSENCE_REASON_LABELS_FR[notice.reason] || notice.reason;
+  const period = notice.startDate === notice.endDate ? notice.startDate : `${notice.startDate} → ${notice.endDate}`;
+  const documentBlock = notice.hasDocument
+    ? `<p><a href="/parent/absences/${notice.id}/document" target="_blank">Voir le justificatif (${escapeHtml(notice.documentFileName)}, ${Math.round((notice.documentSizeBytes || 0) / 1024)} Ko)</a></p>`
+    : '<p class="el-muted">Aucun justificatif joint.</p>';
+  return renderDashboardLayout(
+    'Détail de l\'absence',
+    session,
+    `<section class="el-card">
+      <h2>Absence déclarée</h2>
+      <p><strong>Élève :</strong> ${escapeHtml(studentName)}</p>
+      <p><strong>Période :</strong> ${period}</p>
+      <p><strong>Motif :</strong> ${reasonLabel}</p>
+      <p><strong>Statut :</strong> ${renderAbsenceNoticeStatusBadge(notice.status)}</p>
+      <p><strong>Commentaire :</strong> ${notice.comment ? escapeHtml(notice.comment) : '<span class="el-muted">—</span>'}</p>
+      ${documentBlock}
+      <p><a href="/parent/absences">← Retour à la liste</a></p>
+    </section>`
+  );
+}
+
 function renderStudentProfile(session, student, classRooms = [], {
   canManage = false,
   errorCode = null,
@@ -2688,6 +2848,7 @@ function renderStudentProfile(session, student, classRooms = [], {
   recentAttendance = [],
   recentGrades = [],
   recentEvents = [],
+  recentAbsenceNotices = [],
   subjects = []
 } = {}) {
   const classRoomName = classRooms.find((room) => room.id === student.classRoomId)?.name || student.classRoomId;
@@ -2734,6 +2895,7 @@ function renderStudentProfile(session, student, classRooms = [], {
     ${renderStudentParentsSection(parentLinks)}
     ${renderStudentAttendanceSection(recentAttendance, classRoomsById)}
     ${renderStudentEventsSection(recentEvents)}
+    ${renderStudentAbsenceNoticesSection(recentAbsenceNotices)}
     ${renderStudentGradesSection(recentGrades, subjectsById)}
     ${editForm}
     ${archiveForm}`
@@ -3355,6 +3517,11 @@ function createServer({
     events: seed.attendanceEvents || [],
     studentStore,
     classRoomStore: coreSchoolStore
+  });
+  const absenceNoticesStore = new AbsenceNoticesStore({
+    notices: seed.absenceNotices || [],
+    parentStore,
+    studentStore
   });
   const lessonHomeworkStore = new LessonHomeworkStore({
     lessonLogs: seed.lessonLogs,
@@ -4564,6 +4731,196 @@ function createServer({
       return;
     }
 
+    // ============================================================
+    // VS-03 — Parent prévient absence + upload justificatif
+    // ============================================================
+
+    if (request.method === 'GET' && url.pathname === '/parent/absences') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canDeclareAbsence(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const linkedStudents = parentStore
+        .listLinksByParent(auth.context.tenantId, auth.context.userId)
+        .map((link) => studentStore.get(auth.context.tenantId, link.studentId, { includeArchived: false }))
+        .filter(Boolean);
+      const studentById = new Map(linkedStudents.map((s) => [s.id, s]));
+      const notices = absenceNoticesStore.listForParent(auth.context.tenantId, auth.context.userId);
+
+      const statusParam = url.searchParams.get('status');
+      const successMessage =
+        statusParam === 'created'
+          ? 'Absence déclarée. L\'école va la traiter.'
+          : null;
+      const errorMessage =
+        statusParam === 'error'
+          ? "Impossible d'enregistrer la déclaration. Vérifiez les champs et le justificatif."
+          : null;
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentAbsencesListPage(auth.context, notices, studentById, { successMessage, errorMessage }));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/parent/absences/new') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canDeclareAbsence(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const linkedStudents = parentStore
+        .listLinksByParent(auth.context.tenantId, auth.context.userId)
+        .map((link) => studentStore.get(auth.context.tenantId, link.studentId, { includeArchived: false }))
+        .filter(Boolean);
+      if (linkedStudents.length === 0) {
+        response.writeHead(302, { location: '/parent/absences?status=error' });
+        response.end();
+        return;
+      }
+      const errorParam = url.searchParams.get('error');
+      const errorMessage =
+        errorParam === 'invalid_dates'
+          ? 'La date de fin doit être postérieure ou égale à la date de début.'
+          : errorParam === 'invalid_payload'
+          ? 'Formulaire invalide : vérifiez les champs et le justificatif.'
+          : errorParam === 'not_linked'
+          ? 'Vous ne pouvez déclarer une absence que pour vos enfants.'
+          : errorParam === 'file_too_large'
+          ? `Justificatif trop volumineux (max ${Math.round(MAX_DOCUMENT_SIZE_BYTES / 1024 / 1024)} Mo).`
+          : errorParam === 'invalid_mime'
+          ? 'Format de fichier non autorisé. Acceptés : PDF, PNG, JPG.'
+          : null;
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentAbsenceFormPage(auth.context, linkedStudents, { errorMessage }));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/parent/absences') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canDeclareAbsence(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      // CSRF check via parseMultipart fields (token first part of the form)
+      let fields;
+      let file;
+      try {
+        const parsed = await parseMultipart(request, {
+          maxFileSize: MAX_DOCUMENT_SIZE_BYTES,
+          allowedMimeTypes: ALLOWED_DOCUMENT_MIME_TYPES
+        });
+        fields = parsed.fields;
+        file = parsed.file;
+      } catch (error) {
+        requestLogger.warn('Unable to parse multipart absence-notice form', { error: serializeError(error) });
+        const message = (error && typeof error.message === 'string') ? error.message : '';
+        let errorCode = 'invalid_payload';
+        if (message.includes('File too large')) {
+          errorCode = 'file_too_large';
+        } else if (message.includes('mime type')) {
+          errorCode = 'invalid_mime';
+        }
+        response.writeHead(302, { location: `/parent/absences/new?error=${errorCode}` });
+        response.end();
+        return;
+      }
+
+      const csrfToken = fields.get('_csrf') || fields.get('csrfToken') || '';
+      if (!compareCsrfTokens(csrfToken, session.csrfToken)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+
+      const studentId = fields.get('studentId') || '';
+      const startDate = fields.get('startDate') || '';
+      const endDate = fields.get('endDate') || '';
+      const reason = fields.get('reason') || '';
+      const comment = fields.get('comment') || '';
+
+      try {
+        const document = file
+          ? { fileName: file.fileName, mimeType: file.mimeType, data: file.data }
+          : null;
+        const created = absenceNoticesStore.create(auth.context.tenantId, {
+          studentId,
+          createdByUserId: auth.context.userId,
+          startDate,
+          endDate,
+          reason,
+          comment,
+          document
+        });
+        auditWriter.writeEntityEvent(auth.context, 'absence_notice.created', 'absence_notice', created.id);
+      } catch (error) {
+        requestLogger.warn('Unable to persist absence notice', { error: serializeError(error) });
+        const message = (error && typeof error.message === 'string') ? error.message : '';
+        let errorCode = 'invalid_payload';
+        if (message.includes('endDate must be greater')) {
+          errorCode = 'invalid_dates';
+        } else if (message.includes('parent linked to this student')) {
+          errorCode = 'not_linked';
+        } else if (message.includes('document.data must be at most')) {
+          errorCode = 'file_too_large';
+        } else if (message.includes('document.mimeType must be one of')) {
+          errorCode = 'invalid_mime';
+        }
+        response.writeHead(302, { location: `/parent/absences/new?error=${errorCode}` });
+        response.end();
+        return;
+      }
+
+      response.writeHead(302, { location: '/parent/absences?status=created' });
+      response.end();
+      return;
+    }
+
+    const parentAbsenceDocMatch = url.pathname.match(/^\/parent\/absences\/([^/]+)\/document$/);
+    if (parentAbsenceDocMatch && request.method === 'GET') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canDeclareAbsence(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const noticeId = parentAbsenceDocMatch[1];
+      const notice = absenceNoticesStore.get(auth.context.tenantId, noticeId);
+      if (!notice || notice.createdByUserId !== auth.context.userId) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      const doc = absenceNoticesStore.getDocument(auth.context.tenantId, noticeId);
+      if (!doc) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      response.writeHead(200, {
+        'content-type': doc.mimeType,
+        'content-length': doc.sizeBytes,
+        'content-disposition': `inline; filename="${doc.fileName.replace(/"/g, '')}"`
+      });
+      response.end(doc.data);
+      return;
+    }
+
+    const parentAbsenceDetailMatch = url.pathname.match(/^\/parent\/absences\/([^/]+)$/);
+    if (parentAbsenceDetailMatch && request.method === 'GET' && parentAbsenceDetailMatch[1] !== 'new') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canDeclareAbsence(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const noticeId = parentAbsenceDetailMatch[1];
+      const notice = absenceNoticesStore.get(auth.context.tenantId, noticeId);
+      if (!notice || notice.createdByUserId !== auth.context.userId) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      const student = studentStore.get(auth.context.tenantId, notice.studentId, { includeArchived: true });
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderParentAbsenceDetailPage(auth.context, notice, student));
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname === '/student/grades') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.STUDENT) {
@@ -4757,6 +5114,10 @@ function createServer({
         .list(auth.context.tenantId, { studentId })
         .slice(0, 10);
 
+      const recentAbsenceNotices = absenceNoticesStore
+        .listForStudent(auth.context.tenantId, studentId)
+        .slice(0, 10);
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
         renderStudentProfile(auth.context, student, classRooms, {
@@ -4767,6 +5128,7 @@ function createServer({
           recentAttendance,
           recentGrades,
           recentEvents,
+          recentAbsenceNotices,
           subjects
         })
       );

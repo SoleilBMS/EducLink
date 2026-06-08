@@ -1,0 +1,241 @@
+const crypto = require('node:crypto');
+
+const {
+  buildValidationError,
+  requireDateString,
+  requireString
+} = require('./attendance');
+
+const ABSENCE_REASONS = ['maladie', 'rdv-medical', 'raison-familiale', 'autre'];
+
+const ABSENCE_REASON_LABELS_FR = {
+  maladie: 'Maladie',
+  'rdv-medical': 'Rendez-vous médical',
+  'raison-familiale': 'Raison familiale',
+  autre: 'Autre motif'
+};
+
+const ABSENCE_STATUSES = ['pending', 'approved', 'rejected'];
+
+const ABSENCE_STATUS_LABELS_FR = {
+  pending: 'En attente',
+  approved: 'Validée',
+  rejected: 'Refusée'
+};
+
+const ABSENCE_STATUS_BADGES = {
+  pending: 'is-warning',
+  approved: 'is-success',
+  rejected: 'is-error'
+};
+
+const ALLOWED_DOCUMENT_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+
+const MAX_DOCUMENT_SIZE_BYTES = 3 * 1024 * 1024;
+
+const MAX_COMMENT_LENGTH = 500;
+
+const MAX_FILE_NAME_LENGTH = 180;
+
+function normalizeOptionalComment(value) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  if (typeof value !== 'string') {
+    throw buildValidationError('comment must be a string');
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > MAX_COMMENT_LENGTH) {
+    throw buildValidationError(`comment must be at most ${MAX_COMMENT_LENGTH} characters`);
+  }
+  return trimmed;
+}
+
+function normalizeDocument(document) {
+  if (document === undefined || document === null) {
+    return null;
+  }
+  if (typeof document !== 'object') {
+    throw buildValidationError('document must be an object');
+  }
+
+  const fileName = requireString(document.fileName, 'document.fileName', 1, MAX_FILE_NAME_LENGTH);
+  const mimeType = requireString(document.mimeType, 'document.mimeType', 3, 120);
+  if (!ALLOWED_DOCUMENT_MIME_TYPES.includes(mimeType)) {
+    throw buildValidationError(
+      `document.mimeType must be one of: ${ALLOWED_DOCUMENT_MIME_TYPES.join(', ')}`
+    );
+  }
+
+  if (!Buffer.isBuffer(document.data)) {
+    throw buildValidationError('document.data must be a Buffer');
+  }
+  const size = document.data.length;
+  if (size === 0) {
+    throw buildValidationError('document.data must not be empty');
+  }
+  if (size > MAX_DOCUMENT_SIZE_BYTES) {
+    throw buildValidationError(
+      `document.data must be at most ${MAX_DOCUMENT_SIZE_BYTES} bytes`
+    );
+  }
+
+  return { fileName, mimeType, data: document.data, sizeBytes: size };
+}
+
+function shapeNotice(record) {
+  const hasDocument =
+    Boolean(record.documentFileName) && Boolean(record.documentMimeType) && (record.documentSizeBytes ?? 0) > 0;
+  return {
+    id: record.id,
+    tenant_id: record.tenant_id,
+    studentId: record.studentId,
+    createdByUserId: record.createdByUserId,
+    startDate: record.startDate,
+    endDate: record.endDate,
+    reason: record.reason,
+    comment: record.comment,
+    status: record.status,
+    hasDocument,
+    documentFileName: hasDocument ? record.documentFileName : null,
+    documentMimeType: hasDocument ? record.documentMimeType : null,
+    documentSizeBytes: hasDocument ? record.documentSizeBytes : null,
+    created_at: record.created_at,
+    updated_at: record.updated_at
+  };
+}
+
+class AbsenceNoticesStore {
+  constructor({ notices = [], parentStore, studentStore }) {
+    this.notices = notices.map((notice) => ({ ...notice }));
+    this.parentStore = parentStore;
+    this.studentStore = studentStore;
+  }
+
+  list(tenantId, { studentId, parentId, status } = {}) {
+    return this.notices
+      .filter((notice) => {
+        if (notice.tenant_id !== tenantId) {
+          return false;
+        }
+        if (studentId && notice.studentId !== studentId) {
+          return false;
+        }
+        if (parentId && notice.createdByUserId !== parentId) {
+          return false;
+        }
+        if (status && notice.status !== status) {
+          return false;
+        }
+        return true;
+      })
+      .map(shapeNotice)
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  }
+
+  listForParent(tenantId, parentId) {
+    return this.list(tenantId, { parentId });
+  }
+
+  listForStudent(tenantId, studentId) {
+    return this.list(tenantId, { studentId });
+  }
+
+  get(tenantId, noticeId) {
+    const found = this.notices.find(
+      (notice) => notice.tenant_id === tenantId && notice.id === noticeId
+    );
+    return found ? shapeNotice(found) : null;
+  }
+
+  getDocument(tenantId, noticeId) {
+    const found = this.notices.find(
+      (notice) => notice.tenant_id === tenantId && notice.id === noticeId
+    );
+    if (!found || !found.documentData) {
+      return null;
+    }
+    return {
+      fileName: found.documentFileName,
+      mimeType: found.documentMimeType,
+      data: found.documentData,
+      sizeBytes: found.documentSizeBytes
+    };
+  }
+
+  create(tenantId, {
+    studentId,
+    createdByUserId,
+    startDate,
+    endDate,
+    reason,
+    comment,
+    document
+  }) {
+    const normalizedStartDate = requireDateString(startDate, 'startDate');
+    const normalizedEndDate = requireDateString(endDate, 'endDate');
+    if (normalizedEndDate < normalizedStartDate) {
+      throw buildValidationError('endDate must be greater than or equal to startDate');
+    }
+
+    const normalizedStudentId = requireString(studentId, 'studentId', 2, 120);
+    const normalizedParentId = requireString(createdByUserId, 'createdByUserId', 2, 120);
+    const normalizedReason = requireString(reason, 'reason', 2, 40);
+    if (!ABSENCE_REASONS.includes(normalizedReason)) {
+      throw buildValidationError(
+        `reason must be one of: ${ABSENCE_REASONS.join(', ')}`
+      );
+    }
+
+    const normalizedComment = normalizeOptionalComment(comment);
+    const normalizedDocument = normalizeDocument(document);
+
+    const student = this.studentStore.get(tenantId, normalizedStudentId, { includeArchived: false });
+    if (!student) {
+      throw buildValidationError('studentId must reference an active student in tenant scope');
+    }
+
+    const links = this.parentStore.listLinksByStudent(tenantId, normalizedStudentId);
+    const isLinked = links.some((link) => link.parentId === normalizedParentId);
+    if (!isLinked) {
+      throw buildValidationError('Only a parent linked to this student can declare an absence');
+    }
+
+    const now = new Date().toISOString();
+    const created = {
+      id: `absence-notice-${crypto.randomUUID()}`,
+      tenant_id: tenantId,
+      studentId: normalizedStudentId,
+      createdByUserId: normalizedParentId,
+      startDate: normalizedStartDate,
+      endDate: normalizedEndDate,
+      reason: normalizedReason,
+      comment: normalizedComment,
+      status: 'pending',
+      documentFileName: normalizedDocument?.fileName ?? null,
+      documentMimeType: normalizedDocument?.mimeType ?? null,
+      documentData: normalizedDocument?.data ?? null,
+      documentSizeBytes: normalizedDocument?.sizeBytes ?? null,
+      created_at: now,
+      updated_at: now
+    };
+    this.notices.push(created);
+    return shapeNotice(created);
+  }
+}
+
+module.exports = {
+  AbsenceNoticesStore,
+  ABSENCE_REASONS,
+  ABSENCE_REASON_LABELS_FR,
+  ABSENCE_STATUSES,
+  ABSENCE_STATUS_LABELS_FR,
+  ABSENCE_STATUS_BADGES,
+  ALLOWED_DOCUMENT_MIME_TYPES,
+  MAX_DOCUMENT_SIZE_BYTES,
+  MAX_COMMENT_LENGTH,
+  MAX_FILE_NAME_LENGTH,
+  normalizeOptionalComment,
+  normalizeDocument,
+  shapeNotice
+};

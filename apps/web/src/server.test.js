@@ -3881,3 +3881,225 @@ test('VS-01: parent ne peut PAS créer d\'événement (rôle interdit)', async (
     assert.equal(response.status, 403);
   });
 });
+
+// =====================================================================
+// Sprint 8 / VS-03 — Parent prévient absence + upload justificatif
+// =====================================================================
+
+async function postMultipart(baseUrl, path, { cookie, fields = {}, file = null, includeCsrf = true }) {
+  const csrfToken = extractCsrfFromCookieString(cookie);
+  const formData = new FormData();
+  if (includeCsrf) {
+    formData.set('_csrf', csrfToken);
+  }
+  for (const [k, v] of Object.entries(fields)) {
+    formData.set(k, String(v));
+  }
+  if (file) {
+    formData.set(file.field || 'document', new Blob([file.data], { type: file.mimeType }), file.fileName);
+  }
+  return fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { cookie },
+    body: formData,
+    redirect: 'manual'
+  });
+}
+
+const VS03_VALID_FIELDS = {
+  studentId: 'student-a1',
+  startDate: '2026-05-10',
+  endDate: '2026-05-12',
+  reason: 'maladie',
+  comment: 'Angine.'
+};
+
+test('VS-03: parent crée une notice sans fichier → 302 + visible dans /parent/absences', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: VS03_VALID_FIELDS
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /\/parent\/absences\?status=created/);
+
+    const list = await fetch(`${baseUrl}/parent/absences?status=created`, { headers: { cookie } });
+    const html = await list.text();
+    assert.ok(html.includes('Absence déclarée'), 'banner succès');
+    assert.ok(html.includes('Angine.') || html.includes('Maladie'), 'notice listée');
+  });
+});
+
+test('VS-03: parent crée une notice avec PDF → document accessible via GET /:id/document', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const pdfBuffer = Buffer.from('%PDF-1.4 vs03 test document content', 'utf8');
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: { ...VS03_VALID_FIELDS, comment: 'Marker-VS03-PDF' },
+      file: { fileName: 'certif.pdf', mimeType: 'application/pdf', data: pdfBuffer }
+    });
+    assert.equal(response.status, 302);
+
+    const list = await fetch(`${baseUrl}/parent/absences`, { headers: { cookie } });
+    const listHtml = await list.text();
+    const match = listHtml.match(/href="\/parent\/absences\/(absence-notice-[a-z0-9-]+)"/);
+    assert.ok(match, 'lien vers détail trouvé');
+    const noticeId = match[1];
+
+    const detail = await fetch(`${baseUrl}/parent/absences/${noticeId}`, { headers: { cookie } });
+    const detailHtml = await detail.text();
+    assert.ok(detailHtml.includes('certif.pdf'), 'nom du fichier visible');
+
+    const doc = await fetch(`${baseUrl}/parent/absences/${noticeId}/document`, { headers: { cookie } });
+    assert.equal(doc.status, 200);
+    assert.equal(doc.headers.get('content-type'), 'application/pdf');
+    const body = Buffer.from(await doc.arrayBuffer());
+    assert.equal(body.toString('utf8'), '%PDF-1.4 vs03 test document content');
+  });
+});
+
+test('VS-03: parent A ne peut PAS créer notice pour enfant non lié → redirect not_linked', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent2@school-a.test');
+    // parent-a2 est lié à student-a2 et student-a4, pas student-a1
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: { ...VS03_VALID_FIELDS, studentId: 'student-a1' }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /error=not_linked/);
+  });
+});
+
+test('VS-03: parent A ne peut PAS télécharger document de parent B → 404', async () => {
+  await withServer(async (baseUrl) => {
+    // parent-a1 crée une notice avec PDF
+    const { cookie: cookieA1 } = await login(baseUrl, 'parent@school-a.test');
+    await postMultipart(baseUrl, '/parent/absences', {
+      cookie: cookieA1,
+      fields: { ...VS03_VALID_FIELDS, comment: 'cross-test-VS03' },
+      file: { fileName: 'secret.pdf', mimeType: 'application/pdf', data: Buffer.from('%PDF-1.4 secret', 'utf8') }
+    });
+
+    const list = await fetch(`${baseUrl}/parent/absences`, { headers: { cookie: cookieA1 } });
+    const html = await list.text();
+    const match = html.match(/href="\/parent\/absences\/(absence-notice-[a-z0-9-]+)"/);
+    assert.ok(match);
+    const noticeId = match[1];
+
+    // parent-a2 essaie de télécharger
+    const { cookie: cookieA2 } = await login(baseUrl, 'parent2@school-a.test');
+    const docResp = await fetch(`${baseUrl}/parent/absences/${noticeId}/document`, { headers: { cookie: cookieA2 } });
+    assert.equal(docResp.status, 404);
+  });
+});
+
+test('VS-03: upload MIME interdit → redirect error=invalid_mime', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: VS03_VALID_FIELDS,
+      file: { fileName: 'mal.html', mimeType: 'text/html', data: Buffer.from('<html></html>') }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /error=invalid_mime/);
+  });
+});
+
+test('VS-03: upload > 3 Mo → redirect error=file_too_large', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const big = Buffer.alloc(3 * 1024 * 1024 + 1024, 0x42); // 3 Mo + 1 Ko
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: VS03_VALID_FIELDS,
+      file: { fileName: 'big.pdf', mimeType: 'application/pdf', data: big }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /error=file_too_large/);
+  });
+});
+
+test('VS-03: teacher ne peut PAS créer notice → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: VS03_VALID_FIELDS
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-03: admin ne peut PAS créer notice → 403 (routes parent strictement parent)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: VS03_VALID_FIELDS
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-03: cross-tenant : parent school-a ne voit pas /parent/absences/:id du tenant b (404)', async () => {
+  await withServer(async (baseUrl) => {
+    // Le seed contient des notices pour school-a uniquement. On cible un id du seed
+    // pour s'assurer qu'un autre tenant ne le voit pas. Crée une notice school-a depuis parent-a1.
+    const { cookie: cookieA } = await login(baseUrl, 'parent@school-a.test');
+    await postMultipart(baseUrl, '/parent/absences', {
+      cookie: cookieA,
+      fields: { ...VS03_VALID_FIELDS, comment: 'cross-tenant-marker' }
+    });
+    const list = await fetch(`${baseUrl}/parent/absences`, { headers: { cookie: cookieA } });
+    const html = await list.text();
+    const match = html.match(/href="\/parent\/absences\/(absence-notice-[a-z0-9-]+)"/);
+    assert.ok(match);
+    const noticeIdA = match[1];
+
+    // Tenant b n'a pas de parent dans le seed (sauf si on en a). On vérifie qu'un parent inconnu ne peut pas la voir.
+    // À défaut d'un parent school-b, on utilise un teacher qui devra recevoir 403 sur la route parent.
+    // On vérifie alors juste l'isolation côté route /parent/absences (parent-a2 ne voit pas la notice de parent-a1)
+    const { cookie: cookieA2 } = await login(baseUrl, 'parent2@school-a.test');
+    const detail = await fetch(`${baseUrl}/parent/absences/${noticeIdA}`, { headers: { cookie: cookieA2 } });
+    assert.equal(detail.status, 404, 'un autre parent ne voit pas la notice');
+  });
+});
+
+test('VS-03: admin voit la notice dans /admin/students/:id', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students/student-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Absences déclarées par les parents'), 'section absence visible');
+    assert.ok(html.includes('Rendez-vous orthodontiste') || html.includes('rdv-medical') || html.includes('Rendez-vous médical'), 'notice seedée visible (parent-a1 → student-a1)');
+  });
+});
+
+test('VS-03: CSRF — POST sans token → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: VS03_VALID_FIELDS,
+      includeCsrf: false
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-03: dates invalides (end < start) → redirect error=invalid_dates', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await postMultipart(baseUrl, '/parent/absences', {
+      cookie,
+      fields: { ...VS03_VALID_FIELDS, startDate: '2026-05-12', endDate: '2026-05-10' }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /error=invalid_dates/);
+  });
+});

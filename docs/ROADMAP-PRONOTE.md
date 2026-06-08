@@ -185,10 +185,10 @@ Légende : 🟢 1-3j · 🟡 ~1 sem · 🟠 2-4 sem · 🔴 module entier >1 moi
 ### Sprint 8 — Vie scolaire enrichie (2 semaines) ⭐ **EN COURS**
 **Objectif :** que le CPE/admin puisse piloter la vie scolaire au quotidien comme dans PRONOTE.
 
-- ✅ VS-01 — Feuille d'appel enrichie (retards, infirmerie, observations, sanctions, encouragements) — statut `excused` ajouté, table `attendance_events` (4 types), routes POST teacher/admin, vues fiche élève + admin attendance enrichies, 12 tests unitaires + 9 tests HTTP (210/210 OK)
+- ✅ VS-01 — Feuille d'appel enrichie (retards, infirmerie, observations, sanctions, encouragements) — statut `excused` ajouté, table `attendance_events` (4 types), routes POST teacher/admin, vues fiche élève + admin attendance enrichies, 12 tests unitaires + 9 tests HTTP
 - VS-02 — Tableau de bord vie scolaire (absents jour, appels non faits, exclus, convocations)
-- VS-03 — Parent prévient absence depuis son espace + upload justificatif
-- VS-04 — Workflow validation justificatifs côté admin
+- ✅ VS-03 — Parent prévient absence + upload justificatif — table `absence_notices` (statut pending/approved/rejected, BYTEA pour le doc 3 Mo max PDF/PNG/JPG), helper `multipart.js` (busboy), 5 routes `/parent/absences*`, section "Absences déclarées" dans fiche élève admin, 13 tests unitaires + 6 tests multipart + 12 tests HTTP (303/303 OK avec lint)
+- VS-04 — Workflow validation justificatifs côté admin (approve/reject + sync `attendance_records`)
 - VS-05 — Module discipline léger (punitions, retenues, observations comportement)
 - VS-06 — Stats absentéisme + seuils d'alerte (top 10 élèves les plus absents, retards récurrents)
 - VS-07 — **Détection décrocheurs IA** : agrège notes + absences + retards + sanctions, classe les élèves par niveau de risque, génère synthèse pour CPE

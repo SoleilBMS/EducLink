@@ -168,6 +168,11 @@ const attendanceEvents = [
   { id: 'evt-a2-1', tenantId: 'school-a', date: '2026-03-17', classRoomId: 'class-a2', studentId: 'student-a3', recordedByUserId: 'teacher-a3', recordedByRole: 'teacher', eventType: 'infirmary', comment: 'Maux de tête, envoyé à l\'infirmerie 10h.' }
 ];
 
+const absenceNotices = [
+  { id: 'abs-notice-a-1', tenantId: 'school-a', studentId: 'student-a1', createdByUserId: 'parent-a1', startDate: '2026-04-02', endDate: '2026-04-02', reason: 'rdv-medical', comment: 'Rendez-vous orthodontiste prévu le matin.', status: 'pending', documentFileName: null, documentMimeType: null, documentData: null, documentSizeBytes: null },
+  { id: 'abs-notice-a-2', tenantId: 'school-a', studentId: 'student-a2', createdByUserId: 'parent-a2', startDate: '2026-03-22', endDate: '2026-03-24', reason: 'maladie', comment: 'Grippe avec fièvre, certificat médical joint.', status: 'pending', documentFileName: 'certif-medecin.pdf', documentMimeType: 'application/pdf', documentData: Buffer.from('%PDF-1.4 demo certif content'), documentSizeBytes: 28 }
+];
+
 const announcements = [
   {
     id: 'announcement-a1',
@@ -367,6 +372,15 @@ async function seed() {
      ON CONFLICT (id) DO NOTHING`,
     attendanceEvents,
     (row) => [row.id, row.tenantId, row.date, row.classRoomId, row.studentId, row.recordedByUserId, row.recordedByRole, row.eventType, row.comment]
+  );
+
+  await insertMany(
+    pool,
+    `INSERT INTO absence_notices (id, tenant_id, student_id, created_by_user_id, start_date, end_date, reason, comment, status, document_file_name, document_mime_type, document_data, document_size_bytes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT (id) DO NOTHING`,
+    absenceNotices,
+    (row) => [row.id, row.tenantId, row.studentId, row.createdByUserId, row.startDate, row.endDate, row.reason, row.comment, row.status, row.documentFileName, row.documentMimeType, row.documentData, row.documentSizeBytes]
   );
 
   await insertMany(
