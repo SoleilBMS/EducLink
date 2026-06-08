@@ -186,7 +186,7 @@ Légende : 🟢 1-3j · 🟡 ~1 sem · 🟠 2-4 sem · 🔴 module entier >1 moi
 **Objectif :** que le CPE/admin puisse piloter la vie scolaire au quotidien comme dans PRONOTE.
 
 - ✅ VS-01 — Feuille d'appel enrichie (retards, infirmerie, observations, sanctions, encouragements) — statut `excused` ajouté, table `attendance_events` (4 types), routes POST teacher/admin, vues fiche élève + admin attendance enrichies, 12 tests unitaires + 9 tests HTTP
-- VS-02 — Tableau de bord vie scolaire (absents jour, appels non faits, exclus, convocations)
+- ✅ VS-02 — Dashboard vie scolaire `/admin/vie-scolaire` (admin/director) — 5 cards agrégées (absents jour, retards, appels non faits, notices à valider, événements jour) avec filtre date + classe, lien nav dédié, 8 tests HTTP
 - ✅ VS-03 — Parent prévient absence + upload justificatif — table `absence_notices` (statut pending/approved/rejected, BYTEA pour le doc 3 Mo max PDF/PNG/JPG), helper `multipart.js` (busboy), 5 routes `/parent/absences*`, section "Absences déclarées" dans fiche élève admin, 13 tests unitaires + 6 tests multipart + 12 tests HTTP
 - ✅ VS-04 — Workflow validation justificatifs admin — migration 007 (3 colonnes `reviewed_by_user_id`/`reviewed_at`/`review_comment`), méthode `review()` sur store + repo Postgres, page `/admin/absences` + détail avec actions approve/reject (motif obligatoire), sync `attendance_records` status=`excused` pour chaque jour de la période (réutilise `upsertForClass` avec le 1er teacher de la classe), badge "X en attente" dynamique dans nav admin/director, 8 tests unitaires + 12 tests HTTP (~327/327 OK avec lint)
 - VS-05 — Module discipline léger (punitions, retenues, observations comportement)

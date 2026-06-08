@@ -4277,3 +4277,98 @@ test('VS-04: admin télécharge le justificatif via /admin/absences/:id/document
     assert.ok(body.toString('utf8').startsWith('%PDF-'), 'contenu PDF du seed');
   });
 });
+
+// =====================================================================
+// Sprint 8 / VS-02 — Dashboard vie scolaire (admin / director)
+// =====================================================================
+// Le seed contient pour le 2026-04-20 : 1 absent (student-a4 class-a2),
+// 1 retard (student-a3 class-a1) et 3 attendance events. Aucune classe n'a
+// d'appel saisi en dehors du 2026-04-20 → utile pour le test "appels non faits".
+
+test('VS-02: admin voit /admin/vie-scolaire avec les 5 cards', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire?date=2026-04-20`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    for (const label of ['Absents du jour', 'Retards du jour', 'Appels non faits', 'Notices à valider', 'Événements du jour']) {
+      assert.ok(html.includes(label), `card "${label}" présente`);
+    }
+    assert.ok(html.includes('Vie scolaire — tableau de bord du jour'), 'titre principal');
+  });
+});
+
+test('VS-02: director voit aussi le dashboard (même perm)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+  });
+});
+
+test('VS-02: teacher → 403 sur /admin/vie-scolaire', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-02: parent → 403 sur /admin/vie-scolaire', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-02: date sans données → cards à 0 + sections vides', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire?date=2030-12-31`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Aucun élève absent'), 'message vide absents');
+    assert.ok(html.includes('Aucun événement consigné'), 'message vide événements');
+    // Toutes les classes du tenant doivent figurer dans "appels non faits" pour cette date inexistante
+    assert.ok(!html.includes('Tous les appels sont saisis.'), 'au moins 1 classe sans appel pour une date future');
+  });
+});
+
+test('VS-02: filtre classe limite les indicateurs (class-a1 seulement)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire?date=2026-04-20&classRoomId=class-a1`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    // Le seed pour 2026-04-20 a 1 absent en class-a2 (student-a4). Avec filtre class-a1, il ne doit PAS apparaître.
+    assert.ok(!html.includes('student-a4'), 'student-a4 (class-a2) absent de la vue filtrée class-a1');
+    // En revanche student-a3 (class-a1, status late) est dans dayRecords mais pas dans absents (juste compté dans retards).
+  });
+});
+
+test('VS-02: nav admin contient "Vie scolaire" entre "Présences" et "Absences"', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire`, { headers: { cookie } });
+    const html = await response.text();
+    const presPos = html.indexOf('href="/admin/attendance"');
+    const viePos = html.indexOf('href="/admin/vie-scolaire"');
+    const absPos = html.indexOf('href="/admin/absences"');
+    assert.ok(presPos > 0 && viePos > 0 && absPos > 0, 'les 3 liens sont présents');
+    assert.ok(presPos < viePos && viePos < absPos, 'ordre Présences → Vie scolaire → Absences dans la nav');
+  });
+});
+
+test('VS-02: cross-tenant — admin-b ne voit aucune donnée school-a', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-b.test');
+    const response = await fetch(`${baseUrl}/admin/vie-scolaire?date=2026-04-20`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    // Aucun nom d'élève school-a (Aya, Salim, Lina, Yanis, Ines) ne doit apparaître
+    for (const name of ['Aya', 'Salim', 'Lina', 'Yanis', 'Ines']) {
+      assert.ok(!html.includes(name), `pas de fuite cross-tenant : ${name} ne doit pas apparaître`);
+    }
+  });
+});

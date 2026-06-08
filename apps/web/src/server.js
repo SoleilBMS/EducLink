@@ -465,6 +465,10 @@ function canReviewAbsenceNotice(session) {
   return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
 }
 
+function canViewVieScolaireDashboard(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+}
+
 function canCreateThreads(session) {
   return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.TEACHER;
 }
@@ -1443,6 +1447,7 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Matières', href: '/admin/subjects', roles: [ROLES.SCHOOL_ADMIN] },
     { label: 'Tenants', href: '/admin/tenants', roles: [ROLES.SUPER_ADMIN] },
     { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
+    { label: 'Vie scolaire', href: '/admin/vie-scolaire', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Absences', href: '/parent/absences', roles: [ROLES.PARENT] },
     { label: absencesAdminLabel, href: '/admin/absences', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
@@ -2857,6 +2862,106 @@ function renderParentAbsenceDetailPage(session, notice, student) {
       <p><a href="/parent/absences">← Retour à la liste</a></p>
     </section>
     ${reviewBlock}`
+  );
+}
+
+function renderAdminVieScolaireDashboardPage(session, {
+  selectedDate,
+  selectedClassRoomId,
+  classRooms,
+  absentRecords,
+  lateRecords,
+  classesWithoutAttendance,
+  pendingNoticesCount,
+  eventsToday,
+  studentById
+}) {
+  const classOptions = ['<option value="">Toutes les classes</option>']
+    .concat(classRooms.map((c) => `<option value="${c.id}" ${c.id === selectedClassRoomId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`))
+    .join('');
+
+  const classRoomNameById = new Map(classRooms.map((c) => [c.id, c.name]));
+  const classFilterSuffix = selectedClassRoomId ? `&classRoomId=${encodeURIComponent(selectedClassRoomId)}` : '';
+  const attendanceLink = `/admin/attendance?date=${encodeURIComponent(selectedDate)}${classFilterSuffix}`;
+
+  const formatStudentName = (studentId) => {
+    const s = studentById.get(studentId);
+    return s ? `${s.firstName} ${s.lastName}` : studentId;
+  };
+
+  const absentsRows = absentRecords.length === 0
+    ? '<tr><td colspan="3"><span class="el-empty-state">Aucun élève absent pour ce filtre.</span></td></tr>'
+    : absentRecords.slice(0, 20).map((r) => {
+        const className = classRoomNameById.get(r.classRoomId) || r.classRoomId;
+        return `<tr>
+          <td><a href="/admin/students/${r.studentId}">${escapeHtml(formatStudentName(r.studentId))}</a></td>
+          <td>${escapeHtml(className)}</td>
+          <td><span class="el-badge is-error">Absent</span></td>
+        </tr>`;
+      }).join('');
+
+  const missingCallsRows = classesWithoutAttendance.length === 0
+    ? '<tr><td colspan="2"><span class="el-empty-state">Tous les appels sont saisis.</span></td></tr>'
+    : classesWithoutAttendance.map((c) => `<tr>
+        <td>${escapeHtml(c.name)}</td>
+        <td><a href="/teacher/attendance?date=${encodeURIComponent(selectedDate)}&classRoomId=${encodeURIComponent(c.id)}">Aller à l'appel</a></td>
+      </tr>`).join('');
+
+  const eventsRows = eventsToday.length === 0
+    ? '<tr><td colspan="4"><span class="el-empty-state">Aucun événement consigné ce jour.</span></td></tr>'
+    : eventsToday.slice(0, 10).map((e) => {
+        const label = ATTENDANCE_EVENT_TYPE_LABELS_FR[e.eventType] || e.eventType;
+        const tone = ATTENDANCE_EVENT_TYPE_BADGES[e.eventType] || 'is-info';
+        const className = classRoomNameById.get(e.classRoomId) || e.classRoomId;
+        const comment = e.comment ? escapeHtml(e.comment) : '<span class="el-muted">—</span>';
+        return `<tr>
+          <td><a href="/admin/students/${e.studentId}">${escapeHtml(formatStudentName(e.studentId))}</a></td>
+          <td>${escapeHtml(className)}</td>
+          <td><span class="el-badge ${tone}">${label}</span></td>
+          <td>${comment}</td>
+        </tr>`;
+      }).join('');
+
+  return renderDashboardLayout(
+    'Vie scolaire',
+    session,
+    `<section class="el-card">
+      <h2>Vie scolaire — tableau de bord du jour</h2>
+      <form method="GET" action="/admin/vie-scolaire">
+        <label>Date <input type="date" name="date" value="${escapeHtml(selectedDate)}" /></label>
+        <label>Classe <select name="classRoomId">${classOptions}</select></label>
+        <button type="submit">Filtrer</button>
+      </form>
+      <div class="el-metric-grid">
+        ${renderMetricCard('Absents du jour', `<a href="${attendanceLink}">${absentRecords.length}</a>`)}
+        ${renderMetricCard('Retards du jour', `<a href="${attendanceLink}">${lateRecords.length}</a>`)}
+        ${renderMetricCard('Appels non faits', `<a href="#appels-non-faits">${classesWithoutAttendance.length}</a>`)}
+        ${renderMetricCard('Notices à valider', `<a href="/admin/absences?status=pending">${pendingNoticesCount}</a>`)}
+        ${renderMetricCard('Événements du jour', `<a href="#evenements-jour">${eventsToday.length}</a>`)}
+      </div>
+    </section>
+    <section class="el-card" id="absents-jour">
+      <h3>Élèves absents ${absentRecords.length > 20 ? `<span class="el-muted">(20 premiers sur ${absentRecords.length})</span>` : ''}</h3>
+      <table>
+        <thead><tr><th>Élève</th><th>Classe</th><th>Statut</th></tr></thead>
+        <tbody>${absentsRows}</tbody>
+      </table>
+      ${absentRecords.length > 20 ? `<p><a href="${attendanceLink}">Voir tous les absents →</a></p>` : ''}
+    </section>
+    <section class="el-card" id="appels-non-faits">
+      <h3>Classes sans appel saisi pour ${escapeHtml(selectedDate)}</h3>
+      <table>
+        <thead><tr><th>Classe</th><th></th></tr></thead>
+        <tbody>${missingCallsRows}</tbody>
+      </table>
+    </section>
+    <section class="el-card" id="evenements-jour">
+      <h3>Événements vie scolaire ${eventsToday.length > 10 ? `<span class="el-muted">(10 premiers sur ${eventsToday.length})</span>` : ''}</h3>
+      <table>
+        <thead><tr><th>Élève</th><th>Classe</th><th>Type</th><th>Commentaire</th></tr></thead>
+        <tbody>${eventsRows}</tbody>
+      </table>
+    </section>`
   );
 }
 
@@ -5068,6 +5173,67 @@ function createServer({
       const student = studentStore.get(auth.context.tenantId, notice.studentId, { includeArchived: true });
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderParentAbsenceDetailPage(auth.context, notice, student));
+      return;
+    }
+
+    // ============================================================
+    // VS-02 — Dashboard vie scolaire (admin / director)
+    // ============================================================
+
+    if (request.method === 'GET' && url.pathname === '/admin/vie-scolaire') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewVieScolaireDashboard(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+
+      const rawDate = url.searchParams.get('date');
+      let selectedDate;
+      try {
+        selectedDate = rawDate ? requireDateString(rawDate, 'date') : todayIsoDate();
+      } catch {
+        selectedDate = todayIsoDate();
+      }
+      const selectedClassRoomId = url.searchParams.get('classRoomId') || '';
+
+      const classRooms = coreSchoolStore.list('classRooms', tenantId);
+      const dayRecords = attendanceStore.list(tenantId, {
+        date: selectedDate,
+        classRoomId: selectedClassRoomId || undefined
+      });
+      const absentRecords = dayRecords.filter((r) => r.status === 'absent');
+      const lateRecords = dayRecords.filter((r) => r.status === 'late');
+
+      const targetClasses = selectedClassRoomId
+        ? classRooms.filter((c) => c.id === selectedClassRoomId)
+        : classRooms;
+      const classesWithoutAttendance = targetClasses.filter(
+        (c) => !dayRecords.some((r) => r.classRoomId === c.id)
+      );
+
+      const pendingNoticesCount = absenceNoticesStore.list(tenantId, { status: 'pending' }).length;
+      const eventsToday = attendanceEventsStore.list(tenantId, {
+        date: selectedDate,
+        classRoomId: selectedClassRoomId || undefined
+      });
+
+      const studentById = new Map(
+        studentStore.list(tenantId, { includeArchived: true }).map((s) => [s.id, s])
+      );
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminVieScolaireDashboardPage(auth.context, {
+        selectedDate,
+        selectedClassRoomId,
+        classRooms,
+        absentRecords,
+        lateRecords,
+        classesWithoutAttendance,
+        pendingNoticesCount,
+        eventsToday,
+        studentById
+      }));
       return;
     }
 
