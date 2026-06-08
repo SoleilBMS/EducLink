@@ -3,22 +3,64 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --surface: 255 255 255;
+    --surface-alt: 248 250 252;
+    --surface-bg: 249 250 251;
+    --surface-elevated: 255 255 255;
+    --ink: 17 24 39;
+    --ink-muted: 104 114 128;
+    --ink-soft: 156 163 175;
+    --line: 229 231 235;
+    --line-strong: 209 213 219;
+    --glow-1: 34 197 94;
+    --glow-2: 124 58 237;
+    --glow-3: 236 72 153;
+    --ring-offset: 255 255 255;
+  }
+  .dark {
+    --surface: 17 26 53;
+    --surface-alt: 23 34 66;
+    --surface-bg: 11 16 32;
+    --surface-elevated: 26 38 74;
+    --ink: 229 231 235;
+    --ink-muted: 156 163 175;
+    --ink-soft: 107 114 128;
+    --line: 38 50 86;
+    --line-strong: 60 72 110;
+    --glow-1: 34 197 94;
+    --glow-2: 168 85 247;
+    --glow-3: 244 63 94;
+    --ring-offset: 11 16 32;
+  }
+
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    color-scheme: light;
   }
+  html.dark { color-scheme: dark; }
+
   body {
     @apply bg-surface-bg text-ink font-sans;
     background-image:
-      radial-gradient(circle at 0% 0%, rgba(34, 197, 94, 0.06), transparent 35%),
-      radial-gradient(circle at 100% 0%, rgba(124, 58, 237, 0.06), transparent 35%);
+      radial-gradient(circle at 0% 0%, rgb(var(--glow-1) / 0.10), transparent 38%),
+      radial-gradient(circle at 100% 0%, rgb(var(--glow-2) / 0.10), transparent 38%),
+      radial-gradient(circle at 50% 100%, rgb(var(--glow-3) / 0.06), transparent 45%);
     background-attachment: fixed;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
   h1 { @apply text-3xl font-extrabold tracking-tightest; }
   h2 { @apply text-2xl font-bold tracking-tight; }
   h3 { @apply text-lg font-semibold; }
   *:focus-visible {
-    @apply outline-none ring-2 ring-brand-blue ring-offset-2 ring-offset-white;
+    @apply outline-none ring-2 ring-brand-blue;
+    box-shadow: 0 0 0 2px rgb(var(--ring-offset));
+  }
+
+  ::selection {
+    background: rgba(37, 99, 235, 0.25);
+    color: rgb(var(--ink));
   }
 }
 
@@ -26,17 +68,61 @@
   .text-brand-gradient {
     @apply bg-brand-gradient bg-clip-text text-transparent;
   }
-  .card {
-    @apply rounded-2xl border border-line bg-white shadow-soft transition-shadow;
+  .text-sunset-gradient {
+    @apply bg-sunset-gradient bg-clip-text text-transparent;
   }
-  .card:hover { @apply shadow-card; }
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-soft transition-all;
+  }
+  .card:hover { @apply -translate-y-0.5 shadow-card; }
+  .card-glow {
+    @apply relative rounded-2xl border border-line bg-surface shadow-soft transition-all;
+  }
+  .card-glow::before {
+    content: '';
+    @apply pointer-events-none absolute -inset-px rounded-2xl opacity-0 transition-opacity;
+    background: linear-gradient(135deg, rgba(34,197,94,.35), rgba(37,99,235,.35), rgba(124,58,237,.35));
+    z-index: -1;
+    filter: blur(14px);
+  }
+  .card-glow:hover::before { @apply opacity-60; }
+  .card-glow:hover { @apply -translate-y-0.5; }
+
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-brand-gradient px-5 py-2.5 text-sm font-semibold text-white shadow-brand transition-all hover:-translate-y-0.5 hover:brightness-105 active:translate-y-0;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-brand-gradient px-5 py-2.5 text-sm font-semibold text-white shadow-brand transition-all hover:-translate-y-0.5 hover:shadow-brand-strong active:translate-y-0;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-line-strong bg-white px-5 py-2.5 text-sm font-semibold text-ink transition-all hover:border-brand-blue hover:bg-surface-alt hover:text-brand-blue;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-line-strong bg-surface px-5 py-2.5 text-sm font-semibold text-ink transition-all hover:border-brand-blue hover:bg-surface-alt hover:text-brand-blue;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-alt hover:text-ink;
+  }
+  .btn-icon {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-surface text-ink-muted transition-all hover:border-brand-blue/50 hover:bg-surface-alt hover:text-brand-blue;
   }
   .badge {
-    @apply inline-flex items-center rounded-full border border-brand-blue/25 bg-gradient-to-br from-brand-blue/10 to-brand-purple/10 px-2.5 py-0.5 text-xs font-semibold text-brand-blue-dark;
+    @apply inline-flex items-center rounded-full border border-brand-blue/25 bg-gradient-to-br from-brand-blue/10 to-brand-purple/10 px-2.5 py-0.5 text-xs font-semibold text-brand-blue;
+  }
+  .badge-success {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-brand-green/30 bg-brand-green/10 px-2.5 py-0.5 text-xs font-semibold text-brand-green;
+  }
+  .badge-warning {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-brand-amber/30 bg-brand-amber/10 px-2.5 py-0.5 text-xs font-semibold text-brand-amber;
+  }
+  .badge-danger {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-brand-rose/30 bg-brand-rose/10 px-2.5 py-0.5 text-xs font-semibold text-brand-rose;
+  }
+  .input {
+    @apply rounded-xl border border-line bg-surface px-3 py-2.5 text-base text-ink shadow-soft transition-all placeholder:text-ink-soft focus:border-brand-blue focus:bg-surface focus:shadow-[0_0_0_3px_rgba(37,99,235,0.18)] focus:outline-none;
+  }
+  .dot-pulse {
+    @apply relative inline-flex h-2 w-2 rounded-full bg-brand-green;
+  }
+  .dot-pulse::after {
+    content: '';
+    @apply absolute inset-0 rounded-full bg-brand-green;
+    animation: slow-pulse 2s ease-in-out infinite;
+    transform: scale(1.8);
+    opacity: 0.4;
   }
 }
