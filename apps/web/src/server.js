@@ -55,6 +55,19 @@ const {
   findCurrentTermId,
   resolveTermById
 } = require('./modules/attendance-stats');
+const {
+  DropoutRiskAnalysesStore,
+  RISK_LEVELS,
+  RISK_LEVEL_LABELS_FR,
+  RISK_LEVEL_BADGES,
+  ANALYSIS_FRESHNESS_DAYS,
+  computeTermAverages,
+  computeStudentRiskFactors,
+  computeRiskScore,
+  categorizeRisk,
+  buildAnalysisPromptInput,
+  isFresh: isDropoutAnalysisFresh
+} = require('./modules/dropout-risk');
 const { LessonHomeworkStore } = require('./modules/lesson-homework');
 const { GradingStore } = require('./modules/grading');
 const { MessagingStore } = require('./modules/messaging');
@@ -518,6 +531,14 @@ function canViewAbsenceStats(session) {
 
 function canManageAlertThresholds(session) {
   return session.role === ROLES.SCHOOL_ADMIN;
+}
+
+function canViewDropoutRisk(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
+}
+
+function canTriggerDropoutAnalysis(session) {
+  return session.role === ROLES.SCHOOL_ADMIN || session.role === ROLES.DIRECTOR;
 }
 
 function canCreateThreads(session) {
@@ -1504,6 +1525,7 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Discipline', href: '/admin/discipline', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Discipline', href: '/parent/discipline', roles: [ROLES.PARENT] },
     { label: 'Statistiques', href: '/admin/stats-absences', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
+    { label: 'Décrocheurs', href: '/admin/decrocheurs', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Notes', href: session.role === ROLES.TEACHER ? '/teacher/grades' : session.role === ROLES.PARENT ? '/parent/grades' : '/student/grades', roles: [ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Messagerie', href: '/inbox', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Finance', href: session.role === ROLES.PARENT ? '/parent/finance' : '/admin/finance', roles: [ROLES.SCHOOL_ADMIN, ROLES.ACCOUNTANT, ROLES.PARENT] },
@@ -3397,6 +3419,117 @@ function renderAdminAlertThresholdsPage(session, thresholds, { canEdit, successM
   );
 }
 
+function renderRiskLevelBadge(level) {
+  const label = RISK_LEVEL_LABELS_FR[level] || level;
+  const tone = RISK_LEVEL_BADGES[level] || 'is-info';
+  return `<span class="el-badge ${tone}">${label}</span>`;
+}
+
+function renderAdminDropoutListPage(session, rows, studentById, classRoomById, { selectedMinLevel = '', selectedLimit = 30 } = {}) {
+  const levelOptions = ['<option value="">Tous niveaux</option>']
+    .concat(RISK_LEVELS.map((l) => `<option value="${l}" ${l === selectedMinLevel ? 'selected' : ''}>${RISK_LEVEL_LABELS_FR[l]}</option>`))
+    .join('');
+
+  const tbody = rows.length === 0
+    ? '<tr><td colspan="7"><span class="el-empty-state">Aucun élève à risque sur la période courante.</span></td></tr>'
+    : rows.slice(0, selectedLimit).map((row) => {
+        const student = studentById.get(row.studentId);
+        const className = classRoomById.get(row.classRoomId)?.name || row.classRoomId;
+        const name = student ? `${student.firstName} ${student.lastName}` : row.studentId;
+        const hasFreshAnalysis = row.latestAnalysis && isDropoutAnalysisFresh(row.latestAnalysis);
+        const analysisCell = hasFreshAnalysis
+          ? `<a href="/admin/decrocheurs/${row.studentId}">Voir analyse (${row.latestAnalysis.generated_at.slice(0, 10)})</a>`
+          : `<form method="POST" action="/admin/decrocheurs/${row.studentId}/analyze" style="display:inline">${csrfField(session)}<input type="hidden" name="returnTo" value="/admin/decrocheurs" /><button type="submit" class="el-button-link">Analyser</button></form>`;
+        return `<tr>
+          <td><a href="/admin/decrocheurs/${row.studentId}">${escapeHtml(name)}</a></td>
+          <td>${escapeHtml(className)}</td>
+          <td><strong>${row.score}</strong>/100</td>
+          <td>${renderRiskLevelBadge(row.level)}</td>
+          <td>A:${row.factors.absent} R:${row.factors.late} D:${row.factors.discipline}</td>
+          <td>${row.factors.gradeDrop > 0 ? `-${(Math.round(row.factors.gradeDrop * 100) / 100).toFixed(2)}` : '<span class="el-muted">—</span>'}</td>
+          <td>${analysisCell}</td>
+        </tr>`;
+      }).join('');
+
+  return renderDashboardLayout(
+    'Détection décrocheurs',
+    session,
+    `<section class="el-card">
+      <h2>Détection décrocheurs</h2>
+      <p class="el-muted">Score = (absences × ${3}) + (retards × ${1}) + (mesures discipline × ${2}) + (baisse moyenne trimestre × ${2}), normalisé sur 100 et plafonné par axe. Les analyses IA sont générées à la demande et mises en cache ${ANALYSIS_FRESHNESS_DAYS} jours.</p>
+      <form method="GET" action="/admin/decrocheurs">
+        <label>Niveau minimum <select name="level">${levelOptions}</select></label>
+        <button type="submit">Filtrer</button>
+      </form>
+      <table>
+        <thead><tr><th>Élève</th><th>Classe</th><th>Score</th><th>Niveau</th><th>A/R/D</th><th>Baisse moy.</th><th>Analyse IA</th></tr></thead>
+        <tbody>${tbody}</tbody>
+      </table>
+    </section>`
+  );
+}
+
+function renderAdminDropoutDetailPage(session, {
+  student,
+  classRoom,
+  score,
+  level,
+  factors,
+  analyses,
+  aiEnabled,
+  successMessage = null,
+  errorMessage = null
+}) {
+  const banner = successMessage
+    ? `<p class="el-success-banner">${escapeHtml(successMessage)}</p>`
+    : errorMessage
+    ? `<p class="el-error-banner">${escapeHtml(errorMessage)}</p>`
+    : '';
+  const studentName = student ? `${student.firstName} ${student.lastName}` : '(élève)';
+  const className = classRoom?.name || student?.classRoomId || '—';
+  const currentAvgDisplay = factors.currentAverage !== null && factors.currentAverage !== undefined
+    ? `${(Math.round(factors.currentAverage * 100) / 100).toFixed(2)}/20`
+    : '—';
+  const previousAvgDisplay = factors.previousAverage !== null && factors.previousAverage !== undefined
+    ? `${(Math.round(factors.previousAverage * 100) / 100).toFixed(2)}/20`
+    : '—';
+
+  const latest = analyses[0] || null;
+  const hasFresh = latest && isDropoutAnalysisFresh(latest);
+  const analyzeButton = aiEnabled
+    ? `<form method="POST" action="/admin/decrocheurs/${student.id}/analyze" style="display:inline">${csrfField(session)}
+        <input type="hidden" name="returnTo" value="/admin/decrocheurs/${student.id}" />
+        <button type="submit">${hasFresh ? '↻ Forcer une nouvelle analyse' : '🤖 Analyser cet élève'}</button>
+        ${hasFresh ? '<input type="hidden" name="force" value="1" />' : ''}
+       </form>`
+    : '<p class="el-muted">L\'IA n\'est pas activée pour cet établissement. Contactez l\'éditeur.</p>';
+
+  const historyBlock = analyses.length === 0
+    ? '<p class="el-empty-state">Aucune analyse IA encore générée pour cet élève.</p>'
+    : analyses.map((a) => `<article class="el-card">
+        <p><strong>${a.generated_at.slice(0, 10)}</strong> · score ${a.score}/100 · ${renderRiskLevelBadge(a.level)} · provider ${escapeHtml(a.aiProvider)}</p>
+        <p>${escapeHtml(a.summary)}</p>
+      </article>`).join('');
+
+  return renderDashboardLayout(
+    `Risque décrochage — ${studentName}`,
+    session,
+    `${banner}
+    <section class="el-card">
+      <h2>${escapeHtml(studentName)} <span class="el-badge">${escapeHtml(className)}</span></h2>
+      <p><strong>Score actuel :</strong> ${score}/100 ${renderRiskLevelBadge(level)}</p>
+      <p><strong>Absences non justifiées :</strong> ${factors.absent} · <strong>Retards :</strong> ${factors.late} · <strong>Mesures discipline :</strong> ${factors.discipline}</p>
+      <p><strong>Moyenne trimestre courant :</strong> ${currentAvgDisplay} · <strong>Trimestre précédent :</strong> ${previousAvgDisplay} · <strong>Baisse :</strong> ${factors.gradeDrop > 0 ? `${(Math.round(factors.gradeDrop * 100) / 100).toFixed(2)} pts` : 'aucune'}</p>
+      <p>${analyzeButton}</p>
+      <p><a href="/admin/decrocheurs">← Retour à la liste</a> · <a href="/admin/students/${student.id}">Fiche élève complète</a></p>
+    </section>
+    <section class="el-card">
+      <h3>Historique des analyses IA</h3>
+      ${historyBlock}
+    </section>`
+  );
+}
+
 function renderAdminAbsencesListPage(session, notices, studentById, parentById, classRooms, {
   selectedStatus = 'pending',
   selectedClassRoomId = '',
@@ -3519,6 +3652,28 @@ function renderAdminAbsenceDetailPage(session, notice, student, parent, classRoo
   );
 }
 
+function renderStudentDropoutRiskSection(student, { score, level, latestAnalysis, aiEnabled, canTrigger, session }) {
+  const summary = latestAnalysis ? latestAnalysis.summary : null;
+  const summaryDate = latestAnalysis ? latestAnalysis.generated_at.slice(0, 10) : null;
+  const hasFresh = latestAnalysis && isDropoutAnalysisFresh(latestAnalysis);
+  const analyzeButton = aiEnabled && canTrigger
+    ? `<form method="POST" action="/admin/decrocheurs/${student.id}/analyze" style="display:inline">${csrfField(session)}
+        <input type="hidden" name="returnTo" value="/admin/students/${student.id}" />
+        ${hasFresh ? '<input type="hidden" name="force" value="1" />' : ''}
+        <button type="submit">${hasFresh ? '↻ Forcer une nouvelle analyse' : '🤖 Analyser cet élève'}</button>
+       </form>`
+    : '';
+  const summaryBlock = summary
+    ? `<blockquote class="el-muted">${escapeHtml(summary)}<br/><small>Analyse du ${summaryDate} · ${escapeHtml(latestAnalysis.aiProvider)}</small></blockquote>`
+    : '<p class="el-empty-state">Aucune analyse IA encore générée. Cliquez sur "Analyser cet élève" pour obtenir une synthèse.</p>';
+  return `<section class="el-card">
+    <h3>Risque de décrochage</h3>
+    <p><strong>Score actuel :</strong> ${score}/100 ${renderRiskLevelBadge(level)}</p>
+    ${summaryBlock}
+    <p>${analyzeButton} · <a href="/admin/decrocheurs/${student.id}">Voir le détail</a></p>
+  </section>`;
+}
+
 function renderStudentProfile(session, student, classRooms = [], {
   canManage = false,
   errorCode = null,
@@ -3529,6 +3684,7 @@ function renderStudentProfile(session, student, classRooms = [], {
   recentEvents = [],
   recentAbsenceNotices = [],
   recentDisciplineRecords = [],
+  dropoutRisk = null,
   subjects = []
 } = {}) {
   const classRoomName = classRooms.find((room) => room.id === student.classRoomId)?.name || student.classRoomId;
@@ -3582,6 +3738,7 @@ function renderStudentProfile(session, student, classRooms = [], {
       deleteAction: '/discipline/:id/delete',
       ownerIdForDelete: student.id
     })}
+    ${dropoutRisk ? renderStudentDropoutRiskSection(student, { ...dropoutRisk, session }) : ''}
     ${renderStudentGradesSection(recentGrades, subjectsById)}
     ${editForm}
     ${archiveForm}`
@@ -4215,6 +4372,7 @@ function createServer({
     parentStore
   });
   const alertThresholdsStore = new AlertThresholdsStore({ rows: seed.alertThresholds || [] });
+  const dropoutRiskStore = new DropoutRiskAnalysesStore({ analyses: seed.dropoutRiskAnalyses || [] });
   const lessonHomeworkStore = new LessonHomeworkStore({
     lessonLogs: seed.lessonLogs,
     homeworks: seed.homeworks,
@@ -4254,6 +4412,12 @@ function createServer({
           version: 1,
           template:
             'Rédige une appréciation scolaire bienveillante en français, concise (4 phrases max), factuelle à partir des données, en restant au statut brouillon.'
+        },
+        {
+          key: 'student.dropout.risk',
+          version: 1,
+          template:
+            "Tu es un assistant pédagogique. À partir des indicateurs fournis (absences non justifiées, retards, mesures disciplinaires, évolution de la moyenne entre les deux derniers trimestres), rédige en 4 phrases maximum une synthèse factuelle et bienveillante destinée au CPE. Mentionne explicitement : (1) le niveau de risque, (2) le ou les facteurs principaux, (3) une ou deux actions concrètes recommandées (rencontre famille, tutorat, suivi infirmerie, etc.). N'invente AUCUN chiffre absent de l'input."
         }
       ]
     });
@@ -6181,6 +6345,212 @@ function createServer({
       return;
     }
 
+    // ============================================================
+    // VS-07 — Détection décrocheurs IA
+    // ============================================================
+
+    if (request.method === 'GET' && url.pathname === '/admin/decrocheurs') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewDropoutRisk(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const selectedMinLevel = url.searchParams.get('level') || '';
+      const today = todayIsoDate();
+      const terms = coreSchoolStore.list('terms', tenantId);
+      const currentTermId = findCurrentTermId(terms, today);
+      const currentTerm = resolveTermById(terms, currentTermId);
+      const sortedTerms = [...terms].sort((a, b) => (a.starts_at || '').localeCompare(b.starts_at || ''));
+      const currentIdx = sortedTerms.findIndex((t) => t.id === currentTermId);
+      const previousTerm = currentIdx > 0 ? sortedTerms[currentIdx - 1] : null;
+
+      const periodFrom = currentTerm?.starts_at || null;
+      const periodTo = currentTerm?.ends_at || null;
+
+      const students = studentStore.list(tenantId, { includeArchived: false });
+      const studentById = new Map(students.map((s) => [s.id, s]));
+      const classRoomById = new Map(coreSchoolStore.list('classRooms', tenantId).map((c) => [c.id, c]));
+
+      const attendanceRecords = attendanceStore.list(tenantId);
+      const baseStats = computeStudentAbsenceStats({
+        students,
+        attendanceRecords,
+        disciplineRecords: disciplineStore.list(tenantId, { from: periodFrom || undefined, to: periodTo || undefined }),
+        from: periodFrom || undefined,
+        to: periodTo || undefined
+      });
+      const statsByStudent = new Map(baseStats.map((s) => [s.studentId, s]));
+
+      const rows = students.map((student) => {
+        const stats = statsByStudent.get(student.id) || { absentCount: 0, lateCount: 0, disciplineCount: 0 };
+        const grades = gradingStore.listGradesForStudent(tenantId, student.id);
+        const averages = computeTermAverages(grades, currentTerm, previousTerm);
+        const factors = computeStudentRiskFactors({ stats, averages });
+        const score = computeRiskScore(factors);
+        const level = categorizeRisk(score);
+        const latestAnalysis = dropoutRiskStore.getLatest(tenantId, student.id);
+        return { studentId: student.id, classRoomId: student.classRoomId, score, level, factors, latestAnalysis };
+      });
+
+      const minIdx = selectedMinLevel ? RISK_LEVELS.indexOf(selectedMinLevel) : -1;
+      const filtered = rows
+        .filter((r) => minIdx < 0 || RISK_LEVELS.indexOf(r.level) >= minIdx)
+        .sort((a, b) => b.score - a.score);
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminDropoutListPage(auth.context, filtered, studentById, classRoomById, {
+        selectedMinLevel,
+        selectedLimit: 30
+      }));
+      return;
+    }
+
+    const dropoutAnalyzeMatch = url.pathname.match(/^\/admin\/decrocheurs\/([^/]+)\/analyze$/);
+    if (dropoutAnalyzeMatch && request.method === 'POST') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canTriggerDropoutAnalysis(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const studentId = dropoutAnalyzeMatch[1];
+      const student = studentStore.get(tenantId, studentId, { includeArchived: false });
+      if (!student) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      const form = parseExtendedForm(await readBody(request));
+      const returnTo = form.get('returnTo') || `/admin/decrocheurs/${studentId}`;
+      const forceParam = form.get('force') === '1' || url.searchParams.get('force') === '1';
+
+      try {
+        const latest = dropoutRiskStore.getLatest(tenantId, studentId);
+        if (latest && isDropoutAnalysisFresh(latest) && !forceParam) {
+          response.writeHead(302, { location: `${returnTo}?dropout=cached` });
+          response.end();
+          return;
+        }
+
+        const today = todayIsoDate();
+        const terms = coreSchoolStore.list('terms', tenantId);
+        const currentTermId = findCurrentTermId(terms, today);
+        const currentTerm = resolveTermById(terms, currentTermId);
+        const sortedTerms = [...terms].sort((a, b) => (a.starts_at || '').localeCompare(b.starts_at || ''));
+        const currentIdx = sortedTerms.findIndex((t) => t.id === currentTermId);
+        const previousTerm = currentIdx > 0 ? sortedTerms[currentIdx - 1] : null;
+        const periodFrom = currentTerm?.starts_at || null;
+        const periodTo = currentTerm?.ends_at || null;
+
+        const baseStats = computeStudentAbsenceStats({
+          students: [student],
+          attendanceRecords: attendanceStore.list(tenantId).filter((r) => r.studentId === studentId),
+          disciplineRecords: disciplineStore.listForStudent(tenantId, studentId)
+            .filter((r) => (!periodFrom || r.occurredOn >= periodFrom) && (!periodTo || r.occurredOn <= periodTo)),
+          from: periodFrom || undefined,
+          to: periodTo || undefined
+        });
+        const stats = baseStats[0] || { absentCount: 0, lateCount: 0, disciplineCount: 0 };
+        const grades = gradingStore.listGradesForStudent(tenantId, studentId);
+        const averages = computeTermAverages(grades, currentTerm, previousTerm);
+        const factors = computeStudentRiskFactors({ stats, averages });
+        const score = computeRiskScore(factors);
+        const level = categorizeRisk(score);
+        const classRoom = coreSchoolStore.get('classRooms', tenantId, student.classRoomId);
+        const input = buildAnalysisPromptInput(student, classRoom, factors, score, level);
+
+        const aiResult = await aiService.execute({
+          tenantId,
+          actorUserId: auth.context.userId,
+          promptKey: 'student.dropout.risk',
+          input
+        });
+
+        const created = dropoutRiskStore.create(tenantId, {
+          studentId,
+          score,
+          level,
+          factors,
+          summary: aiResult.outputText,
+          generatedByUserId: auth.context.userId,
+          aiProvider: aiResult.provider
+        });
+        auditWriter.writeEntityEvent(auth.context, 'dropout_risk.analysis_generated', 'dropout_risk_analysis', created.id);
+        response.writeHead(302, { location: `${returnTo}?dropout=generated` });
+        response.end();
+        return;
+      } catch (error) {
+        requestLogger.warn('Unable to generate dropout risk analysis', { error: serializeError(error) });
+        const errorCode = error && error.code === 'AI_DISABLED' ? 'ai_disabled' : 'analysis_failed';
+        response.writeHead(302, { location: `${returnTo}?dropout=${errorCode}` });
+        response.end();
+        return;
+      }
+    }
+
+    const dropoutDetailMatch = url.pathname.match(/^\/admin\/decrocheurs\/([^/]+)$/);
+    if (dropoutDetailMatch && request.method === 'GET') {
+      const auth = requireAuth(session);
+      if (!auth.allowed || !canViewDropoutRisk(auth.context)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      const tenantId = auth.context.tenantId;
+      const studentId = dropoutDetailMatch[1];
+      const student = studentStore.get(tenantId, studentId, { includeArchived: true });
+      if (!student) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      const today = todayIsoDate();
+      const terms = coreSchoolStore.list('terms', tenantId);
+      const currentTermId = findCurrentTermId(terms, today);
+      const currentTerm = resolveTermById(terms, currentTermId);
+      const sortedTerms = [...terms].sort((a, b) => (a.starts_at || '').localeCompare(b.starts_at || ''));
+      const currentIdx = sortedTerms.findIndex((t) => t.id === currentTermId);
+      const previousTerm = currentIdx > 0 ? sortedTerms[currentIdx - 1] : null;
+      const periodFrom = currentTerm?.starts_at || null;
+      const periodTo = currentTerm?.ends_at || null;
+
+      const baseStats = computeStudentAbsenceStats({
+        students: [student],
+        attendanceRecords: attendanceStore.list(tenantId).filter((r) => r.studentId === studentId),
+        disciplineRecords: disciplineStore.listForStudent(tenantId, studentId)
+          .filter((r) => (!periodFrom || r.occurredOn >= periodFrom) && (!periodTo || r.occurredOn <= periodTo)),
+        from: periodFrom || undefined,
+        to: periodTo || undefined
+      });
+      const stats = baseStats[0] || { absentCount: 0, lateCount: 0, disciplineCount: 0 };
+      const grades = gradingStore.listGradesForStudent(tenantId, studentId);
+      const averages = computeTermAverages(grades, currentTerm, previousTerm);
+      const factors = computeStudentRiskFactors({ stats, averages });
+      const score = computeRiskScore(factors);
+      const level = categorizeRisk(score);
+      const classRoom = coreSchoolStore.get('classRooms', tenantId, student.classRoomId);
+      const analyses = dropoutRiskStore.list(tenantId, { studentId });
+      const flashParam = url.searchParams.get('dropout');
+      const successMessage =
+        flashParam === 'generated' ? 'Analyse IA générée et enregistrée.' :
+        flashParam === 'cached' ? `Analyse récente réutilisée (cache ${ANALYSIS_FRESHNESS_DAYS} jours). Utiliser "Forcer" pour regénérer.` : null;
+      const errorMessage =
+        flashParam === 'ai_disabled' ? "L'IA n'est pas activée pour cet établissement." :
+        flashParam === 'analysis_failed' ? "L'analyse n'a pas pu être générée. Réessayez ultérieurement." : null;
+
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderAdminDropoutDetailPage(auth.context, {
+        student,
+        classRoom,
+        score,
+        level,
+        factors,
+        analyses,
+        aiEnabled: aiFeatureFlags.isEnabled(tenantId),
+        successMessage,
+        errorMessage
+      }));
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname === '/student/grades') {
       const auth = requireAuth(session);
       if (!auth.allowed || auth.context.role !== ROLES.STUDENT) {
@@ -6382,6 +6752,42 @@ function createServer({
         .listForStudent(auth.context.tenantId, studentId)
         .slice(0, 10);
 
+      // VS-07: bloc risque décrochage (admin/director seulement)
+      let dropoutRisk = null;
+      if (canViewDropoutRisk(auth.context)) {
+        const today = todayIsoDate();
+        const tenantTerms = coreSchoolStore.list('terms', auth.context.tenantId);
+        const currentTermId = findCurrentTermId(tenantTerms, today);
+        const currentTerm = resolveTermById(tenantTerms, currentTermId);
+        const sortedTerms = [...tenantTerms].sort((a, b) => (a.starts_at || '').localeCompare(b.starts_at || ''));
+        const currentIdx = sortedTerms.findIndex((t) => t.id === currentTermId);
+        const previousTerm = currentIdx > 0 ? sortedTerms[currentIdx - 1] : null;
+        const periodFrom = currentTerm?.starts_at || null;
+        const periodTo = currentTerm?.ends_at || null;
+        const baseStats = computeStudentAbsenceStats({
+          students: [student],
+          attendanceRecords: attendanceStore.list(auth.context.tenantId).filter((r) => r.studentId === studentId),
+          disciplineRecords: disciplineStore.listForStudent(auth.context.tenantId, studentId)
+            .filter((r) => (!periodFrom || r.occurredOn >= periodFrom) && (!periodTo || r.occurredOn <= periodTo)),
+          from: periodFrom || undefined,
+          to: periodTo || undefined
+        });
+        const stats = baseStats[0] || { absentCount: 0, lateCount: 0, disciplineCount: 0 };
+        const grades = gradingStore.listGradesForStudent(auth.context.tenantId, studentId);
+        const averages = computeTermAverages(grades, currentTerm, previousTerm);
+        const factors = computeStudentRiskFactors({ stats, averages });
+        const score = computeRiskScore(factors);
+        const level = categorizeRisk(score);
+        const latestAnalysis = dropoutRiskStore.getLatest(auth.context.tenantId, studentId);
+        dropoutRisk = {
+          score,
+          level,
+          latestAnalysis,
+          aiEnabled: aiFeatureFlags.isEnabled(auth.context.tenantId),
+          canTrigger: canTriggerDropoutAnalysis(auth.context)
+        };
+      }
+
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
         renderStudentProfile(auth.context, student, classRooms, {
@@ -6394,6 +6800,7 @@ function createServer({
           recentEvents,
           recentAbsenceNotices,
           recentDisciplineRecords,
+          dropoutRisk,
           subjects
         })
       );

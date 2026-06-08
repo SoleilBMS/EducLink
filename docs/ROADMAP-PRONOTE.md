@@ -182,7 +182,7 @@ Légende : 🟢 1-3j · 🟡 ~1 sem · 🟠 2-4 sem · 🔴 module entier >1 moi
 
 ## 4. Roadmap Sprints 8-12
 
-### Sprint 8 — Vie scolaire enrichie (2 semaines) ⭐ **EN COURS**
+### Sprint 8 — Vie scolaire enrichie (2 semaines) ✅ **TERMINÉ**
 **Objectif :** que le CPE/admin puisse piloter la vie scolaire au quotidien comme dans PRONOTE.
 
 - ✅ VS-01 — Feuille d'appel enrichie (retards, infirmerie, observations, sanctions, encouragements) — statut `excused` ajouté, table `attendance_events` (4 types), routes POST teacher/admin, vues fiche élève + admin attendance enrichies, 12 tests unitaires + 9 tests HTTP
@@ -191,7 +191,7 @@ Légende : 🟢 1-3j · 🟡 ~1 sem · 🟠 2-4 sem · 🔴 module entier >1 moi
 - ✅ VS-04 — Workflow validation justificatifs admin — migration 007 (3 colonnes `reviewed_by_user_id`/`reviewed_at`/`review_comment`), méthode `review()` sur store + repo Postgres, page `/admin/absences` + détail avec actions approve/reject (motif obligatoire), sync `attendance_records` status=`excused` pour chaque jour de la période (réutilise `upsertForClass` avec le 1er teacher de la classe), badge "X en attente" dynamique dans nav admin/director, 8 tests unitaires + 12 tests HTTP (~327/327 OK avec lint)
 - ✅ VS-05 — Module discipline — table `discipline_records` (migration 008) avec 4 types (observation, retenue, exclusion, convocation parents), routes admin/teacher/parent (`/admin/discipline`, `/teacher/discipline`, `/parent/discipline`, `/discipline/:id/delete`), section dans fiche élève admin + teacher (avec mini formulaire de saisie), 6e card dans dashboard VS-02, 14 tests unitaires + 12 tests HTTP
 - ✅ VS-06 — Stats absentéisme + seuils d'alerte — migration 009 (table `attendance_alert_thresholds`), module `attendance-stats.js` (computeStudentAbsenceStats / pickTop* / markAlerts / findCurrentTermId), page `/admin/stats-absences` avec 3 tops (absentéisme top 10, retards top 10, discipline top 5), badge ⚠ Alerte par élève, seuils customisables par tenant via `/admin/stats-absences/settings` (admin only, director consulte), 13 tests unitaires + 10 tests HTTP
-- VS-07 — **Détection décrocheurs IA** : agrège notes + absences + retards + sanctions, classe les élèves par niveau de risque, génère synthèse pour CPE
+- ✅ VS-07 — **Détection décrocheurs IA** (killer feature) — migration 010 (table `dropout_risk_analyses`), module `dropout-risk.js` 100% pur (computeRiskScore avec pondération absences×3/retards×1/discipline×2/baisseNotes×2 + caps par axe pour éviter mono-axis dominant, 4 niveaux low/moderate/high/critical), prompt `student.dropout.risk` v1 dans PromptRegistry, page `/admin/decrocheurs` avec tri par score décroissant et filtre niveau, route POST `/admin/decrocheurs/:id/analyze` qui appelle AiService avec cache 7 jours (force via `?force=1`), section "Risque de décrochage" dans fiche élève admin avec bouton "Analyser" inline, audit log `dropout_risk.analysis_generated`, 16 tests unitaires + 12 tests HTTP
 
 ### Sprint 9 — Bulletins pro + Export PDF (1 semaine)
 - BULL-04 — Export PDF bulletin (reporté Sprint 5)

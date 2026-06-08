@@ -4722,3 +4722,151 @@ test('VS-06: cross-tenant — admin-b voit ses seuils par défaut (pas ceux modi
     }
   });
 });
+
+// =====================================================================
+// Sprint 8 / VS-07 — Détection décrocheurs IA (killer feature)
+// =====================================================================
+
+test('VS-07: admin voit /admin/decrocheurs avec le tableau', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/decrocheurs`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Détection décrocheurs'), 'titre page');
+    assert.ok(html.includes('Score'), 'colonne Score');
+    assert.ok(html.includes('Niveau'), 'colonne Niveau');
+  });
+});
+
+test('VS-07: director voit aussi /admin/decrocheurs', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/decrocheurs`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+  });
+});
+
+test('VS-07: teacher → 403 sur /admin/decrocheurs', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/decrocheurs`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-07: parent → 403 sur /admin/decrocheurs', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/decrocheurs`, { headers: { cookie } });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-07: POST /admin/decrocheurs/:studentId/analyze déclenche AI + persiste + redirige', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await postForm(baseUrl, '/admin/decrocheurs/student-a4/analyze', {
+      cookie,
+      fields: { returnTo: '/admin/decrocheurs/student-a4' }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /dropout=generated/);
+
+    // Vérifier que la synthèse persistée est visible sur la page détail
+    const detail = await fetch(`${baseUrl}/admin/decrocheurs/student-a4`, { headers: { cookie } });
+    const html = await detail.text();
+    assert.ok(html.includes('[dev-echo]'), 'le devEchoProvider doit retourner [dev-echo] dans la synthèse');
+    assert.ok(html.includes('student.dropout.risk') || html.includes('Tu es un assistant'), 'le prompt template est inclus dans le dev-echo');
+  });
+});
+
+test('VS-07: POST analyze 2e fois dans les 7 jours sans force → réutilise le cache (pas de 2e analyse)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    // 1ère analyse
+    await postForm(baseUrl, '/admin/decrocheurs/student-a4/analyze', { cookie, fields: { returnTo: '/admin/decrocheurs/student-a4' } });
+    // 2ème : sans force → cached
+    const cached = await postForm(baseUrl, '/admin/decrocheurs/student-a4/analyze', { cookie, fields: { returnTo: '/admin/decrocheurs/student-a4' } });
+    assert.match(cached.headers.get('location') || '', /dropout=cached/);
+
+    const detail = await fetch(`${baseUrl}/admin/decrocheurs/student-a4`, { headers: { cookie } });
+    const html = await detail.text();
+    // Une seule entrée dans l'historique attendue (le 2ème POST est cached, pas de 2e analyse créée)
+    const historyCount = (html.match(/provider dev-echo/g) || []).length;
+    assert.equal(historyCount, 1, `attendu 1 entrée historique (cache hit sur 2e call), trouvé ${historyCount}`);
+  });
+});
+
+test('VS-07: POST analyze avec ?force=1 (champ form) bypass le cache → nouvelle analyse', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    await postForm(baseUrl, '/admin/decrocheurs/student-a4/analyze', { cookie, fields: { returnTo: '/admin/decrocheurs/student-a4' } });
+    const forced = await postForm(baseUrl, '/admin/decrocheurs/student-a4/analyze', {
+      cookie,
+      fields: { returnTo: '/admin/decrocheurs/student-a4', force: '1' }
+    });
+    assert.match(forced.headers.get('location') || '', /dropout=generated/);
+
+    const detail = await fetch(`${baseUrl}/admin/decrocheurs/student-a4`, { headers: { cookie } });
+    const html = await detail.text();
+    const historyCount = (html.match(/provider dev-echo/g) || []).length;
+    assert.equal(historyCount, 2, `attendu 2 entrées d'historique après force, trouvé ${historyCount}`);
+  });
+});
+
+test('VS-07: tenant school-b (AI désactivée) → POST analyze redirige error=ai_disabled', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-b.test');
+    const response = await postForm(baseUrl, '/admin/decrocheurs/student-b1/analyze', {
+      cookie,
+      fields: { returnTo: '/admin/decrocheurs/student-b1' }
+    });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /dropout=ai_disabled/);
+  });
+});
+
+test('VS-07: fiche élève admin contient la section "Risque de décrochage" + bouton Analyser', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/students/student-a4`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Risque de décrochage'), 'section présente');
+    assert.ok(html.includes('Analyser cet élève') || html.includes('Forcer une nouvelle analyse'), 'bouton d\'analyse présent');
+  });
+});
+
+test('VS-07: nav admin contient lien "Décrocheurs"', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/decrocheurs`, { headers: { cookie } });
+    const html = await response.text();
+    assert.ok(html.includes('href="/admin/decrocheurs"'), 'lien nav présent');
+  });
+});
+
+test('VS-07: CSRF — POST analyze sans token → 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/admin/decrocheurs/student-a4/analyze`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ returnTo: '/admin/decrocheurs/student-a4' }).toString(),
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('VS-07: cross-tenant — admin-b ne peut pas POST analyze sur student-a1 → 404', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-b.test');
+    const response = await postForm(baseUrl, '/admin/decrocheurs/student-a1/analyze', {
+      cookie,
+      fields: { returnTo: '/admin/decrocheurs/student-a1' }
+    });
+    assert.equal(response.status, 404);
+  });
+});
