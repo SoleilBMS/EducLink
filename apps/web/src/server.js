@@ -725,33 +725,63 @@ const UX_SCRIPT_JS = `(function () {
 
 const DESIGN_SYSTEM_CSS = `
 :root {
-  --el-color-primary-blue: #2563eb;
-  --el-color-dark-blue: #1e3a8a;
-  --el-color-primary-green: #22c55e;
-  --el-color-primary-purple: #7c3aed;
-  --el-color-soft-green: #4ade80;
-  --el-color-soft-purple: #a78bfa;
-  --el-color-bg: #f9fafb;
-  --el-color-bg-soft: #f3f4f6;
-  --el-color-surface: #ffffff;
-  --el-color-surface-alt: #f8fafc;
-  --el-color-text: #111827;
-  --el-color-text-secondary: #687280;
-  --el-color-border: #e5e7eb;
-  --el-color-border-strong: #d1d5db;
-  --el-color-danger: #dc2626;
-  --el-color-info-bg: #eef2ff;
-  --el-gradient-brand: linear-gradient(95deg, #22c55e 0%, #2563eb 52%, #7c3aed 100%);
-  --el-gradient-soft: linear-gradient(135deg, rgba(34,197,94,.12) 0%, rgba(37,99,235,.12) 50%, rgba(124,58,237,.14) 100%);
-  --el-radius-sm: 6px;
-  --el-radius-md: 10px;
-  --el-radius-lg: 16px;
-  --el-radius-xl: 24px;
-  --el-shadow-xs: 0 1px 2px rgba(17, 24, 39, 0.05);
-  --el-shadow-sm: 0 2px 6px rgba(17, 24, 39, 0.06);
-  --el-shadow-md: 0 12px 24px -8px rgba(17, 24, 39, 0.10);
-  --el-shadow-lg: 0 24px 48px -12px rgba(17, 24, 39, 0.18);
-  --el-shadow-brand: 0 12px 28px -10px rgba(37, 99, 235, 0.45);
+  /* Palette principale (light) */
+  --el-color-primary: #4F46E5;
+  --el-color-primary-deep: #4338CA;
+  --el-color-accent: #7C3AED;
+  --el-color-soft-indigo: #818CF8;
+  --el-color-soft-violet: #A78BFA;
+
+  /* Aliases backward-compat — les pages existantes utilisent ces noms */
+  --el-color-primary-blue: var(--el-color-primary);
+  --el-color-dark-blue: var(--el-color-primary-deep);
+  --el-color-primary-purple: var(--el-color-accent);
+  --el-color-soft-purple: var(--el-color-soft-violet);
+  --el-color-primary-green: #22C55E;
+  --el-color-soft-green: #4ADE80;
+
+  /* Surfaces */
+  --el-color-bg: #FAFAFB;
+  --el-color-bg-soft: #F4F4F8;
+  --el-color-surface: #FFFFFF;
+  --el-color-surface-alt: #F8FAFC;
+
+  /* Texte */
+  --el-color-text: #0F172A;
+  --el-color-text-secondary: #64748B;
+
+  /* Bordures */
+  --el-color-border: #E2E8F0;
+  --el-color-border-strong: #CBD5E1;
+
+  /* Statuts */
+  --el-color-success: #22C55E;
+  --el-color-warning: #F59E0B;
+  --el-color-danger: #EF4444;
+  --el-color-info-bg: #EEF2FF;
+
+  /* Gradients */
+  --el-gradient-brand: linear-gradient(120deg, #4F46E5 0%, #7C3AED 100%);
+  --el-gradient-soft: radial-gradient(circle at 30% 30%, rgba(79,70,229,.08), transparent 60%), radial-gradient(circle at 70% 70%, rgba(124,58,237,.08), transparent 60%);
+  --el-gradient-banner-success: linear-gradient(120deg, rgba(34,197,94,.12), rgba(20,184,166,.12));
+  --el-gradient-dot-pattern: radial-gradient(rgba(79,70,229,0.08) 1px, transparent 1px);
+
+  /* Radius */
+  --el-radius-sm: 10px;
+  --el-radius-md: 14px;
+  --el-radius-lg: 20px;
+  --el-radius-xl: 28px;
+  --el-radius-2xl: 36px;
+  --el-radius-full: 9999px;
+
+  /* Ombres (teintées indigo/violet) */
+  --el-shadow-xs: 0 1px 2px rgba(79, 70, 229, 0.08);
+  --el-shadow-sm: 0 4px 12px rgba(79, 70, 229, 0.10);
+  --el-shadow-md: 0 12px 28px -8px rgba(79, 70, 229, 0.18);
+  --el-shadow-lg: 0 24px 56px -12px rgba(124, 58, 237, 0.22);
+  --el-shadow-brand: 0 14px 30px -10px rgba(124, 58, 237, 0.45);
+
+  /* Spacing (conservé) */
   --el-space-1: 0.25rem;
   --el-space-2: 0.5rem;
   --el-space-3: 0.75rem;
@@ -761,6 +791,8 @@ const DESIGN_SYSTEM_CSS = `
   --el-space-7: 1.75rem;
   --el-space-8: 2.25rem;
   --el-space-10: 2.75rem;
+
+  /* Tailles de texte (conservées) */
   --el-text-xs: 0.75rem;
   --el-text-sm: 0.875rem;
   --el-text-base: 1rem;
@@ -769,8 +801,48 @@ const DESIGN_SYSTEM_CSS = `
   --el-text-2xl: 1.5rem;
   --el-text-3xl: 2rem;
   --el-text-4xl: 2.5rem;
-  --el-font-sans: "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --el-transition: 160ms cubic-bezier(.4,0,.2,1);
+
+  /* Typo */
+  --el-font-sans: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Transitions */
+  --el-transition: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme="dark"] {
+  --el-color-primary: #818CF8;
+  --el-color-primary-deep: #6366F1;
+  --el-color-accent: #A78BFA;
+  --el-color-soft-indigo: #6366F1;
+  --el-color-soft-violet: #8B5CF6;
+
+  --el-color-primary-blue: var(--el-color-primary);
+  --el-color-dark-blue: var(--el-color-primary-deep);
+  --el-color-primary-purple: var(--el-color-accent);
+  --el-color-soft-purple: var(--el-color-soft-violet);
+
+  --el-color-bg: #0B0B14;
+  --el-color-bg-soft: #14141F;
+  --el-color-surface: #1A1A28;
+  --el-color-surface-alt: #20202F;
+
+  --el-color-text: #F1F5F9;
+  --el-color-text-secondary: #94A3B8;
+
+  --el-color-border: #2A2A3D;
+  --el-color-border-strong: #3A3A52;
+
+  --el-color-info-bg: #1E1B4B;
+
+  --el-gradient-brand: linear-gradient(120deg, #6366F1 0%, #8B5CF6 100%);
+  --el-gradient-soft: radial-gradient(circle at 30% 30%, rgba(129,140,248,.10), transparent 60%), radial-gradient(circle at 70% 70%, rgba(167,139,250,.10), transparent 60%);
+  --el-gradient-dot-pattern: radial-gradient(rgba(129,140,248,0.12) 1px, transparent 1px);
+
+  --el-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --el-shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --el-shadow-md: 0 12px 28px -8px rgba(0, 0, 0, 0.5);
+  --el-shadow-lg: 0 24px 56px -12px rgba(0, 0, 0, 0.6);
+  --el-shadow-brand: 0 14px 30px -10px rgba(139, 92, 246, 0.5);
 }
 
 * { box-sizing: border-box; }
