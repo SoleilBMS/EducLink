@@ -34,7 +34,8 @@ test('requireAuth autorise avec contexte session si authentifié', () => {
     role: 'school_admin',
     tenantId: 'school-a',
     createdAt: Date.now(),
-    expiresAt: Date.now() + 1000
+    expiresAt: Date.now() + 1000,
+    csrfToken: 'token-xyz'
   });
 
   assert.equal(result.allowed, true);
@@ -42,6 +43,7 @@ test('requireAuth autorise avec contexte session si authentifié', () => {
     isAuthenticated: true,
     userId: 'user-1',
     role: 'school_admin',
-    tenantId: 'school-a'
+    tenantId: 'school-a',
+    csrfToken: 'token-xyz'
   });
 });

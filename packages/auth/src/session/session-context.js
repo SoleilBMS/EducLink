@@ -1,6 +1,6 @@
 /**
  * @param {import('./session-store').Session | null} session
- * @returns {{ isAuthenticated: boolean, userId: string | null, role: string | null, tenantId: string | null }}
+ * @returns {{ isAuthenticated: boolean, userId: string | null, role: string | null, tenantId: string | null, csrfToken: string | null }}
  */
 function toSessionContext(session) {
   if (!session) {
@@ -8,7 +8,8 @@ function toSessionContext(session) {
       isAuthenticated: false,
       userId: null,
       role: null,
-      tenantId: null
+      tenantId: null,
+      csrfToken: null
     };
   }
 
@@ -16,7 +17,8 @@ function toSessionContext(session) {
     isAuthenticated: true,
     userId: session.userId,
     role: session.role,
-    tenantId: session.tenantId
+    tenantId: session.tenantId,
+    csrfToken: session.csrfToken
   };
 }
 

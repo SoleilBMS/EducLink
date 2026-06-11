@@ -44,14 +44,16 @@ test('toSessionContext expose le contexte complet pour une session authentifiée
     role: 'parent',
     tenantId: 'school-a',
     createdAt: Date.now(),
-    expiresAt: Date.now() + 1000
+    expiresAt: Date.now() + 1000,
+    csrfToken: 'token-xyz'
   });
 
   assert.deepEqual(context, {
     isAuthenticated: true,
     userId: 'user-1',
     role: 'parent',
-    tenantId: 'school-a'
+    tenantId: 'school-a',
+    csrfToken: 'token-xyz'
   });
 });
 
@@ -60,7 +62,8 @@ test('toSessionContext renvoie un contexte anonyme pour un visiteur', () => {
     isAuthenticated: false,
     userId: null,
     role: null,
-    tenantId: null
+    tenantId: null,
+    csrfToken: null
   });
 });
 

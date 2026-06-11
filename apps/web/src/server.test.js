@@ -4234,6 +4234,22 @@ test('VS-04: CSRF — POST /admin/absences/:id/approve sans token → 403', asyn
   });
 });
 
+test('VS-04: la page detail rend un token CSRF valide dans les forms (pas "undefined")', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const page = await fetch(`${baseUrl}/admin/absences/absence-notice-demo-1`, { headers: { cookie } });
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    const matches = [...html.matchAll(/name="_csrf"\s+value="([^"]*)"/g)];
+    assert.ok(matches.length >= 2, 'la page doit contenir au moins 2 forms protégés (approve + reject)');
+    for (const [, token] of matches) {
+      assert.notEqual(token, 'undefined', 'le token CSRF ne doit pas être la string littérale "undefined"');
+      assert.notEqual(token, '', 'le token CSRF ne doit pas être vide');
+      assert.match(token, /^[a-f0-9]{64}$/, 'le token CSRF doit être un hex 64 chars');
+    }
+  });
+});
+
 test('VS-04: sync multi-jours : 2026-04-22 → 24 (3 jours) → 3 attendance_records excused', async () => {
   await withServer(async (baseUrl) => {
     const { cookie } = await login(baseUrl, 'admin@school-a.test');
