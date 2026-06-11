@@ -4886,3 +4886,48 @@ test('VS-07: cross-tenant — admin-b ne peut pas POST analyze sur student-a1 �
     assert.equal(response.status, 404);
   });
 });
+
+// ============================================================
+// Refonte design — tokens CSS + page showcase dev-only
+// ============================================================
+
+test('refonte-design: le CSS servi contient les tokens critiques (Nunito + indigo + dark mode)', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/assets/design-system.css`);
+    assert.equal(response.status, 200);
+    const css = await response.text();
+    assert.ok(css.includes('#4F46E5'), 'la palette indigo (couleur primaire) doit être présente');
+    assert.ok(css.includes('"Nunito"'), 'la police Nunito doit être déclarée dans font-family');
+    assert.ok(css.includes('[data-theme="dark"]'), 'le sélecteur dark mode doit exister');
+    assert.ok(css.includes('--el-gradient-brand'), 'le gradient brand doit être déclaré comme variable');
+  });
+});
+
+test('refonte-design: la page showcase /__design est accessible en dev', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/__design`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Design Showcase'), 'le titre de la page showcase doit être présent');
+    assert.ok(html.includes('data-theme="light"'), 'la section light mode doit être rendue');
+    assert.ok(html.includes('data-theme="dark"'), 'la section dark mode doit être rendue');
+  });
+});
+
+test('refonte-design: la page showcase /__design retourne 404 en production', async () => {
+  const productionRuntimeEnv = {
+    nodeEnv: 'production',
+    host: '127.0.0.1',
+    port: 0,
+    persistenceMode: 'memory',
+    databaseUrl: '',
+    logFormat: 'pretty',
+    logLevel: 'info',
+    sessionSecret: 'a'.repeat(32),
+    sessionSecretIsFallback: false
+  };
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/__design`);
+    assert.equal(response.status, 404);
+  }, { runtimeEnv: productionRuntimeEnv });
+});
