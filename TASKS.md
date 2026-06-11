@@ -336,7 +336,7 @@ Toutes les structures (classes, matières, années, trimestres, école, tenants)
   - Optionnels commentés : provider AI (Anthropic), email (Resend), monitoring (Sentry)
 - Tableau récap des variables Railway dans [docs/deployment-railway.md](docs/deployment-railway.md) §3 avec colonnes Required
 
-### OPS-02 — Déploiement Railway initial ❌ BLOQUANT (action manuelle requise)
+### OPS-02 — Déploiement Railway initial ✅ BLOQUANT (action manuelle requise)
 - [railway.json](railway.json) prêt à la racine (start command + healthcheck + restart policy)
 - Procédure pas-à-pas dans [docs/deployment-railway.md](docs/deployment-railway.md)
 - **Reste à faire manuellement** :
