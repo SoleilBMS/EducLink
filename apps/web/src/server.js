@@ -1458,6 +1458,116 @@ tbody tr:hover { background: rgba(79, 70, 229, 0.04); }
   .el-landing h1 { font-size: var(--el-text-3xl); }
   .el-shell { margin: var(--el-space-5) var(--el-space-4); padding: var(--el-space-6); }
 }
+
+/* ============================================================
+   Patterns decoratifs et nouveaux composants (Klassly-style)
+   ============================================================ */
+
+.el-bg-dot-pattern {
+  background-image: var(--el-gradient-dot-pattern);
+  background-size: 24px 24px;
+}
+
+/* Empty state */
+.el-empty {
+  text-align: center;
+  padding: 48px 24px;
+  background: var(--el-color-surface);
+  border-radius: var(--el-radius-lg);
+  border: 1px dashed var(--el-color-border);
+  margin-bottom: var(--el-space-5);
+}
+.el-empty-illustration {
+  width: 96px;
+  height: 96px;
+  margin: 0 auto var(--el-space-4);
+  display: block;
+}
+.el-empty-title {
+  font-size: var(--el-text-lg);
+  font-weight: 800;
+  margin: 0 0 var(--el-space-2);
+  color: var(--el-color-text);
+}
+.el-empty-message {
+  color: var(--el-color-text-secondary);
+  margin: 0 0 var(--el-space-5);
+  max-width: 360px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Avatars */
+.el-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--el-radius-full);
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--el-text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
+}
+.el-avatar.is-small { width: 32px; height: 32px; font-size: var(--el-text-xs); }
+.el-avatar.is-large { width: 56px; height: 56px; font-size: var(--el-text-lg); }
+.el-avatar.is-palette-1 { background: linear-gradient(135deg, #4F46E5, #7C3AED); }
+.el-avatar.is-palette-2 { background: linear-gradient(135deg, #14B8A6, #06B6D4); }
+.el-avatar.is-palette-3 { background: linear-gradient(135deg, #EC4899, #F43F5E); }
+.el-avatar.is-palette-4 { background: linear-gradient(135deg, #F59E0B, #EF4444); }
+.el-avatar.is-palette-5 { background: linear-gradient(135deg, #7C3AED, #C026D3); }
+.el-avatar.is-palette-6 { background: linear-gradient(135deg, #C026D3, #F43F5E); }
+
+/* Loading skeleton */
+.el-skeleton {
+  display: inline-block;
+  background: linear-gradient(90deg, var(--el-color-bg-soft) 0%, var(--el-color-surface-alt) 50%, var(--el-color-bg-soft) 100%);
+  background-size: 200% 100%;
+  border-radius: var(--el-radius-sm);
+  animation: el-skeleton-shimmer 1.5s linear infinite;
+  min-height: 1em;
+}
+@keyframes el-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .el-skeleton { animation: none; }
+}
+
+/* Confetti (banners de succes importants) */
+@keyframes el-confetti-fall {
+  0% { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(60px) rotate(360deg); opacity: 0; }
+}
+.el-confetti {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  pointer-events: none;
+  animation: el-confetti-fall 1s ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .el-confetti { display: none; }
+}
+
+/* Animations globales — respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  button:hover, .el-card.is-interactive:hover {
+    transform: none !important;
+  }
+}
 `;
 
 const EDUCLINK_LOGO_SVG = `<svg class="el-logo-mark" viewBox="0 0 48 48" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="el-logo-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#22c55e"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs><path d="M24 8 4 18l20 10 16-8v10a1.5 1.5 0 0 0 3 0V18z" fill="url(#el-logo-grad)"/><path d="M12 24v6c0 3 5.4 6 12 6s12-3 12-6v-6l-12 6z" fill="url(#el-logo-grad)" opacity=".85"/><circle cx="41.5" cy="29.5" r="2.2" fill="#7c3aed"/></svg>`;
