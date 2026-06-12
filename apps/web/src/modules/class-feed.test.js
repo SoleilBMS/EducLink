@@ -89,3 +89,107 @@ test('ClassFeedStore.listPostsForClass: filtre par classRoomId', () => {
   assert.equal(posts.length, 1);
   assert.equal(posts[0].body, 'in cp-b');
 });
+
+const ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp'];
+const MAX_BYTES = 3 * 1024 * 1024;
+
+function makeAttachment(overrides = {}) {
+  return {
+    fileName: 'photo.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 1024,
+    data: Buffer.from('fake'),
+    ...overrides
+  };
+}
+
+test('ClassFeedStore.createPost: accepte jusqu\'a 8 attachments', () => {
+  const store = new ClassFeedStore();
+  const attachments = Array.from({ length: 8 }, (_, i) => makeAttachment({ fileName: `p${i}.jpg` }));
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'with photos', attachments });
+  assert.equal(post.attachments.length, 8);
+  post.attachments.forEach((a, i) => assert.equal(a.position, i));
+});
+
+test('ClassFeedStore.createPost: rejette > 8 attachments', () => {
+  const store = new ClassFeedStore();
+  const attachments = Array.from({ length: 9 }, () => makeAttachment());
+  assert.throws(() => store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'too many', attachments }),
+    (err) => err.code === 'validation_error');
+});
+
+test('ClassFeedStore.createPost: rejette mimeType non autorise', () => {
+  const store = new ClassFeedStore();
+  assert.throws(() => store.createPost('school-a', makeAuthor(), {
+    classRoomId: 'class-cp-b', body: 'bad mime',
+    attachments: [makeAttachment({ mimeType: 'application/pdf' })]
+  }), (err) => err.code === 'validation_error');
+});
+
+test('ClassFeedStore.createPost: rejette attachment > 3 Mo', () => {
+  const store = new ClassFeedStore();
+  assert.throws(() => store.createPost('school-a', makeAuthor(), {
+    classRoomId: 'class-cp-b', body: 'too big',
+    attachments: [makeAttachment({ sizeBytes: 3 * 1024 * 1024 + 1, data: Buffer.alloc(3 * 1024 * 1024 + 1) })]
+  }), (err) => err.code === 'validation_error');
+});
+
+test('ClassFeedStore.getAttachment: retourne data par id, null cross-tenant', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), {
+    classRoomId: 'class-cp-b', body: 'x',
+    attachments: [makeAttachment({ fileName: 'photo.jpg' })]
+  });
+  const att = store.getAttachment('school-a', post.attachments[0].id);
+  assert.equal(att.fileName, 'photo.jpg');
+  assert.ok(Buffer.isBuffer(att.data));
+  assert.equal(store.getAttachment('school-b', post.attachments[0].id), null);
+});
+
+test('ClassFeedStore.editPost: succes si auteur ET < 1h', () => {
+  let now = 1_700_000_000_000;
+  const store = new ClassFeedStore({ clock: () => now });
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'original', attachments: [] });
+  now += 30 * 60 * 1000;
+  const edited = store.editPost('school-a', post.id, 'teacher-a1', { body: 'updated', attachments: [] }, { now });
+  assert.equal(edited.body, 'updated');
+  assert.ok(edited.editedAt);
+});
+
+test('ClassFeedStore.editPost: refuse si > 1h', () => {
+  let now = 1_700_000_000_000;
+  const store = new ClassFeedStore({ clock: () => now });
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'original', attachments: [] });
+  now += 61 * 60 * 1000;
+  assert.throws(() => store.editPost('school-a', post.id, 'teacher-a1', { body: 'updated', attachments: [] }, { now }),
+    (err) => err.code === 'edit_window_expired');
+});
+
+test('ClassFeedStore.editPost: refuse si pas auteur', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  assert.throws(() => store.editPost('school-a', post.id, 'teacher-other', { body: 'y', attachments: [] }, { now: Date.now() }),
+    (err) => err.code === 'forbidden');
+});
+
+test('ClassFeedStore.softDeletePost: auteur OK', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  store.softDeletePost('school-a', post.id, 'teacher-a1', 'teacher');
+  assert.equal(store.getPost('school-a', post.id), null);
+  assert.ok(store.getPost('school-a', post.id, { includeDeleted: true }).deletedAt);
+});
+
+test('ClassFeedStore.softDeletePost: admin OK meme si pas auteur', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  store.softDeletePost('school-a', post.id, 'admin-a', 'school_admin');
+  assert.equal(store.getPost('school-a', post.id), null);
+});
+
+test('ClassFeedStore.softDeletePost: parent refuse', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  assert.throws(() => store.softDeletePost('school-a', post.id, 'parent-a1', 'parent'),
+    (err) => err.code === 'forbidden');
+});
