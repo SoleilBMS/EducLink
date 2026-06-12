@@ -1717,6 +1717,85 @@ tbody tr:hover { background: rgba(79, 70, 229, 0.04); }
   margin: var(--el-space-6) 0;
 }
 
+.el-feed-intro {
+  margin-bottom: var(--el-space-6);
+}
+.el-feed-intro h1 {
+  margin-bottom: var(--el-space-2);
+}
+.el-feed-intro p {
+  color: var(--el-color-text-secondary);
+  margin: 0;
+}
+
+/* Class selector tiles (page /class-feed) */
+.el-class-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--el-space-4);
+  margin-bottom: var(--el-space-5);
+}
+.el-class-tile {
+  display: flex;
+  align-items: center;
+  gap: var(--el-space-4);
+  padding: var(--el-space-5);
+  background: var(--el-color-surface);
+  border: 1px solid var(--el-color-border);
+  border-radius: var(--el-radius-lg);
+  box-shadow: var(--el-shadow-sm);
+  text-decoration: none;
+  color: var(--el-color-text);
+  transition: transform var(--el-transition), box-shadow var(--el-transition), border-color var(--el-transition);
+}
+.el-class-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--el-shadow-md);
+  border-color: var(--el-color-primary);
+  color: var(--el-color-text);
+}
+.el-class-tile.is-broadcast {
+  position: relative;
+  background: linear-gradient(120deg, rgba(79, 70, 229, 0.06), rgba(124, 58, 237, 0.06));
+  border-color: var(--el-color-primary);
+}
+.el-class-tile.is-broadcast::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--el-gradient-brand);
+  border-radius: var(--el-radius-lg) var(--el-radius-lg) 0 0;
+}
+.el-class-tile-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--el-radius-full);
+  font-size: 28px;
+  background: var(--el-gradient-brand);
+  color: #fff;
+  flex-shrink: 0;
+}
+.el-class-tile-body {
+  flex: 1;
+  min-width: 0;
+}
+.el-class-tile-title {
+  margin: 0 0 4px;
+  font-size: var(--el-text-lg);
+  font-weight: 800;
+  color: var(--el-color-text);
+}
+.el-class-tile-cta {
+  margin: 0;
+  font-size: var(--el-text-sm);
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
 /* Composer (top sticky) */
 .el-feed-composer {
   background: var(--el-color-surface);
@@ -5115,25 +5194,39 @@ function listClassesForUser(context, stores) {
 }
 
 function renderClassFeedSelectionPage(session, classes) {
+  const classInitials = (name) => (name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const cards = classes.length === 0
-    ? '<div class="el-empty"><p class="el-empty-title">Aucune classe accessible</p></div>'
-    : classes.map((c) => `
-        <a class="el-card is-interactive" href="/class-feed/classes/${escapeHtml(c.id)}" style="display:block;text-decoration:none;color:inherit;">
-          <h3>${escapeHtml(c.name)}</h3>
-          <p class="el-muted">Voir le mur de la classe →</p>
-        </a>
-      `).join('');
+    ? '<div class="el-empty"><svg class="el-empty-illustration" viewBox="0 0 96 96" fill="none" aria-hidden="true"><defs><linearGradient id="el-empty-class-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#4F46E5"/><stop offset="100%" stop-color="#7C3AED"/></linearGradient></defs><circle cx="48" cy="48" r="40" fill="url(#el-empty-class-grad)" opacity="0.15"/><path d="M28 60h40M28 48h40M28 36h40" stroke="url(#el-empty-class-grad)" stroke-width="2.5" stroke-linecap="round"/></svg><p class="el-empty-title">Aucune classe accessible</p><p class="el-empty-message">Tu n\'as pas encore de classe associée à ton compte.</p></div>'
+    : classes.map((c, idx) => {
+        const paletteIdx = (idx % 6) + 1;
+        return `
+        <a class="el-class-tile" href="/class-feed/classes/${escapeHtml(c.id)}">
+          <span class="el-avatar is-large is-palette-${paletteIdx}">${escapeHtml(classInitials(c.name))}</span>
+          <div class="el-class-tile-body">
+            <h3 class="el-class-tile-title">${escapeHtml(c.name)}</h3>
+            <p class="el-class-tile-cta">Voir le fil d'actualité <span aria-hidden="true">→</span></p>
+          </div>
+        </a>`;
+      }).join('');
   const broadcastCard = [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR].includes(session.role)
-    ? `<a class="el-card is-highlight is-interactive" href="/class-feed/broadcast" style="display:block;text-decoration:none;color:inherit;">
-         <h3>📣 Annonce à toute l'école</h3>
-         <p class="el-muted">Publier un post visible par toutes les classes</p>
+    ? `<a class="el-class-tile is-broadcast" href="/class-feed/broadcast">
+         <span class="el-class-tile-icon" aria-hidden="true">📣</span>
+         <div class="el-class-tile-body">
+           <h3 class="el-class-tile-title">Annonce à toute l'école</h3>
+           <p class="el-class-tile-cta">Publier un post visible par toutes les classes <span aria-hidden="true">→</span></p>
+         </div>
        </a>`
     : '';
   return renderDashboardLayout('Mur de la classe — EducLink', session, `
-    <h1>Mur de la classe</h1>
-    <p>Choisis une classe pour voir son fil d'actualité.</p>
-    ${broadcastCard}
-    ${cards}
+    <div class="el-feed">
+      <div class="el-feed-intro">
+        <h1>📰 Mur de la classe</h1>
+        <p>Choisis une classe pour voir son fil d'actualité, les photos, et échanger avec l'enseignant.</p>
+      </div>
+      ${broadcastCard ? `<div class="el-class-tiles">${broadcastCard}</div>` : ''}
+      ${classes.length > 0 && broadcastCard ? '<h2 style="margin-top: 32px;">Tes classes</h2>' : ''}
+      <div class="el-class-tiles">${cards}</div>
+    </div>
   `);
 }
 
