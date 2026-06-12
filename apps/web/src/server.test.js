@@ -4999,3 +4999,37 @@ test('Klassly-feed: GET /class-feed/classes/:id — classe inexistante 404', asy
     assert.ok([403, 404].includes(response.status), `got ${response.status}`);
   });
 });
+
+test('Klassly-feed: GET /class-feed/broadcast — admin OK', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/class-feed/broadcast`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('Annonces') || html.includes('broadcast') || html.includes('école'), 'page broadcast rendue');
+  });
+});
+
+test('Klassly-feed: GET /class-feed/broadcast — director OK', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'director@school-a.test');
+    const response = await fetch(`${baseUrl}/class-feed/broadcast`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+  });
+});
+
+test('Klassly-feed: GET /class-feed/broadcast — teacher 403/404', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    const response = await fetch(`${baseUrl}/class-feed/broadcast`, { headers: { cookie }, redirect: 'manual' });
+    assert.ok([403, 404].includes(response.status));
+  });
+});
+
+test('Klassly-feed: GET /class-feed/broadcast — parent 403/404', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const response = await fetch(`${baseUrl}/class-feed/broadcast`, { headers: { cookie }, redirect: 'manual' });
+    assert.ok([403, 404].includes(response.status));
+  });
+});

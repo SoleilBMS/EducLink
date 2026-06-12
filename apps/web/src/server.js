@@ -8564,6 +8564,28 @@ function createServer({
       return;
     }
 
+    if (request.method === 'GET' && url.pathname === '/class-feed/broadcast') {
+      const auth = requireAuth(session);
+      if (!auth.allowed) {
+        response.writeHead(302, { location: '/login' });
+        response.end();
+        return;
+      }
+      if (!['school_admin', 'director'].includes(auth.context.role)) {
+        sendNotFoundPage(response, session);
+        return;
+      }
+      const posts = await Promise.resolve(classFeedStore.listPostsForClass(auth.context.tenantId, null, { limit: 20 }));
+      const enriched = await enrichPostsForRender(posts, classFeedStore, auth.context, {});
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderClassFeedPage(session, {
+        classRoom: { id: 'broadcast', name: '📣 Annonces école' },
+        posts: enriched,
+        canCompose: true
+      }));
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname === '/class-feed') {
       const auth = requireAuth(session);
       if (!auth.allowed) {
