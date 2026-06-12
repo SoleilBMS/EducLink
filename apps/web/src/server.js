@@ -8645,7 +8645,7 @@ function createServer({
       }
       let parsed;
       try {
-        parsed = await parseMultipart(request, { maxTotalBytes: 32 * 1024 * 1024 });
+        parsed = await parseMultipart(request, { maxFileSize: 32 * 1024 * 1024, maxFiles: 8 });
       } catch (err) {
         response.writeHead(400, { 'content-type': 'text/plain' });
         response.end('Invalid multipart');
@@ -8677,9 +8677,12 @@ function createServer({
           return;
         }
       }
-      const attachments = parsed.file
-        ? [{ fileName: parsed.file.fileName, mimeType: parsed.file.mimeType, data: parsed.file.data }]
-        : [];
+      const photoFiles = (parsed.files || []).filter((f) => f.fieldName === 'photos').slice(0, 8);
+      const attachments = photoFiles.length > 0
+        ? photoFiles.map((f) => ({ fileName: f.fileName, mimeType: f.mimeType, data: f.data }))
+        : parsed.file
+          ? [{ fileName: parsed.file.fileName, mimeType: parsed.file.mimeType, data: parsed.file.data }]
+          : [];
       try {
         const post = await Promise.resolve(classFeedStore.createPost(auth.context.tenantId, { userId: auth.context.userId, role: auth.context.role, tenantId: auth.context.tenantId }, {
           classRoomId,

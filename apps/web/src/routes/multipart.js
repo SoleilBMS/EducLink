@@ -10,7 +10,8 @@ function parseMultipart(request, {
   maxFileSize = DEFAULT_MAX_FILE_SIZE,
   allowedMimeTypes = null,
   maxFields = DEFAULT_MAX_FIELDS,
-  maxFieldSize = DEFAULT_MAX_FIELD_SIZE
+  maxFieldSize = DEFAULT_MAX_FIELD_SIZE,
+  maxFiles = 1
 } = {}) {
   const contentType = request.headers['content-type'] || '';
   if (!contentType.toLowerCase().startsWith('multipart/form-data')) {
@@ -24,7 +25,7 @@ function parseMultipart(request, {
         headers: request.headers,
         limits: {
           fileSize: maxFileSize,
-          files: 1,
+          files: maxFiles,
           fields: maxFields,
           fieldSize: maxFieldSize
         }
@@ -36,11 +37,11 @@ function parseMultipart(request, {
 
     const fields = new Map();
     let file = null;
+    const files = [];
     let settled = false;
-    const chunks = [];
-    let fileSize = 0;
     let fileTruncated = false;
     let extraFileDetected = false;
+    let activeFileStreams = 0;
 
     const finish = (action) => {
       if (settled) {
@@ -69,15 +70,9 @@ function parseMultipart(request, {
         return;
       }
 
-      if (file !== null) {
-        extraFileDetected = true;
-        stream.resume();
-        finish(() => reject(buildValidationError('Only one file upload is allowed per request')));
-        return;
-      }
-
       const mimeType = info?.mimeType || info?.mime || '';
       const fileName = info?.filename || '';
+      const fieldName = name;
       if (allowedMimeTypes && !allowedMimeTypes.includes(mimeType)) {
         stream.resume();
         finish(() => reject(buildValidationError(
@@ -85,6 +80,10 @@ function parseMultipart(request, {
         )));
         return;
       }
+
+      const chunks = [];
+      let fileSize = 0;
+      activeFileStreams++;
 
       stream.on('data', (chunk) => {
         if (settled) {
@@ -102,26 +101,32 @@ function parseMultipart(request, {
       });
 
       stream.on('end', () => {
+        activeFileStreams--;
         if (settled || fileTruncated || extraFileDetected) {
           return;
         }
         if (!fileName || fileSize === 0) {
           // Empty file input → treat as no file
-          file = null;
           return;
         }
-        file = {
+        const fileObj = {
+          fieldName,
           fileName,
           mimeType,
           data: Buffer.concat(chunks, fileSize),
           size: fileSize
         };
+        files.push(fileObj);
+        // Back-compat: first file becomes parsed.file
+        if (file === null) {
+          file = fileObj;
+        }
       });
     });
 
     busboy.on('filesLimit', () => {
       extraFileDetected = true;
-      finish(() => reject(buildValidationError('Only one file upload is allowed per request')));
+      finish(() => reject(buildValidationError(`Too many files (limit ${maxFiles})`)));
     });
 
     busboy.on('partsLimit', () => {
@@ -141,7 +146,7 @@ function parseMultipart(request, {
         return;
       }
       settled = true;
-      resolve({ fields, file });
+      resolve({ fields, file, files });
     });
 
     request.on('error', (err) => {

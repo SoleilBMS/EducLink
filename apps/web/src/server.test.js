@@ -5088,3 +5088,34 @@ test('Klassly-feed: POST /class-feed/posts broadcast — admin OK', async () => 
     assert.match(response.headers.get('location') || '', /\/class-feed\/broadcast/);
   });
 });
+
+test('Klassly-feed: POST /class-feed/posts — teacher peut uploader 3 photos', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie, csrfToken } = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie }, redirect: 'manual' });
+    let classId;
+    if (sel.status === 302) {
+      classId = sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1];
+    } else {
+      const html = await sel.text();
+      const m = html.match(/\/class-feed\/classes\/([^"]+)"/);
+      classId = m ? m[1] : null;
+    }
+    assert.ok(classId);
+    const fd = new FormData();
+    fd.append('_csrf', csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'sortie 3 photos');
+    const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+    fd.append('photos', new Blob([pngBytes], { type: 'image/png' }), 'p1.png');
+    fd.append('photos', new Blob([pngBytes], { type: 'image/png' }), 'p2.png');
+    fd.append('photos', new Blob([pngBytes], { type: 'image/png' }), 'p3.png');
+    const response = await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie }, body: fd, redirect: 'manual' });
+    assert.equal(response.status, 302);
+    // Re-fetch la page pour confirmer 3 attachments
+    const page = await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie } });
+    const html = await page.text();
+    const attachmentCount = (html.match(/\/class-feed\/attachments\//g) || []).length;
+    assert.ok(attachmentCount >= 3, `expected at least 3 attachments in feed HTML, got ${attachmentCount}`);
+  });
+});

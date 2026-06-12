@@ -106,6 +106,6 @@ test('parseMultipart : rejette > 1 fichier', async () => {
   const request = makeRequest(body);
   await assert.rejects(
     parseMultipart(request, { allowedMimeTypes: ['application/pdf'] }),
-    /Only one file/
+    /Too many files/
   );
 });
