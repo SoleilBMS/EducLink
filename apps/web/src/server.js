@@ -1,5 +1,5 @@
 const http = require('node:http');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const { AsyncLocalStorage } = require('node:async_hooks');
 
 const requestContextStorage = new AsyncLocalStorage();
@@ -603,7 +603,7 @@ function applySecurityHeaders(response, { isProduction }) {
       "default-src 'self'",
       "style-src 'self' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
-      "script-src 'self'",
+      `script-src 'self' 'sha256-${THEME_BOOTSTRAP_HASH}'`,
       "img-src 'self' data:",
       "connect-src 'self'",
       "form-action 'self'",
@@ -709,6 +709,10 @@ function sendCsrfFailure(request, response) {
   response.writeHead(403, { 'content-type': 'text/html; charset=utf-8' });
   response.end('<!doctype html><html><body><h1>403 - CSRF token invalide</h1><p>Veuillez recharger la page et réessayer.</p></body></html>');
 }
+
+const THEME_BOOTSTRAP_JS = `(function(){try{var s=localStorage.getItem('el-theme');var p=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var t=s||(p?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();`;
+
+const THEME_BOOTSTRAP_HASH = createHash('sha256').update(THEME_BOOTSTRAP_JS).digest('base64');
 
 const UX_SCRIPT_JS = `(function () {
   document.addEventListener('submit', function (event) {
@@ -1573,7 +1577,7 @@ tbody tr:hover { background: rgba(79, 70, 229, 0.04); }
 const EDUCLINK_LOGO_SVG = `<svg class="el-logo-mark" viewBox="0 0 48 48" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="el-logo-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#22c55e"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs><path d="M24 8 4 18l20 10 16-8v10a1.5 1.5 0 0 0 3 0V18z" fill="url(#el-logo-grad)"/><path d="M12 24v6c0 3 5.4 6 12 6s12-3 12-6v-6l-12 6z" fill="url(#el-logo-grad)" opacity=".85"/><circle cx="41.5" cy="29.5" r="2.2" fill="#7c3aed"/></svg>`;
 
 function renderPageHead(title) {
-  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"><link rel="stylesheet" href="/assets/design-system.css"><script src="/assets/ux.js" defer></script>`;
+  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><script>${THEME_BOOTSTRAP_JS}</script><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"><link rel="stylesheet" href="/assets/design-system.css"><script src="/assets/ux.js" defer></script>`;
 }
 
 function renderLoginPage(errorMessage = '') {
