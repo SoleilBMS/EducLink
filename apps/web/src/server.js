@@ -719,7 +719,7 @@ const THEME_BOOTSTRAP_JS = `(function(){try{var s=localStorage.getItem('el-theme
 const THEME_BOOTSTRAP_HASH = createHash('sha256').update(THEME_BOOTSTRAP_JS).digest('base64');
 
 const UX_SCRIPT_JS = `(function () {
-  // Confirmation des actions destructives (existant)
+  // ---- Confirmation des actions destructives (existant) ----
   document.addEventListener('submit', function (event) {
     var form = event.target;
     if (!form || form.tagName !== 'FORM') return;
@@ -730,7 +730,7 @@ const UX_SCRIPT_JS = `(function () {
     }
   });
 
-  // Toggle theme jour/nuit (nouveau)
+  // ---- Toggle theme jour/nuit (existant) ----
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
     try { localStorage.setItem('el-theme', theme); } catch (e) {}
@@ -747,8 +747,7 @@ const UX_SCRIPT_JS = `(function () {
     }
   });
 
-  // Helper avatar gradient deterministique (Klassly-style)
-  // Disponible globalement pour debug / scripts inline
+  // ---- Avatar palette helper (existant) ----
   window.elAvatarPaletteFor = function (userId) {
     if (typeof userId !== 'string' || userId.length === 0) return 1;
     var hash = 0;
@@ -758,6 +757,97 @@ const UX_SCRIPT_JS = `(function () {
     }
     return Math.abs(hash) % 6 + 1;
   };
+
+  // ---- CSRF token global (lu depuis meta el-csrf-token) ----
+  window.elCsrfToken = '';
+  document.addEventListener('DOMContentLoaded', function () {
+    var meta = document.querySelector('meta[name="el-csrf-token"]');
+    if (meta) window.elCsrfToken = meta.getAttribute('content') || '';
+  });
+
+  // ---- Debounce helper ----
+  window.elDebounce = function (fn, ms) {
+    var t = null;
+    return function () {
+      var args = arguments;
+      var ctx = this;
+      clearTimeout(t);
+      t = setTimeout(function () { fn.apply(ctx, args); }, ms);
+    };
+  };
+
+  // ---- Composer expand on click ----
+  document.addEventListener('click', function (event) {
+    var collapsed = event.target.closest && event.target.closest('.el-feed-composer-collapsed');
+    if (!collapsed) return;
+    var composer = collapsed.closest('.el-feed-composer');
+    if (composer) {
+      composer.classList.add('is-expanded');
+      var textarea = composer.querySelector('textarea');
+      if (textarea) textarea.focus();
+    }
+  });
+
+  // ---- Photo previews avant upload ----
+  document.addEventListener('change', function (event) {
+    if (!event.target.matches('input[type="file"][data-feed-photos]')) return;
+    var preview = document.querySelector('.el-feed-photo-previews');
+    if (!preview) return;
+    preview.innerHTML = '';
+    var files = Array.from(event.target.files).slice(0, 8);
+    files.forEach(function (file) {
+      var url = URL.createObjectURL(file);
+      var img = document.createElement('img');
+      img.src = url;
+      img.className = 'el-feed-photo-thumb';
+      preview.appendChild(img);
+    });
+  });
+
+  // ---- Like toggle (optimistic UI) ----
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (!form.matches('form[data-feed-like]')) return;
+    event.preventDefault();
+    var btn = form.querySelector('button');
+    if (!btn) return;
+    var countSpan = btn.querySelector('.el-like-count');
+    var wasLiked = btn.classList.contains('is-liked');
+    var currentCount = parseInt(countSpan ? countSpan.textContent : '0', 10) || 0;
+    btn.classList.toggle('is-liked');
+    if (countSpan) countSpan.textContent = wasLiked ? Math.max(0, currentCount - 1) : currentCount + 1;
+    fetch(form.action, {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': window.elCsrfToken, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '_csrf=' + encodeURIComponent(window.elCsrfToken)
+    }).catch(function () {
+      btn.classList.toggle('is-liked');
+      if (countSpan) countSpan.textContent = currentCount;
+    });
+  });
+
+  // ---- Auto-mark-as-read au scroll ----
+  var markedRead = new Set();
+  function checkVisiblePosts() {
+    var cards = document.querySelectorAll('.el-post-card[data-post-id]:not([data-read="1"])');
+    cards.forEach(function (card) {
+      var rect = card.getBoundingClientRect();
+      if (rect.top < (window.innerHeight || document.documentElement.clientHeight) * 0.7 && rect.bottom > 0) {
+        var id = card.dataset.postId;
+        if (markedRead.has(id)) return;
+        markedRead.add(id);
+        card.dataset.read = '1';
+        if (!window.elCsrfToken) return;
+        fetch('/class-feed/posts/' + encodeURIComponent(id) + '/read', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': window.elCsrfToken, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: '_csrf=' + encodeURIComponent(window.elCsrfToken)
+        }).catch(function () { markedRead.delete(id); card.removeAttribute('data-read'); });
+      }
+    });
+  }
+  document.addEventListener('scroll', window.elDebounce(checkVisiblePosts, 300), { passive: true });
+  document.addEventListener('DOMContentLoaded', checkVisiblePosts);
 })();
 `;
 
@@ -1812,8 +1902,9 @@ tbody tr:hover { background: rgba(79, 70, 229, 0.04); }
 const EDUCLINK_LOGO_SVG = `<svg class="el-logo-mark" viewBox="0 0 48 48" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="el-logo-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#22c55e"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs><path d="M24 8 4 18l20 10 16-8v10a1.5 1.5 0 0 0 3 0V18z" fill="url(#el-logo-grad)"/><path d="M12 24v6c0 3 5.4 6 12 6s12-3 12-6v-6l-12 6z" fill="url(#el-logo-grad)" opacity=".85"/><circle cx="41.5" cy="29.5" r="2.2" fill="#7c3aed"/></svg>`;
 const THEME_TOGGLE_SVG = `<button type="button" class="el-theme-toggle" aria-label="Basculer mode jour/nuit" title="Basculer mode jour/nuit"><svg class="el-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="el-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>`;
 
-function renderPageHead(title) {
-  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><script>${THEME_BOOTSTRAP_JS}</script><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"><link rel="stylesheet" href="/assets/design-system.css"><script src="/assets/ux.js" defer></script>`;
+function renderPageHead(title, csrfToken = '') {
+  const csrfMeta = csrfToken ? `<meta name="el-csrf-token" content="${csrfToken}">` : '';
+  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>${csrfMeta}<script>${THEME_BOOTSTRAP_JS}</script><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"><link rel="stylesheet" href="/assets/design-system.css"><script src="/assets/ux.js" defer></script>`;
 }
 
 function renderLoginPage(errorMessage = '') {
