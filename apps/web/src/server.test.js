@@ -4931,3 +4931,22 @@ test('refonte-design: la page showcase /__design retourne 404 en production', as
     assert.equal(response.status, 404);
   }, { runtimeEnv: productionRuntimeEnv });
 });
+
+test('Klassly-feed: GET /class-feed accessible aux 5 roles', async () => {
+  await withServer(async (baseUrl) => {
+    for (const email of ['admin@school-a.test', 'director@school-a.test', 'teacher@school-a.test', 'parent@school-a.test', 'student@school-a.test']) {
+      const { cookie } = await login(baseUrl, email);
+      const response = await fetch(`${baseUrl}/class-feed`, { headers: { cookie }, redirect: 'manual' });
+      // Soit 200 (page selector) soit 302 (redirect direct si 1 seule classe)
+      assert.ok([200, 302].includes(response.status), `failed for ${email}, got ${response.status}`);
+    }
+  });
+});
+
+test('Klassly-feed: GET /class-feed sans session redirige /login', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/class-feed`, { redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /\/login/);
+  });
+});

@@ -2168,6 +2168,7 @@ function buildDashboardNavigation(session, currentPath = '') {
     { label: 'Matières', href: '/admin/subjects', roles: [ROLES.SCHOOL_ADMIN] },
     { label: 'Tenants', href: '/admin/tenants', roles: [ROLES.SUPER_ADMIN] },
     { label: 'Présences', href: session.role === ROLES.TEACHER ? '/teacher/attendance' : '/admin/attendance', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER] },
+    { label: '📰 Mur de la classe', href: '/class-feed', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR, ROLES.TEACHER, ROLES.PARENT, ROLES.STUDENT] },
     { label: 'Vie scolaire', href: '/admin/vie-scolaire', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
     { label: 'Absences', href: '/parent/absences', roles: [ROLES.PARENT] },
     { label: absencesAdminLabel, href: '/admin/absences', roles: [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR] },
@@ -4936,6 +4937,55 @@ function logAuthEvent(logger, message, session) {
     userId: session?.userId ?? null,
     role: session?.role ?? null
   });
+}
+
+function listClassesForUser(context, stores) {
+  const { coreSchoolStore, teacherStore, studentStore, parentStore } = stores;
+  const tenantId = context.tenantId;
+  if (!tenantId) return [];
+  const allClasses = coreSchoolStore.list('classRooms', tenantId);
+  if ([ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR].includes(context.role)) return allClasses;
+  if (context.role === ROLES.TEACHER) {
+    const teacher = teacherStore.list(tenantId).find((t) => t.id === context.userId);
+    if (!teacher) return [];
+    return allClasses.filter((c) => teacher.classRoomIds.includes(c.id));
+  }
+  if (context.role === ROLES.PARENT) {
+    const links = parentStore.listLinksByParent(tenantId, context.userId);
+    const studentIds = new Set(links.map((l) => l.studentId));
+    const students = studentStore.list(tenantId).filter((s) => studentIds.has(s.id));
+    const classIds = new Set(students.map((s) => s.classRoomId).filter(Boolean));
+    return allClasses.filter((c) => classIds.has(c.id));
+  }
+  if (context.role === ROLES.STUDENT) {
+    const student = studentStore.list(tenantId).find((s) => s.id === context.userId);
+    if (!student || !student.classRoomId) return [];
+    return allClasses.filter((c) => c.id === student.classRoomId);
+  }
+  return [];
+}
+
+function renderClassFeedSelectionPage(session, classes) {
+  const cards = classes.length === 0
+    ? '<div class="el-empty"><p class="el-empty-title">Aucune classe accessible</p></div>'
+    : classes.map((c) => `
+        <a class="el-card is-interactive" href="/class-feed/classes/${escapeHtml(c.id)}" style="display:block;text-decoration:none;color:inherit;">
+          <h3>${escapeHtml(c.name)}</h3>
+          <p class="el-muted">Voir le mur de la classe →</p>
+        </a>
+      `).join('');
+  const broadcastCard = [ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR].includes(session.role)
+    ? `<a class="el-card is-highlight is-interactive" href="/class-feed/broadcast" style="display:block;text-decoration:none;color:inherit;">
+         <h3>📣 Annonce à toute l'école</h3>
+         <p class="el-muted">Publier un post visible par toutes les classes</p>
+       </a>`
+    : '';
+  return renderDashboardLayout('Mur de la classe — EducLink', session, `
+    <h1>Mur de la classe</h1>
+    <p>Choisis une classe pour voir son fil d'actualité.</p>
+    ${broadcastCard}
+    ${cards}
+  `);
 }
 
 async function checkHealth(runtimeEnv) {
@@ -8362,6 +8412,24 @@ function createServer({
 
       response.writeHead(302, { location: '/admin/tenants?success=created' });
       response.end();
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/class-feed') {
+      const auth = requireAuth(session);
+      if (!auth.allowed) {
+        response.writeHead(302, { location: '/login' });
+        response.end();
+        return;
+      }
+      const classes = listClassesForUser(auth.context, { coreSchoolStore, teacherStore, studentStore, parentStore });
+      if (classes.length === 1 && ![ROLES.SCHOOL_ADMIN, ROLES.DIRECTOR].includes(auth.context.role)) {
+        response.writeHead(302, { location: `/class-feed/classes/${classes[0].id}` });
+        response.end();
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderClassFeedSelectionPage(session, classes));
       return;
     }
 
