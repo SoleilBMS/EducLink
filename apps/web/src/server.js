@@ -8780,6 +8780,84 @@ function createServer({
       }
     }
 
+    {
+      const likeMatch = url.pathname.match(/^\/class-feed\/posts\/([^/]+)\/like$/);
+      if (likeMatch && request.method === 'POST') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+        const postId = likeMatch[1];
+        const result = await Promise.resolve(classFeedStore.toggleLike(auth.context.tenantId, postId, auth.context.userId));
+        if (!result) { sendNotFoundPage(response, session); return; }
+        const acceptsJson = (request.headers.accept || '').includes('application/json') || request.headers['x-requested-with'] === 'fetch';
+        if (acceptsJson) {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify(result));
+          return;
+        }
+        const referrer = request.headers.referer || '/class-feed';
+        response.writeHead(302, { location: referrer });
+        response.end();
+        return;
+      }
+    }
+
+    {
+      const commentMatch = url.pathname.match(/^\/class-feed\/posts\/([^/]+)\/comments$/);
+      if (commentMatch && request.method === 'POST') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+        const postId = commentMatch[1];
+        const form = parseExtendedForm(await readBody(request));
+        if (!compareCsrfTokens(session.csrfToken, form.get('_csrf') || '')) {
+          sendCsrfFailure(request, response); return;
+        }
+        const body = form.get('body') || '';
+        try {
+          const comment = await Promise.resolve(classFeedStore.addComment(auth.context.tenantId, postId, { userId: auth.context.userId, role: auth.context.role, tenantId: auth.context.tenantId }, body));
+          if (!comment) { sendNotFoundPage(response, session); return; }
+          if (typeof auditWriter !== 'undefined' && auditWriter.writeEntityEvent) {
+            auditWriter.writeEntityEvent(auth.context, 'feed_comment.created', 'feed_comment', comment.id);
+          }
+          const referrer = request.headers.referer || '/class-feed';
+          response.writeHead(302, { location: referrer + `#post-${postId}-comments` });
+          response.end();
+        } catch (err) {
+          if (err.code === 'validation_error') {
+            response.writeHead(302, { location: (request.headers.referer || '/class-feed') + '?error=comment_invalid' });
+            response.end(); return;
+          }
+          throw err;
+        }
+        return;
+      }
+    }
+
+    {
+      const delCommentMatch = url.pathname.match(/^\/class-feed\/comments\/([^/]+)\/delete$/);
+      if (delCommentMatch && request.method === 'POST') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+        const form = parseExtendedForm(await readBody(request));
+        if (!compareCsrfTokens(session.csrfToken, form.get('_csrf') || '')) {
+          sendCsrfFailure(request, response); return;
+        }
+        const commentId = delCommentMatch[1];
+        try {
+          const comment = await Promise.resolve(classFeedStore.softDeleteComment(auth.context.tenantId, commentId, auth.context.userId, auth.context.role));
+          if (!comment) { sendNotFoundPage(response, session); return; }
+          if (typeof auditWriter !== 'undefined' && auditWriter.writeEntityEvent) {
+            auditWriter.writeEntityEvent(auth.context, 'feed_comment.deleted', 'feed_comment', commentId);
+          }
+          response.writeHead(302, { location: request.headers.referer || '/class-feed' });
+          response.end();
+        } catch (err) {
+          if (err.code === 'forbidden') { sendForbiddenPage(response, session); return; }
+          throw err;
+        }
+        return;
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === '/inbox') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {

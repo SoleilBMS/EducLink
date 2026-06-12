@@ -5194,3 +5194,51 @@ test('Klassly-feed: POST /posts/:id/delete — admin peut supprimer post d un au
     assert.equal(del.status, 302);
   });
 });
+
+test('Klassly-feed: POST /posts/:id/like — toggle like', async () => {
+  await withServer(async (baseUrl) => {
+    const t = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie: t.cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    const fd = new FormData();
+    fd.append('_csrf', t.csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'likeable');
+    await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie: t.cookie }, body: fd });
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie: t.cookie } })).text();
+    const postId = feedHtml.match(/data-post-id="(post-[^"]+)"/)?.[1];
+    assert.ok(postId);
+    // Parent likes
+    const p = await loginWithCsrf(baseUrl, 'parent@school-a.test');
+    const like = await fetch(`${baseUrl}/class-feed/posts/${postId}/like`, {
+      method: 'POST', headers: { cookie: p.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `_csrf=${encodeURIComponent(p.csrfToken)}`, redirect: 'manual'
+    });
+    assert.ok([200, 302].includes(like.status), `got ${like.status}`);
+  });
+});
+
+test('Klassly-feed: POST /posts/:id/comments — parent peut commenter', async () => {
+  await withServer(async (baseUrl) => {
+    const t = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie: t.cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    const fd = new FormData();
+    fd.append('_csrf', t.csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'comment me');
+    await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie: t.cookie }, body: fd });
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie: t.cookie } })).text();
+    const postId = feedHtml.match(/data-post-id="(post-[^"]+)"/)?.[1];
+    const p = await loginWithCsrf(baseUrl, 'parent@school-a.test');
+    const com = await fetch(`${baseUrl}/class-feed/posts/${postId}/comments`, {
+      method: 'POST', headers: { cookie: p.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `_csrf=${encodeURIComponent(p.csrfToken)}&body=${encodeURIComponent('Trop bien !')}`, redirect: 'manual'
+    });
+    assert.equal(com.status, 302);
+  });
+});
