@@ -5119,3 +5119,78 @@ test('Klassly-feed: POST /class-feed/posts — teacher peut uploader 3 photos', 
     assert.ok(attachmentCount >= 3, `expected at least 3 attachments in feed HTML, got ${attachmentCount}`);
   });
 });
+
+test('Klassly-feed: POST /posts/:id/edit — auteur < 1h OK (302)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie, csrfToken } = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    // Find class
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    // Create post
+    const create = new FormData();
+    create.append('_csrf', csrfToken);
+    create.append('classRoomId', classId);
+    create.append('body', 'original');
+    const createRes = await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie }, body: create, redirect: 'manual' });
+    assert.equal(createRes.status, 302);
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie } })).text();
+    const postId = feedHtml.match(/data-post-id="(post-[^"]+)"/)?.[1];
+    assert.ok(postId, 'post id found in feed');
+    // Edit (no photos, just body change via form-urlencoded)
+    const editRes = await fetch(`${baseUrl}/class-feed/posts/${postId}/edit`, {
+      method: 'POST',
+      headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `_csrf=${encodeURIComponent(csrfToken)}&body=${encodeURIComponent('edited')}`,
+      redirect: 'manual'
+    });
+    assert.equal(editRes.status, 302);
+  });
+});
+
+test('Klassly-feed: POST /posts/:id/delete — auteur OK', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie, csrfToken } = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    const create = new FormData();
+    create.append('_csrf', csrfToken);
+    create.append('classRoomId', classId);
+    create.append('body', 'to delete');
+    await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie }, body: create });
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie } })).text();
+    const postId = feedHtml.match(/data-post-id="(post-[^"]+)"/)?.[1];
+    assert.ok(postId);
+    const del = await fetch(`${baseUrl}/class-feed/posts/${postId}/delete`, {
+      method: 'POST', headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `_csrf=${encodeURIComponent(csrfToken)}`, redirect: 'manual'
+    });
+    assert.equal(del.status, 302);
+  });
+});
+
+test('Klassly-feed: POST /posts/:id/delete — admin peut supprimer post d un autre', async () => {
+  await withServer(async (baseUrl) => {
+    const tLogin = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie: tLogin.cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    const fd = new FormData();
+    fd.append('_csrf', tLogin.csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'admin will delete this');
+    await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie: tLogin.cookie }, body: fd });
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie: tLogin.cookie } })).text();
+    const postId = feedHtml.match(/data-post-id="(post-[^"]+)"/)?.[1];
+    const aLogin = await loginWithCsrf(baseUrl, 'admin@school-a.test');
+    const del = await fetch(`${baseUrl}/class-feed/posts/${postId}/delete`, {
+      method: 'POST', headers: { cookie: aLogin.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `_csrf=${encodeURIComponent(aLogin.csrfToken)}`, redirect: 'manual'
+    });
+    assert.equal(del.status, 302);
+  });
+});

@@ -8708,6 +8708,78 @@ function createServer({
       return;
     }
 
+    {
+      const editMatch = url.pathname.match(/^\/class-feed\/posts\/([^/]+)\/edit$/);
+      if (editMatch && request.method === 'POST') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+        let parsed;
+        try {
+          const ct = String(request.headers['content-type'] || '').toLowerCase();
+          if (ct.startsWith('multipart/form-data')) {
+            parsed = await parseMultipart(request, { maxFileSize: 32 * 1024 * 1024, maxFiles: 8 });
+          } else {
+            const form = parseExtendedForm(await readBody(request));
+            parsed = { fields: form, files: [] };
+          }
+        } catch (err) {
+          response.writeHead(400); response.end('Invalid form'); return;
+        }
+        if (!compareCsrfTokens(session.csrfToken, parsed.fields.get('_csrf') || '')) {
+          sendCsrfFailure(request, response); return;
+        }
+        const postId = editMatch[1];
+        const body = parsed.fields.get('body') || '';
+        const photoFiles = (parsed.files || []).filter((f) => f.fieldName === 'photos').slice(0, 8);
+        const attachments = photoFiles.map((f) => ({ fileName: f.fileName, mimeType: f.mimeType, data: f.data }));
+        try {
+          const post = await Promise.resolve(classFeedStore.editPost(auth.context.tenantId, postId, auth.context.userId, { body, attachments }, { now: Date.now() }));
+          if (!post) { sendNotFoundPage(response, session); return; }
+          if (typeof auditWriter !== 'undefined' && auditWriter.writeEntityEvent) {
+            auditWriter.writeEntityEvent(auth.context, 'feed_post.edited', 'feed_post', postId);
+          }
+          const redirectTo = post.classRoomId === null ? '/class-feed/broadcast' : `/class-feed/classes/${encodeURIComponent(post.classRoomId)}`;
+          response.writeHead(302, { location: redirectTo });
+          response.end();
+        } catch (err) {
+          if (err.code === 'forbidden') { sendForbiddenPage(response, session); return; }
+          if (err.code === 'edit_window_expired' || err.code === 'validation_error') {
+            response.writeHead(302, { location: `/class-feed?error=${err.code}` });
+            response.end(); return;
+          }
+          throw err;
+        }
+        return;
+      }
+    }
+
+    {
+      const delMatch = url.pathname.match(/^\/class-feed\/posts\/([^/]+)\/delete$/);
+      if (delMatch && request.method === 'POST') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+        const form = parseExtendedForm(await readBody(request));
+        if (!compareCsrfTokens(session.csrfToken, form.get('_csrf') || '')) {
+          sendCsrfFailure(request, response); return;
+        }
+        const postId = delMatch[1];
+        try {
+          const post = await Promise.resolve(classFeedStore.softDeletePost(auth.context.tenantId, postId, auth.context.userId, auth.context.role));
+          if (!post) { sendNotFoundPage(response, session); return; }
+          if (typeof auditWriter !== 'undefined' && auditWriter.writeEntityEvent) {
+            auditWriter.writeEntityEvent(auth.context, 'feed_post.deleted', 'feed_post', postId);
+          }
+          const redirectTo = post.classRoomId === null ? '/class-feed/broadcast' : `/class-feed/classes/${encodeURIComponent(post.classRoomId)}`;
+          response.writeHead(302, { location: redirectTo });
+          response.end();
+        } catch (err) {
+          if (err.code === 'forbidden') { sendForbiddenPage(response, session); return; }
+          throw err;
+        }
+        return;
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === '/inbox') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {
