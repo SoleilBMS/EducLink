@@ -99,6 +99,9 @@ const { PostgresMessagingRepository } = require('./modules/persistence/postgres-
 const { PostgresFinanceRepository } = require('./modules/persistence/postgres-finance-repository');
 const { PostgresUserRepository } = require('./modules/persistence/postgres-user-repository');
 const { PostgresTenantRepository } = require('./modules/persistence/postgres-tenant-repository');
+const { ClassFeedStore } = require('./modules/class-feed');
+const { PostgresClassFeedRepository } = require('./modules/persistence/postgres-class-feed-repository');
+const { EmailService } = require('./modules/email');
 const { InMemoryTenantStore } = require('./modules/tenants');
 const { buildValidationError, buildForbiddenError } = require('./modules/error-utils');
 const { InMemoryUserStore, DuplicateEmailError, buildSeedUsersWithHashedPassword, normalizeEmail } = require('../../../packages/auth/src/users/user-store');
@@ -4669,7 +4672,9 @@ function createServer({
   allowPublicDemoGuide = runtimeEnv.nodeEnv === 'development' || runtimeEnv.nodeEnv === 'test',
   userStore,
   tenantStore,
-  loginThrottle = new LoginThrottle()
+  loginThrottle = new LoginThrottle(),
+  classFeedStore,
+  emailService
 } = {}) {
   const sessionSecret = runtimeEnv.sessionSecret;
   if (!sessionSecret || typeof sessionSecret !== 'string') {
@@ -4821,6 +4826,26 @@ function createServer({
     messagingApiStore = persistentMessagingStore;
     financeApiStore = persistentFinanceStore;
     schoolStructureAdminStore = persistentCoreSchool;
+  }
+
+  if (!classFeedStore) {
+    classFeedStore = runtimeEnv.persistenceMode === 'postgres'
+      ? new PostgresClassFeedRepository({ pool: getPool() })
+      : new ClassFeedStore({
+          posts: seed.classFeedPosts ?? [],
+          attachments: seed.classFeedAttachments ?? [],
+          comments: seed.classFeedComments ?? [],
+          likes: seed.classFeedLikes ?? [],
+          reads: seed.classFeedReads ?? []
+        });
+  }
+  if (!emailService) {
+    emailService = new EmailService({
+      apiKey: runtimeEnv.resendApiKey,
+      fromAddress: runtimeEnv.mailFromAddress,
+      fromName: runtimeEnv.mailFromName,
+      logger: logger.child({ module: 'email' })
+    });
   }
 
   logger.info('Application server initialized', {
