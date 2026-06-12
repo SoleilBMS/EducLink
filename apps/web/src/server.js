@@ -1376,7 +1376,7 @@ tbody tr:hover { background: rgba(79, 70, 229, 0.04); }
 .el-status.is-success { background: #dcfce7; color: #166534; }
 .el-status.is-warning { background: #fef3c7; color: #92400e; }
 .el-status.is-danger  { background: #fee2e2; color: #991b1b; }
-.el-status.is-info    { background: #dbeafe; color: #1e3a8a; }
+.el-status.is-info    { background: rgba(79, 70, 229, 0.14); color: var(--el-color-primary-deep); }
 
 .el-landing { max-width: 1140px; margin: 0 auto; padding: var(--el-space-8) var(--el-space-6); display: grid; gap: var(--el-space-7); }
 
