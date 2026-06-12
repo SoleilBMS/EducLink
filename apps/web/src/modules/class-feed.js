@@ -26,6 +26,7 @@ const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_POST = 8;
 const EDIT_WINDOW_MS = 60 * 60 * 1000;
 const POST_DELETE_ROLES = new Set(['school_admin', 'director']);
+const COMMENT_DELETE_ROLES = new Set(['school_admin', 'director']);
 
 function validateAttachments(attachments) {
   if (attachments.length > MAX_ATTACHMENTS_PER_POST) {
@@ -162,6 +163,95 @@ class ClassFeedStore {
     }
     post.deletedAt = new Date(this.clock()).toISOString();
     return { ...post };
+  }
+
+  addComment(tenantId, postId, author, body) {
+    const trimmedBody = requireString(body, 'body', { min: 1, max: 2000 });
+    const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId && !p.deletedAt);
+    if (!post) return null;
+    const now = new Date(this.clock()).toISOString();
+    const comment = {
+      id: `comment-${crypto.randomUUID()}`,
+      tenantId,
+      postId,
+      authorUserId: author.userId,
+      body: trimmedBody,
+      createdAt: now,
+      deletedAt: null
+    };
+    this.comments.push(comment);
+    return { ...comment };
+  }
+
+  listComments(tenantId, postId) {
+    return this.comments
+      .filter((c) => c.postId === postId && c.tenantId === tenantId && !c.deletedAt)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+      .map((c) => ({ ...c }));
+  }
+
+  softDeleteComment(tenantId, commentId, actorUserId, actorRole) {
+    const comment = this.comments.find((c) => c.id === commentId && c.tenantId === tenantId && !c.deletedAt);
+    if (!comment) return null;
+    const post = this.posts.find((p) => p.id === comment.postId);
+    const isAuthor = comment.authorUserId === actorUserId;
+    const isPostAuthor = post && post.authorUserId === actorUserId;
+    const isAdmin = COMMENT_DELETE_ROLES.has(actorRole);
+    if (!isAuthor && !isPostAuthor && !isAdmin) {
+      throw new ClassFeedError('Only author, post author, or admin can delete this comment', { code: 'forbidden', status: 403 });
+    }
+    comment.deletedAt = new Date(this.clock()).toISOString();
+    return { ...comment };
+  }
+
+  toggleLike(tenantId, postId, userId) {
+    const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId && !p.deletedAt);
+    if (!post) return null;
+    const existingIdx = this.likes.findIndex((l) => l.postId === postId && l.userId === userId);
+    if (existingIdx >= 0) {
+      this.likes.splice(existingIdx, 1);
+      return { liked: false, count: this.countLikes(tenantId, postId) };
+    }
+    this.likes.push({ postId, userId, createdAt: new Date(this.clock()).toISOString() });
+    return { liked: true, count: this.countLikes(tenantId, postId) };
+  }
+
+  countLikes(tenantId, postId) {
+    const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId);
+    if (!post) return 0;
+    return this.likes.filter((l) => l.postId === postId).length;
+  }
+
+  markRead(tenantId, postId, userId) {
+    const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId && !p.deletedAt);
+    if (!post) return null;
+    const existing = this.reads.find((r) => r.postId === postId && r.userId === userId);
+    if (existing) return { ...existing };
+    const read = { postId, userId, readAt: new Date(this.clock()).toISOString() };
+    this.reads.push(read);
+    return { ...read };
+  }
+
+  countReads(tenantId, postId) {
+    const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId);
+    if (!post) return 0;
+    return this.reads.filter((r) => r.postId === postId).length;
+  }
+
+  listReadersForPost(tenantId, postId) {
+    const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId);
+    if (!post) return [];
+    return this.reads.filter((r) => r.postId === postId).map((r) => ({ ...r }));
+  }
+
+  resolveAudience(tenantId, post, audienceProvider) {
+    let candidates;
+    if (post.classRoomId === null) {
+      candidates = audienceProvider.getAllParents(tenantId);
+    } else {
+      candidates = audienceProvider.getParentsForClass(tenantId, post.classRoomId);
+    }
+    return [...new Set(candidates)].filter((userId) => userId !== post.authorUserId);
   }
 }
 

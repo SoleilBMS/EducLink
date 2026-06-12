@@ -193,3 +193,112 @@ test('ClassFeedStore.softDeletePost: parent refuse', () => {
   assert.throws(() => store.softDeletePost('school-a', post.id, 'parent-a1', 'parent'),
     (err) => err.code === 'forbidden');
 });
+
+test('ClassFeedStore.addComment: cree un commentaire et listComments retourne ASC', () => {
+  let t = 1000;
+  const store = new ClassFeedStore({ clock: () => (t += 100) });
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  const c1 = store.addComment('school-a', post.id, { userId: 'parent-a1', role: 'parent', tenantId: 'school-a' }, 'first');
+  const c2 = store.addComment('school-a', post.id, { userId: 'parent-a2', role: 'parent', tenantId: 'school-a' }, 'second');
+  const list = store.listComments('school-a', post.id);
+  assert.equal(list.length, 2);
+  assert.equal(list[0].body, 'first');
+  assert.equal(list[1].body, 'second');
+});
+
+test('ClassFeedStore.addComment: rejette body > 2000', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  assert.throws(() => store.addComment('school-a', post.id, { userId: 'p', role: 'parent', tenantId: 'school-a' }, 'x'.repeat(2001)),
+    (err) => err.code === 'validation_error');
+});
+
+test('ClassFeedStore.softDeleteComment: auteur OK', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  const comment = store.addComment('school-a', post.id, { userId: 'parent-a1', role: 'parent', tenantId: 'school-a' }, 'hi');
+  store.softDeleteComment('school-a', comment.id, 'parent-a1', 'parent');
+  assert.equal(store.listComments('school-a', post.id).length, 0);
+});
+
+test('ClassFeedStore.softDeleteComment: admin OK + auteur du post OK + autre parent refuse', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  const post2 = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  const c2 = store.addComment('school-a', post2.id, { userId: 'parent-a1', role: 'parent', tenantId: 'school-a' }, 'hi');
+  store.softDeleteComment('school-a', c2.id, 'teacher-a1', 'teacher');
+  assert.equal(store.listComments('school-a', post2.id).length, 0);
+
+  const post3 = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  const c3 = store.addComment('school-a', post3.id, { userId: 'parent-a1', role: 'parent', tenantId: 'school-a' }, 'hi');
+  store.softDeleteComment('school-a', c3.id, 'admin-a', 'school_admin');
+  assert.equal(store.listComments('school-a', post3.id).length, 0);
+
+  const post4 = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  const c4 = store.addComment('school-a', post4.id, { userId: 'parent-a1', role: 'parent', tenantId: 'school-a' }, 'hi');
+  assert.throws(() => store.softDeleteComment('school-a', c4.id, 'parent-other', 'parent'),
+    (err) => err.code === 'forbidden');
+});
+
+test('ClassFeedStore.toggleLike: 1er click ajoute, 2e click retire (idempotent)', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  let result = store.toggleLike('school-a', post.id, 'parent-a1');
+  assert.equal(result.liked, true);
+  assert.equal(result.count, 1);
+  result = store.toggleLike('school-a', post.id, 'parent-a1');
+  assert.equal(result.liked, false);
+  assert.equal(result.count, 0);
+});
+
+test('ClassFeedStore.toggleLike: cross-user count correct', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  store.toggleLike('school-a', post.id, 'parent-a1');
+  store.toggleLike('school-a', post.id, 'parent-a2');
+  store.toggleLike('school-a', post.id, 'parent-a3');
+  assert.equal(store.countLikes('school-a', post.id), 3);
+});
+
+test('ClassFeedStore.markRead: idempotent (re-mark ne double pas)', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  store.markRead('school-a', post.id, 'parent-a1');
+  store.markRead('school-a', post.id, 'parent-a1');
+  store.markRead('school-a', post.id, 'parent-a2');
+  assert.equal(store.countReads('school-a', post.id), 2);
+});
+
+test('ClassFeedStore.listReadersForPost: liste users qui ont lu', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  store.markRead('school-a', post.id, 'parent-a1');
+  store.markRead('school-a', post.id, 'parent-a2');
+  const readers = store.listReadersForPost('school-a', post.id);
+  assert.equal(readers.length, 2);
+  assert.ok(readers.every((r) => typeof r.userId === 'string' && typeof r.readAt === 'string'));
+});
+
+test('ClassFeedStore.resolveAudience: post classe → parents de la classe sauf auteur', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', makeAuthor(), { classRoomId: 'class-cp-b', body: 'x', attachments: [] });
+  const audienceProvider = {
+    getParentsForClass: (tenantId, classRoomId) => (classRoomId === 'class-cp-b' ? ['parent-a1', 'parent-a2'] : []),
+    getAllParents: (tenantId) => ['parent-a1', 'parent-a2', 'parent-other']
+  };
+  const audience = store.resolveAudience('school-a', post, audienceProvider);
+  assert.deepEqual(audience.sort(), ['parent-a1', 'parent-a2']);
+});
+
+test('ClassFeedStore.resolveAudience: post broadcast → tous parents tenant', () => {
+  const store = new ClassFeedStore();
+  const post = store.createPost('school-a', { userId: 'admin-a', role: 'school_admin', tenantId: 'school-a' }, {
+    classRoomId: null, body: 'x', attachments: []
+  });
+  const audienceProvider = {
+    getParentsForClass: () => [],
+    getAllParents: () => ['parent-a1', 'parent-a2', 'parent-a3']
+  };
+  const audience = store.resolveAudience('school-a', post, audienceProvider);
+  assert.deepEqual(audience.sort(), ['parent-a1', 'parent-a2', 'parent-a3']);
+});
