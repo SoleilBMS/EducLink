@@ -103,6 +103,7 @@ const { InMemoryTenantStore } = require('./modules/tenants');
 const { buildValidationError, buildForbiddenError } = require('./modules/error-utils');
 const { InMemoryUserStore, DuplicateEmailError, buildSeedUsersWithHashedPassword, normalizeEmail } = require('../../../packages/auth/src/users/user-store');
 const { hashPassword, verifyPassword } = require('../../../packages/auth/src/password/password-hasher');
+const { renderShowcaseHtml } = require('./showcase');
 
 const DEFAULT_SEED_PASSWORD = 'password123';
 
@@ -4960,6 +4961,17 @@ function createServer({
     if (request.method === 'GET' && url.pathname === '/assets/ux.js') {
       response.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=3600' });
       response.end(UX_SCRIPT_JS);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/__design') {
+      if (runtimeEnv.nodeEnv === 'production') {
+        response.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
+        response.end('<!doctype html><html><body><h1>404 Not Found</h1></body></html>');
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(renderShowcaseHtml());
       return;
     }
 
