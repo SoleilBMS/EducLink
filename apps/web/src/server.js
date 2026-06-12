@@ -8636,6 +8636,75 @@ function createServer({
       }
     }
 
+    if (request.method === 'POST' && url.pathname === '/class-feed/posts') {
+      const auth = requireAuth(session);
+      if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+      if (!['school_admin', 'director', 'teacher'].includes(auth.context.role)) {
+        sendForbiddenPage(response, session);
+        return;
+      }
+      let parsed;
+      try {
+        parsed = await parseMultipart(request, { maxTotalBytes: 32 * 1024 * 1024 });
+      } catch (err) {
+        response.writeHead(400, { 'content-type': 'text/plain' });
+        response.end('Invalid multipart');
+        return;
+      }
+      const csrfFromForm = parsed.fields.get('_csrf') || '';
+      if (!compareCsrfTokens(session.csrfToken, csrfFromForm)) {
+        sendCsrfFailure(request, response);
+        return;
+      }
+      const classRoomIdRaw = parsed.fields.get('classRoomId') || '';
+      const body = parsed.fields.get('body') || '';
+      const isBroadcast = classRoomIdRaw === 'broadcast';
+      const classRoomId = isBroadcast ? null : classRoomIdRaw;
+      if (isBroadcast) {
+        if (!['school_admin', 'director'].includes(auth.context.role)) {
+          sendForbiddenPage(response, session);
+          return;
+        }
+      } else {
+        if (auth.context.role === 'teacher') {
+          const teacher = teacherStore.list(auth.context.tenantId).find((t) => t.id === auth.context.userId || t.userId === auth.context.userId);
+          if (!teacher || !teacher.classRoomIds.includes(classRoomId)) {
+            sendForbiddenPage(response, session);
+            return;
+          }
+        } else if (!['school_admin', 'director'].includes(auth.context.role)) {
+          sendForbiddenPage(response, session);
+          return;
+        }
+      }
+      const attachments = parsed.file
+        ? [{ fileName: parsed.file.fileName, mimeType: parsed.file.mimeType, data: parsed.file.data }]
+        : [];
+      try {
+        const post = await Promise.resolve(classFeedStore.createPost(auth.context.tenantId, { userId: auth.context.userId, role: auth.context.role, tenantId: auth.context.tenantId }, {
+          classRoomId,
+          body,
+          attachments
+        }));
+        auditWriter.writeEntityEvent(auth.context, 'feed_post.created', 'feed_post', post.id);
+        if (typeof notifyAudienceForPost === 'function') {
+          notifyAudienceForPost(auth.context, post).catch(() => {});
+        }
+        const redirectTo = isBroadcast ? '/class-feed/broadcast' : `/class-feed/classes/${encodeURIComponent(classRoomId)}`;
+        response.writeHead(302, { location: redirectTo });
+        response.end();
+      } catch (err) {
+        if (err.code === 'validation_error') {
+          const redirectTo = isBroadcast ? '/class-feed/broadcast?error=validation' : `/class-feed/classes/${encodeURIComponent(classRoomId)}?error=validation`;
+          response.writeHead(302, { location: redirectTo });
+          response.end();
+          return;
+        }
+        throw err;
+      }
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname === '/inbox') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {

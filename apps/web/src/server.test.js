@@ -58,6 +58,12 @@ async function login(baseUrl, email, password = 'password123') {
   };
 }
 
+async function loginWithCsrf(baseUrl, email, password = 'password123') {
+  const result = await login(baseUrl, email, password);
+  const csrfToken = extractCsrfFromCookieString(result.cookie);
+  return { ...result, csrfToken };
+}
+
 async function expectLogin(baseUrl, { email, expectedLocation, password = 'password123' }) {
   const result = await login(baseUrl, email, password);
   assert.equal(result.response.status, 302);
@@ -5031,5 +5037,54 @@ test('Klassly-feed: GET /class-feed/broadcast — parent 403/404', async () => {
     const { cookie } = await login(baseUrl, 'parent@school-a.test');
     const response = await fetch(`${baseUrl}/class-feed/broadcast`, { headers: { cookie }, redirect: 'manual' });
     assert.ok([403, 404].includes(response.status));
+  });
+});
+
+test('Klassly-feed: POST /class-feed/posts — teacher cree post texte (302)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie, csrfToken } = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    // Trouver une classe accessible au teacher
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie }, redirect: 'manual' });
+    let classId;
+    if (sel.status === 302) {
+      classId = sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1];
+    } else {
+      const html = await sel.text();
+      const m = html.match(/\/class-feed\/classes\/([^"]+)"/);
+      classId = m ? m[1] : null;
+    }
+    assert.ok(classId, 'should find a class for teacher');
+    const fd = new FormData();
+    fd.append('_csrf', csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'Sortie au musée hier !');
+    const response = await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie }, body: fd, redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', new RegExp(`/class-feed/classes/${classId}`));
+  });
+});
+
+test('Klassly-feed: POST /class-feed/posts — parent 403', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie, csrfToken } = await loginWithCsrf(baseUrl, 'parent@school-a.test');
+    const fd = new FormData();
+    fd.append('_csrf', csrfToken);
+    fd.append('classRoomId', 'class-a1');
+    fd.append('body', 'should be forbidden');
+    const response = await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie }, body: fd, redirect: 'manual' });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('Klassly-feed: POST /class-feed/posts broadcast — admin OK', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie, csrfToken } = await loginWithCsrf(baseUrl, 'admin@school-a.test');
+    const fd = new FormData();
+    fd.append('_csrf', csrfToken);
+    fd.append('classRoomId', 'broadcast');
+    fd.append('body', 'Annonce ecole');
+    const response = await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie }, body: fd, redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location') || '', /\/class-feed\/broadcast/);
   });
 });
