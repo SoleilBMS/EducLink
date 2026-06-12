@@ -5154,6 +5154,58 @@ async function checkHealth(runtimeEnv) {
   }
 }
 
+function notifyAudienceForPostFactory({ parentStore, studentStore, emailService, coreSchoolStore, baseUrl, logger }) {
+  const { renderNewPostEmail } = require('./templates/email-new-post');
+  return async function notifyAudienceForPost(authContext, post) {
+    try {
+      const tenantId = authContext.tenantId;
+      let recipients; // array of { email, name }
+      if (post.classRoomId) {
+        // Resolve parents whose children are in this class
+        const students = studentStore.list(tenantId).filter((s) => s.classRoomId === post.classRoomId);
+        const studentIds = new Set(students.map((s) => s.id));
+        const allParents = parentStore.list(tenantId);
+        recipients = allParents.filter((p) => {
+          const links = parentStore.listLinksByParent(tenantId, p.id);
+          return links.some((l) => studentIds.has(l.studentId));
+        }).filter((p) => p.email);
+      } else {
+        // Broadcast: all parents of the tenant
+        recipients = parentStore.list(tenantId).filter((p) => p.email);
+      }
+      if (recipients.length === 0) {
+        logger.info('feed_post no audience to notify', { postId: post.id });
+        return { sent: 0, failed: 0 };
+      }
+      const classRoom = post.classRoomId ? coreSchoolStore.get('classRooms', tenantId, post.classRoomId) : null;
+      const className = (classRoom && classRoom.name) || null;
+      let sent = 0;
+      let failed = 0;
+      for (const parent of recipients) {
+        const { subject, html, text } = renderNewPostEmail({
+          post,
+          author: { name: authContext.userId },
+          className,
+          baseUrl,
+          recipientName: [parent.firstName, parent.lastName].filter(Boolean).join(' ') || 'Parent'
+        });
+        try {
+          const result = await emailService.send({ to: parent.email, subject, html, text });
+          if (!result.skipped) sent += 1;
+        } catch (err) {
+          failed += 1;
+          logger.warn('feed_post notification failed for recipient', { recipient: parent.email, error: err.message });
+        }
+      }
+      logger.info('feed_post notifications dispatched', { postId: post.id, sent, failed });
+      return { sent, failed };
+    } catch (err) {
+      logger.error('notifyAudienceForPost crashed', { postId: post.id, error: err.message });
+      return { sent: 0, failed: 0 };
+    }
+  };
+}
+
 function createServer({
   sessionStore = new SessionStore(),
   seed = createSeedData(),
@@ -5338,6 +5390,16 @@ function createServer({
       logger: logger.child({ module: 'email' })
     });
   }
+
+  const baseUrl = process.env.PUBLIC_APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://educlink-production.up.railway.app';
+  const notifyAudienceForPost = notifyAudienceForPostFactory({
+    parentStore,
+    studentStore,
+    emailService,
+    coreSchoolStore,
+    baseUrl,
+    logger: logger.child ? logger.child({ module: 'feed-notifications' }) : logger
+  });
 
   logger.info('Application server initialized', {
     nodeEnv: runtimeEnv.nodeEnv,
