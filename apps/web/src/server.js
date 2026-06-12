@@ -1605,6 +1605,7 @@ tbody tr:hover { background: rgba(79, 70, 229, 0.04); }
 `;
 
 const EDUCLINK_LOGO_SVG = `<svg class="el-logo-mark" viewBox="0 0 48 48" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="el-logo-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#22c55e"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs><path d="M24 8 4 18l20 10 16-8v10a1.5 1.5 0 0 0 3 0V18z" fill="url(#el-logo-grad)"/><path d="M12 24v6c0 3 5.4 6 12 6s12-3 12-6v-6l-12 6z" fill="url(#el-logo-grad)" opacity=".85"/><circle cx="41.5" cy="29.5" r="2.2" fill="#7c3aed"/></svg>`;
+const THEME_TOGGLE_SVG = `<button type="button" class="el-theme-toggle" aria-label="Basculer mode jour/nuit" title="Basculer mode jour/nuit"><svg class="el-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="el-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>`;
 
 function renderPageHead(title) {
   return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><script>${THEME_BOOTSTRAP_JS}</script><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"><link rel="stylesheet" href="/assets/design-system.css"><script src="/assets/ux.js" defer></script>`;
@@ -1910,7 +1911,7 @@ function renderDashboardLayout(title, session, body) {
           <p class="el-header-school">${identity.tenantLabel}</p>
           <h1 class="el-header-title">${title}</h1>
         </div>
-        <div class="el-user-box">
+        ${THEME_TOGGLE_SVG}<div class="el-user-box">
           <p class="el-user-name">${identity.displayName}</p>
           <p class="el-user-email">${identity.email}</p>
           <p><span class="el-badge">${identity.roleLabel}</span></p>
