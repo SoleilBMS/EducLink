@@ -5242,3 +5242,52 @@ test('Klassly-feed: POST /posts/:id/comments — parent peut commenter', async (
     assert.equal(com.status, 302);
   });
 });
+
+test('Klassly-feed: POST /posts/:id/read — idempotent', async () => {
+  await withServer(async (baseUrl) => {
+    const t = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie: t.cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    const fd = new FormData();
+    fd.append('_csrf', t.csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'readable');
+    await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie: t.cookie }, body: fd });
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie: t.cookie } })).text();
+    const postId = feedHtml.match(/data-post-id="(post-[^"]+)"/)?.[1];
+    const p = await loginWithCsrf(baseUrl, 'parent@school-a.test');
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch(`${baseUrl}/class-feed/posts/${postId}/read`, {
+        method: 'POST', headers: { cookie: p.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `_csrf=${encodeURIComponent(p.csrfToken)}`
+      });
+      assert.equal(res.status, 200);
+    }
+  });
+});
+
+test('Klassly-feed: GET /posts/:id/reads — auteur OK, parent 403', async () => {
+  await withServer(async (baseUrl) => {
+    const t = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie: t.cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    const fd = new FormData();
+    fd.append('_csrf', t.csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'reads accessible');
+    await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie: t.cookie }, body: fd });
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie: t.cookie } })).text();
+    const postId = feedHtml.match(/data-post-id="(post-[^"]+)"/)?.[1];
+
+    const author = await fetch(`${baseUrl}/class-feed/posts/${postId}/reads`, { headers: { cookie: t.cookie } });
+    assert.equal(author.status, 200);
+
+    const p = await loginWithCsrf(baseUrl, 'parent@school-a.test');
+    const parent = await fetch(`${baseUrl}/class-feed/posts/${postId}/reads`, { headers: { cookie: p.cookie }, redirect: 'manual' });
+    assert.ok([403, 404].includes(parent.status));
+  });
+});

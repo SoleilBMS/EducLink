@@ -8858,6 +8858,48 @@ function createServer({
       }
     }
 
+    {
+      const readMatch = url.pathname.match(/^\/class-feed\/posts\/([^/]+)\/read$/);
+      if (readMatch && request.method === 'POST') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { response.writeHead(401); response.end(); return; }
+        const form = parseExtendedForm(await readBody(request));
+        if (!compareCsrfTokens(session.csrfToken, form.get('_csrf') || '')) {
+          sendCsrfFailure(request, response); return;
+        }
+        const postId = readMatch[1];
+        await Promise.resolve(classFeedStore.markRead(auth.context.tenantId, postId, auth.context.userId));
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end('{"ok":true}');
+        return;
+      }
+    }
+
+    {
+      const readsMatch = url.pathname.match(/^\/class-feed\/posts\/([^/]+)\/reads$/);
+      if (readsMatch && request.method === 'GET') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+        const postId = readsMatch[1];
+        const post = await Promise.resolve(classFeedStore.getPost(auth.context.tenantId, postId));
+        if (!post) { sendNotFoundPage(response, session); return; }
+        const isAdmin = ['school_admin', 'director'].includes(auth.context.role);
+        if (!isAdmin && post.authorUserId !== auth.context.userId) {
+          sendForbiddenPage(response, session);
+          return;
+        }
+        const readers = await Promise.resolve(classFeedStore.listReadersForPost(auth.context.tenantId, postId));
+        const readerNames = readers.map((r) => ({ userId: r.userId, name: r.userId, readAt: r.readAt }));
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(renderDashboardLayout(`Lecteurs du post — EducLink`, session, `
+          <h1>Lecteurs du post</h1>
+          <p>${readers.length} personne(s) ont vu ce post.</p>
+          <ul>${readerNames.map((r) => `<li>${escapeHtml(r.name)} — ${escapeHtml(formatTimeAgo(r.readAt))}</li>`).join('')}</ul>
+        `));
+        return;
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === '/inbox') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {
