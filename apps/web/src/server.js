@@ -8900,6 +8900,34 @@ function createServer({
       }
     }
 
+    {
+      const attMatch = url.pathname.match(/^\/class-feed\/attachments\/([^/]+)$/);
+      if (attMatch && request.method === 'GET') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) { sendForbiddenPage(response, session); return; }
+        const attachmentId = attMatch[1];
+        const att = await Promise.resolve(classFeedStore.getAttachment(auth.context.tenantId, attachmentId));
+        if (!att) { sendNotFoundPage(response, session); return; }
+        const post = await Promise.resolve(classFeedStore.getPost(auth.context.tenantId, att.postId));
+        if (!post) { sendNotFoundPage(response, session); return; }
+        if (post.classRoomId !== null) {
+          const accessible = listClassesForUser(auth.context, { coreSchoolStore, teacherStore, studentStore, parentStore });
+          if (!accessible.some((c) => c.id === post.classRoomId)) {
+            sendForbiddenPage(response, session);
+            return;
+          }
+        }
+        // Broadcast : tout rôle autorisé sur le tenant
+        response.writeHead(200, {
+          'content-type': att.mimeType,
+          'content-length': att.sizeBytes,
+          'cache-control': 'public, max-age=86400'
+        });
+        response.end(att.data);
+        return;
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === '/inbox') {
       const auth = requireAuth(session);
       if (!auth.allowed || !canAccessInbox(auth.context)) {

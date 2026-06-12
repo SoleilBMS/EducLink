@@ -5291,3 +5291,29 @@ test('Klassly-feed: GET /posts/:id/reads — auteur OK, parent 403', async () =>
     assert.ok([403, 404].includes(parent.status));
   });
 });
+
+test('Klassly-feed: GET /attachments/:id — serve image avec auth', async () => {
+  await withServer(async (baseUrl) => {
+    const t = await loginWithCsrf(baseUrl, 'teacher@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie: t.cookie }, redirect: 'manual' });
+    let classId = sel.status === 302
+      ? sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1]
+      : (await sel.text()).match(/\/class-feed\/classes\/([^"]+)"/)?.[1];
+    // Créer un post avec 1 photo (1px PNG en base64)
+    const fd = new FormData();
+    fd.append('_csrf', t.csrfToken);
+    fd.append('classRoomId', classId);
+    fd.append('body', 'with photo');
+    const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+    fd.append('photos', new Blob([pngBytes], { type: 'image/png' }), 'tiny.png');
+    await fetch(`${baseUrl}/class-feed/posts`, { method: 'POST', headers: { cookie: t.cookie }, body: fd });
+    const feedHtml = await (await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie: t.cookie } })).text();
+    const attMatch = feedHtml.match(/\/class-feed\/attachments\/(att-[^"]+)/);
+    assert.ok(attMatch, 'attachment URL found in feed HTML');
+    const attId = attMatch[1];
+    // Teacher peut accéder
+    const res = await fetch(`${baseUrl}/class-feed/attachments/${attId}`, { headers: { cookie: t.cookie } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+  });
+});
