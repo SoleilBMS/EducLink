@@ -120,6 +120,12 @@ class ClassFeedStore {
     return { ...att };
   }
 
+  listAttachmentsForPost(tenantId, postId) {
+    const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId);
+    if (!post) return [];
+    return this.attachments.filter((a) => a.postId === postId).sort((a, b) => a.position - b.position).map((a) => ({ ...a }));
+  }
+
   editPost(tenantId, postId, actorUserId, { body, attachments = [] }, { now }) {
     const post = this.posts.find((p) => p.id === postId && p.tenantId === tenantId && !p.deletedAt);
     if (!post) return null;
