@@ -89,6 +89,20 @@ function validateRuntimeEnv(env = process.env) {
     sessionSecretIsFallback = true;
   }
 
+  const resendApiKey = typeof env.RESEND_API_KEY === 'string' && env.RESEND_API_KEY.trim().length > 0
+    ? env.RESEND_API_KEY.trim()
+    : null;
+  const mailFromAddress = typeof env.MAIL_FROM_ADDRESS === 'string' && env.MAIL_FROM_ADDRESS.trim().length > 0
+    ? env.MAIL_FROM_ADDRESS.trim()
+    : null;
+  const mailFromName = typeof env.MAIL_FROM_NAME === 'string' && env.MAIL_FROM_NAME.trim().length > 0
+    ? env.MAIL_FROM_NAME.trim()
+    : 'EducLink';
+
+  if (resendApiKey && !mailFromAddress) {
+    errors.push('MAIL_FROM_ADDRESS is required when RESEND_API_KEY is set');
+  }
+
   return {
     ok: errors.length === 0,
     errors,
@@ -101,7 +115,10 @@ function validateRuntimeEnv(env = process.env) {
       logFormat,
       logLevel: env.LOG_LEVEL ?? 'info',
       sessionSecret,
-      sessionSecretIsFallback
+      sessionSecretIsFallback,
+      resendApiKey,
+      mailFromAddress,
+      mailFromName
     }
   };
 }
