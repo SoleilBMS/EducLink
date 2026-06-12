@@ -715,6 +715,7 @@ const THEME_BOOTSTRAP_JS = `(function(){try{var s=localStorage.getItem('el-theme
 const THEME_BOOTSTRAP_HASH = createHash('sha256').update(THEME_BOOTSTRAP_JS).digest('base64');
 
 const UX_SCRIPT_JS = `(function () {
+  // Confirmation des actions destructives (existant)
   document.addEventListener('submit', function (event) {
     var form = event.target;
     if (!form || form.tagName !== 'FORM') return;
@@ -724,6 +725,35 @@ const UX_SCRIPT_JS = `(function () {
       event.preventDefault();
     }
   });
+
+  // Toggle theme jour/nuit (nouveau)
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('el-theme', theme); } catch (e) {}
+  }
+  document.addEventListener('click', function (event) {
+    var target = event.target;
+    while (target && target !== document.body) {
+      if (target.classList && target.classList.contains('el-theme-toggle')) {
+        var current = document.documentElement.getAttribute('data-theme') || 'light';
+        applyTheme(current === 'dark' ? 'light' : 'dark');
+        return;
+      }
+      target = target.parentNode;
+    }
+  });
+
+  // Helper avatar gradient deterministique (Klassly-style)
+  // Disponible globalement pour debug / scripts inline
+  window.elAvatarPaletteFor = function (userId) {
+    if (typeof userId !== 'string' || userId.length === 0) return 1;
+    var hash = 0;
+    for (var i = 0; i < userId.length; i++) {
+      hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash) % 6 + 1;
+  };
 })();
 `;
 
