@@ -4939,6 +4939,155 @@ function logAuthEvent(logger, message, session) {
   });
 }
 
+async function enrichPostsForRender(posts, store, _viewerContext, _stores) {
+  const enriched = [];
+  for (const post of posts) {
+    const attachments = await Promise.resolve(store.listAttachmentsForPost(post.tenantId, post.id));
+    const comments = await Promise.resolve(store.listComments(post.tenantId, post.id));
+    const likeCount = await Promise.resolve(store.countLikes(post.tenantId, post.id));
+    const readCount = await Promise.resolve(store.countReads(post.tenantId, post.id));
+    enriched.push({ ...post, attachments, comments, likeCount, readCount });
+  }
+  return enriched;
+}
+
+function avatarPaletteFor(userId) {
+  if (typeof userId !== 'string' || userId.length === 0) return 1;
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) % 6 + 1;
+}
+
+function formatTimeAgo(iso) {
+  const now = Date.now();
+  const then = Date.parse(iso);
+  const diffMin = Math.floor((now - then) / 60000);
+  if (diffMin < 1) return "à l'instant";
+  if (diffMin < 60) return `il y a ${diffMin} min`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `il y a ${diffH} h`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 30) return `il y a ${diffD} j`;
+  return new Date(then).toLocaleDateString('fr-FR');
+}
+
+function renderPostPhotos(attachments) {
+  if (!attachments || attachments.length === 0) return '';
+  const n = attachments.length;
+  let layoutClass = 'is-1';
+  if (n === 2) layoutClass = 'is-2';
+  else if (n === 3) layoutClass = 'is-3';
+  else if (n >= 4) layoutClass = 'is-4plus';
+
+  const visible = n > 4 ? attachments.slice(0, 4) : attachments;
+  const extra = n - 4;
+  const imgs = visible.map((a, idx) => {
+    const isLastWithOverlay = idx === 3 && extra > 0;
+    const src = `/class-feed/attachments/${escapeHtml(a.id)}`;
+    if (isLastWithOverlay) {
+      return `<div class="el-post-overlay-count"><img src="${src}" alt=""/>+${extra}</div>`;
+    }
+    return `<img src="${src}" alt="${escapeHtml(a.fileName || '')}"/>`;
+  }).join('');
+  return `<div class="el-post-photos ${layoutClass}">${imgs}</div>`;
+}
+
+function renderCommentsSection(session, post) {
+  const comments = (post.comments || []).map((c) => {
+    const authorName = c.authorUserId;
+    const initials = (authorName || '?').slice(0, 2).toUpperCase();
+    const paletteIdx = avatarPaletteFor(c.authorUserId);
+    return `
+      <div class="el-comment">
+        <span class="el-avatar is-small is-palette-${paletteIdx}">${escapeHtml(initials)}</span>
+        <div class="el-comment-bubble">
+          <span class="el-comment-author">${escapeHtml(authorName)}</span>
+          <span class="el-comment-body">${escapeHtml(c.body)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="el-comments-section" id="post-${escapeHtml(post.id)}-comments">
+      ${comments}
+      <form method="POST" action="/class-feed/posts/${escapeHtml(post.id)}/comments">
+        ${csrfField(session)}
+        <input type="text" name="body" class="el-comment-input" placeholder="Ajouter un commentaire..." required minlength="1" maxlength="2000">
+      </form>
+    </div>
+  `;
+}
+
+function renderPostCard(session, post) {
+  const authorName = post.authorUserId;
+  const initials = (authorName || '?').slice(0, 2).toUpperCase();
+  const paletteIdx = avatarPaletteFor(post.authorUserId);
+  const timeAgo = formatTimeAgo(post.createdAt);
+  const editedTag = post.editedAt ? '<span class="el-edited-tag">(modifié)</span>' : '';
+  const readMeta = post.readCount !== undefined ? `· 👁 ${post.readCount} lus` : '';
+  const photosHtml = renderPostPhotos(post.attachments || []);
+  const commentsHtml = renderCommentsSection(session, post);
+  return `
+    <article class="el-post-card" data-post-id="${escapeHtml(post.id)}">
+      <header class="el-post-header">
+        <span class="el-avatar is-palette-${paletteIdx}">${escapeHtml(initials)}</span>
+        <div class="el-post-header-meta">
+          <div class="el-post-author-name">${escapeHtml(authorName)}</div>
+          <div class="el-post-meta">${timeAgo} ${readMeta}</div>
+        </div>
+      </header>
+      <div class="el-post-body">${escapeHtml(post.body)}${editedTag}</div>
+      ${photosHtml}
+      <footer class="el-post-actions">
+        <form method="POST" action="/class-feed/posts/${escapeHtml(post.id)}/like" data-feed-like style="flex:1;">
+          ${csrfField(session)}
+          <button type="submit" class="el-post-actions-button">♡ <span class="el-like-count">${post.likeCount || 0}</span></button>
+        </form>
+        <a class="el-post-actions-button" href="#post-${escapeHtml(post.id)}-comments">💬 ${(post.comments || []).length}</a>
+      </footer>
+      ${commentsHtml}
+    </article>
+  `;
+}
+
+function renderComposer(session, classRoomId) {
+  return `
+    <div class="el-feed-composer">
+      <div class="el-feed-composer-collapsed">Partager un moment avec la classe...</div>
+      <form class="el-feed-composer-expanded" method="POST" action="/class-feed/posts" enctype="multipart/form-data">
+        ${csrfField(session)}
+        <input type="hidden" name="classRoomId" value="${escapeHtml(classRoomId)}">
+        <textarea name="body" rows="4" placeholder="Quoi de neuf ?" required minlength="1" maxlength="5000" style="width:100%;"></textarea>
+        <div class="el-feed-photo-previews"></div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:12px;">
+          <label class="el-button-secondary" style="cursor:pointer;">
+            📷 Photos (max 8)
+            <input type="file" name="photos" data-feed-photos multiple accept="image/png,image/jpeg,image/webp" style="display:none;">
+          </label>
+          <button type="submit" style="margin-left:auto;">Publier</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function renderClassFeedPage(session, { classRoom, posts, canCompose }) {
+  const composer = canCompose ? renderComposer(session, classRoom.id) : '';
+  const postsHtml = posts.length === 0
+    ? '<div class="el-feed-empty"><p>Aucun post pour le moment. Soyez le premier à partager un moment !</p></div>'
+    : posts.map((p) => renderPostCard(session, p)).join('');
+  return renderDashboardLayout(`Mur — ${classRoom.name}`, session, `
+    <div class="el-feed">
+      <h1>📰 Mur de ${escapeHtml(classRoom.name)}</h1>
+      ${composer}
+      ${postsHtml}
+    </div>
+  `);
+}
+
 function listClassesForUser(context, stores) {
   const { coreSchoolStore, teacherStore, studentStore, parentStore } = stores;
   const tenantId = context.tenantId;
@@ -8431,6 +8580,38 @@ function createServer({
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(renderClassFeedSelectionPage(session, classes));
       return;
+    }
+
+    {
+      const feedClassMatch = url.pathname.match(/^\/class-feed\/classes\/([^/]+)$/);
+      if (feedClassMatch && request.method === 'GET') {
+        const auth = requireAuth(session);
+        if (!auth.allowed) {
+          response.writeHead(302, { location: '/login' });
+          response.end();
+          return;
+        }
+        const classRoomId = feedClassMatch[1];
+        const classRoom = coreSchoolStore.get('classRooms', auth.context.tenantId, classRoomId);
+        if (!classRoom) {
+          sendNotFoundPage(response, session);
+          return;
+        }
+        const accessibleClasses = listClassesForUser(auth.context, { coreSchoolStore, teacherStore, studentStore, parentStore });
+        if (!accessibleClasses.some((c) => c.id === classRoomId)) {
+          sendForbiddenPage(response, session);
+          return;
+        }
+        const posts = await Promise.resolve(classFeedStore.listPostsForClass(auth.context.tenantId, classRoomId, { limit: 20 }));
+        const enriched = await enrichPostsForRender(posts, classFeedStore, auth.context, {});
+        const teacherForUser = auth.context.role === 'teacher'
+          ? teacherStore.list(auth.context.tenantId).find((t) => t.id === auth.context.userId || t.userId === auth.context.userId)
+          : null;
+        const canCompose = (auth.context.role === 'teacher' && teacherForUser && teacherForUser.classRoomIds.includes(classRoomId));
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(renderClassFeedPage(session, { classRoom, posts: enriched, canCompose }));
+        return;
+      }
     }
 
     if (request.method === 'GET' && url.pathname === '/inbox') {

@@ -4950,3 +4950,52 @@ test('Klassly-feed: GET /class-feed sans session redirige /login', async () => {
     assert.match(response.headers.get('location') || '', /\/login/);
   });
 });
+
+test('Klassly-feed: GET /class-feed/classes/:id — teacher voit le feed de SA classe (200)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'teacher@school-a.test');
+    // Trouver une classe assignée au teacher via /class-feed selector
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie }, redirect: 'manual' });
+    let classId;
+    if (sel.status === 302) {
+      classId = sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1];
+    } else {
+      const html = await sel.text();
+      const m = html.match(/\/class-feed\/classes\/([^"]+)"/);
+      classId = m ? m[1] : null;
+    }
+    assert.ok(classId, 'should find a class for teacher');
+    const response = await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes('el-feed-composer'), 'composer present pour teacher');
+  });
+});
+
+test('Klassly-feed: GET /class-feed/classes/:id — parent voit (sans composer)', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'parent@school-a.test');
+    const sel = await fetch(`${baseUrl}/class-feed`, { headers: { cookie }, redirect: 'manual' });
+    let classId;
+    if (sel.status === 302) {
+      classId = sel.headers.get('location').match(/\/class-feed\/classes\/([^/]+)/)[1];
+    } else {
+      const html = await sel.text();
+      const m = html.match(/\/class-feed\/classes\/([^"]+)"/);
+      classId = m ? m[1] : null;
+    }
+    assert.ok(classId, 'should find a class for parent');
+    const response = await fetch(`${baseUrl}/class-feed/classes/${classId}`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.equal(html.includes('el-feed-composer'), false, 'composer ABSENT pour parent');
+  });
+});
+
+test('Klassly-feed: GET /class-feed/classes/:id — classe inexistante 404', async () => {
+  await withServer(async (baseUrl) => {
+    const { cookie } = await login(baseUrl, 'admin@school-a.test');
+    const response = await fetch(`${baseUrl}/class-feed/classes/class-non-existent-zzz`, { headers: { cookie }, redirect: 'manual' });
+    assert.ok([403, 404].includes(response.status), `got ${response.status}`);
+  });
+});
