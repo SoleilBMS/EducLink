@@ -452,3 +452,50 @@ Une tâche est terminée si :
 - les tests minimum existent pour les permissions critiques
 - l'UI est cohérente avec le design system existant
 - la doc est mise à jour si nécessaire
+
+---
+
+## SPRINT 9 — Refonte visuelle Klassly-style ✅ DEPLOY EN PROD
+
+### DESIGN-01 — Refonte design system + mode jour/nuit ✅
+- Palette indigo #4F46E5 → violet #7C3AED
+- Typo Nunito (Google Fonts)
+- Composants restylés (cards/boutons/badges/banners/forms/tables)
+- Nouveaux patterns (empty states, avatars 6 palettes, dot bg, skeleton, confetti)
+- Mode jour/nuit avec anti-FOUC CSP-compliant
+- Page /__design dev-only pour validation visuelle
+- Spec : [docs/superpowers/specs/2026-06-11-refonte-klassly-design.md]
+- Plan : [docs/superpowers/plans/2026-06-11-refonte-klassly-design.md]
+
+---
+
+## SPRINT 10 — Klassly-feed (fil d'actualité visuel par classe) ✅ DEPLOY EN PROD
+
+### FEED-01 — Module class-feed + EmailService ✅
+- 5 nouvelles tables postgres (migration 011)
+- `ClassFeedStore` (in-memory + `PostgresClassFeedRepository` postgres adapter)
+- `EmailService` wrapper Resend (mode no-op si pas de clé)
+- 29 tests unitaires `class-feed.test.js` + 5 tests `email.test.js`
+
+### FEED-02 — Routes + UI feed ✅
+- 13 nouvelles routes HTTP (`/class-feed`, `/class-feed/classes/:id`, `/class-feed/broadcast`, `POST /posts`, `/edit`, `/delete`, `/like`, `/comments`, `/comments/:id/delete`, `/read`, `/reads`, `/attachments/:id`)
+- CSS post cards, composer expand, mosaic photos (1/2/3/4+), comments bubble
+- JS : composer expand, photo preview, like toggle optimistic UI, auto-mark-read au scroll
+- Sidebar nav "📰 Mur de la classe" (5 rôles)
+- `parseMultipart` étendu avec `maxFiles` option (1..8 photos par post)
+- 22 tests integration HTTP
+
+### FEED-03 — Notifications email Resend ✅
+- Template `email-new-post` (HTML inline table + texte) avec gradient brand
+- Fire-and-forget dispatch après POST post (latence = 0 pour le teacher)
+- Résolve audience : parents de la classe OU tous les parents tenant (broadcast)
+- Audit log `feed_post.notifications_dispatched` (sent + failed counts)
+- 3 tests template + 1 test integration
+
+### Sprint stats
+- 22 commits, +6809 lignes
+- 471 tests pass / 0 fail (412 → 471, +59 nouveaux tests)
+- Spec : [docs/superpowers/specs/2026-06-12-klassly-feed-design.md]
+- Plan : [docs/superpowers/plans/2026-06-12-klassly-feed-design.md]
+
+⚠️ **Pré-requis prod pour activer emails** : `RESEND_API_KEY` + `MAIL_FROM_ADDRESS` set sur Railway. Sans ça, l'app fonctionne mais les emails sont en mode no-op (loggés mais non envoyés).
